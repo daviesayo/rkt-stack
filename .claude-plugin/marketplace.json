@@ -1,0 +1,14 @@
+{
+  "name": "daviesayo-marketplace",
+  "owner": {
+    "name": "Davies Ayo",
+    "url": "https://github.com/daviesayo"
+  },
+  "plugins": [
+    {
+      "name": "rkt",
+      "source": "./",
+      "description": "Project bootstrapping and workflow orchestration"
+    }
+  ]
+}
