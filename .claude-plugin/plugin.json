@@ -1,0 +1,37 @@
+{
+  "name": "rkt",
+  "version": "0.1.0",
+  "description": "Personal Claude Code plugin for project bootstrapping and workflow orchestration",
+  "author": {
+    "name": "Davies Ayo",
+    "url": "https://github.com/daviesayo"
+  },
+  "license": "MIT",
+  "keywords": ["bootstrap", "scaffolding", "personal", "workflow", "linear"],
+  "userConfig": {
+    "default_linear_team_id": {
+      "type": "string",
+      "title": "Default Linear team ID",
+      "description": "Default Linear team ID for new projects (e.g. 'RKT'). Find via: linear api <<< 'query { teams { nodes { id key name } } }'",
+      "sensitive": false
+    },
+    "default_github_owner": {
+      "type": "string",
+      "title": "Default GitHub owner",
+      "description": "GitHub username or org for gh repo create",
+      "sensitive": false
+    },
+    "default_ios_device": {
+      "type": "string",
+      "title": "Default iOS device",
+      "description": "Default iOS device/simulator name for builds (e.g. 'rocket' or 'iPhone 17 Pro')",
+      "sensitive": false
+    },
+    "default_gh_visibility": {
+      "type": "string",
+      "title": "Default GitHub repo visibility",
+      "description": "Default visibility for new GitHub repos: 'private' or 'public'",
+      "sensitive": false
+    }
+  }
+}
