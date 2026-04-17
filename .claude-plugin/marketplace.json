@@ -1,5 +1,8 @@
 {
   "name": "daviesayo-marketplace",
+  "metadata": {
+    "description": "Davies's personal Claude Code plugins"
+  },
   "owner": {
     "name": "Davies Ayo",
     "url": "https://github.com/daviesayo"
