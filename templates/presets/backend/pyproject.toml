@@ -1,0 +1,17 @@
+[project]
+name = "{{PROJECT_NAME}}"
+version = "0.0.1"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.115",
+  "pydantic>=2.8",
+  "uvicorn[standard]>=0.30",
+  "supabase>=2.7",
+]
+
+[tool.uv]
+dev-dependencies = [
+  "pytest>=8",
+  "pytest-asyncio>=0.23",
+  "ruff>=0.6",
+]
