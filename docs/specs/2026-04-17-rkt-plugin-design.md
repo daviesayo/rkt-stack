@@ -492,39 +492,119 @@ Scaffolds a new project as described in Bootstrap Flow.
 
 ### `/rkt-sync`
 
-Updates project-owned templates (AGENTS.md, rules in `.claude/rules/`,
-PROGRESS.md) when the plugin has shipped new template versions.
+Updates **plugin-managed** project files (AGENTS.md, generic rules in
+`.claude/rules/`, PROGRESS.md template sections) when the plugin has shipped
+new template versions.
+
+**Preserves project-owned content** across sync:
+- Files matching `.claude/rules/project-*.md` — never touched
+- Files matching `agents/*.project.md` in the project — never touched
+- User-edited sections within plugin-managed files demarcated by sentinel
+  markers: `<!-- rkt-managed:start -->` … `<!-- rkt-managed:end -->`. Sync
+  only replaces content inside these blocks; anything outside is user
+  territory.
+- `decisions.md`, `docs/decisions/agent_learnings.md` — append-only logs;
+  sync only creates them if absent, never overwrites existing entries.
 
 Flow:
 
 1. Read `rkt_plugin_version` from project's `rkt.json`
 2. Read installed plugin version
-3. For each template file, diff project version vs. current plugin version
-4. For each diff, ask `[Accept update] [Keep mine] [Show 3-way merge]` via
-   `AskUserQuestion`
+3. Surface `CHANGELOG.md` entries between old and new versions
+4. For each plugin-managed template file:
+   - Project file absent → create from template
+   - Project file present, sentinel-block diff → offer
+     `[Accept update] [Keep mine] [Show 3-way merge]` via `AskUserQuestion`
+   - Project file present, no sentinel blocks (user has fully taken over) →
+     warn and skip (user opted out of managed sections)
 5. Update `rkt_plugin_version` in `rkt.json` on completion
-6. Surface `CHANGELOG.md` entries between old and new versions in the report
 
 **In MVP scope** (confirmed during brainstorm).
 
+### `/rkt-tailor`
+
+Project-specific knowledge capture. Runs **after** bootstrap, once the
+project has real code, decisions, and domain patterns. Analogous to
+`claude init` but for this project's rkt overlay: scans the codebase and
+context files, then writes project-specific rules and agent overlays that
+encode the project's actual conventions and business logic.
+
+**Why this exists (separate from bootstrap):** plugin-level agents and rules
+cover **generic stack conventions** (FastAPI async patterns, Supabase RLS,
+SwiftUI design tokens). Project-specific business rules (split math rules,
+cool-off mechanics, audit ordering invariants, company conventions) are
+discovered over time and don't belong in the shared plugin. `/rkt-tailor`
+is how they get captured into the project's own `.claude/` overlay.
+
+Flow:
+
+1. Read `rkt.json` to confirm the project is bootstrapped
+2. Read `AGENTS.md`, `PROGRESS.md`, `decisions.md`, `docs/decisions/agent_learnings.md`
+3. Scan the actual codebase for domain concepts (routes, models, tables,
+   swift types, react routes)
+4. Interactively, via `AskUserQuestion`, surface candidate patterns:
+   > "I see your backend uses a `cooloff` status on contributors with a
+   > `cooloff_ends_at` timestamp. Should I capture this as a rule for the
+   > backend-implementer to enforce?"
+   > `[Yes, add rule]` `[Skip]` `[Customize description]`
+5. For accepted patterns, write into the project overlay:
+   - `.claude/rules/project-backend.md` — backend-specific business rules
+   - `.claude/rules/project-database.md` — schema invariants, migration patterns
+   - `.claude/rules/project-ios.md` — iOS-specific UI/state patterns
+   - `.claude/rules/project-web.md` — web-specific patterns
+   - `agents/*.project.md` — agent-level overlays if the agent itself needs
+     project-specific instructions (append-loaded by the agent at task start)
+6. These files are **project-owned** — `/rkt-sync` never touches them.
+
+Re-runnable: the skill reads its previous output and shows diffs of
+current-project reality vs. previously-captured rules, offering to update
+or leave as-is.
+
+**Activation:** Davies runs `/rkt-tailor` manually when the project has
+evolved enough to codify patterns (typically after the first few meaningful
+features). Not triggered by bootstrap.
+
+**In MVP scope** (added after initial design based on execution feedback —
+the Witness-specific business rules that leaked into ported agents during
+implementation confirmed this skill is load-bearing, not optional).
+
 ## Agents
 
-All 5 agents ported from Witness. Parameterization:
+All 5 agents are **generic stack conventions only** — no project-specific
+business logic. That lives in project-owned overlays written by
+`/rkt-tailor` (see above).
+
+Plugin-level agents cover:
+
+| Agent                  | Generic concerns                                                       |
+| :--------------------- | :--------------------------------------------------------------------- |
+| `backend-implementer`  | FastAPI async, Pydantic validation, Supabase client conventions, tests |
+| `database-implementer` | Supabase migrations, RLS patterns, RPC function idioms, OPS.md sync    |
+| `ios-implementer`      | SwiftUI patterns, iOS 26+ features, design tokens, device builds       |
+| `web-implementer`      | Vite/Next.js build, Server Components, Tailwind, routing               |
+| `code-reviewer`        | Security/convention checklists gated on detected stack                 |
+
+Parameterization:
 
 - Device name (iOS) — from `user_config.default_ios_device`
 - MemPalace write targets — use `${project.mempalace_prefix}-architect` etc.
 - Linear issue prefix — from `rkt.json`
-- No hardcoded project names or paths
+- No hardcoded project names, no domain business rules
 
 Agents stay **lean workers** — they don't read AGENTS.md, MemPalace, or
-decisions.md themselves. The orchestrator (`/implement`) gathers context once
-and injects relevant bits into each agent's spawn prompt. Same pattern as
-current Witness setup.
+decisions.md themselves. The orchestrator (`/implement`) gathers context
+once and injects relevant bits into each agent's spawn prompt.
+
+**Project-specific overlays:** if a project has `agents/backend-implementer.project.md`
+in its `.claude/` directory, the backend-implementer loads that at task
+start. The overlay contains business rules (e.g., "cool-off timestamps
+are 48h", "splits must sum to 100%"). Written by `/rkt-tailor`.
 
 ## Rules
 
-Rules are copied into `.claude/rules/` at bootstrap time so they can be
-customized per-project.
+Two tiers of rules:
+
+**Plugin-shipped (generic stack conventions):**
 
 | Rule file            | Active when editing                 |
 | :------------------- | :---------------------------------- |
@@ -534,7 +614,21 @@ customized per-project.
 | `web-nextjs.md`      | `app/**`, `components/**` (Next.js) |
 | `ios-design.md`      | `ios/**/*.swift`                    |
 
-Drift from plugin updates is handled by `/rkt-sync`.
+These are copied into `.claude/rules/` at bootstrap and updated by
+`/rkt-sync` (with sentinel markers preserving user edits).
+
+**Project-owned (domain business rules):**
+
+Written by `/rkt-tailor`. Filename prefix `project-*` to signal "do not
+touch during sync":
+
+- `.claude/rules/project-backend.md`
+- `.claude/rules/project-database.md`
+- `.claude/rules/project-ios.md`
+- `.claude/rules/project-web.md`
+
+Same `appliesTo` path patterns as the corresponding plugin rule. Claude
+Code loads both when files in those paths are edited.
 
 ## Evolution Model
 
@@ -585,8 +679,12 @@ Which shows diffs and asks for per-file decisions.
     per-file conflict resolution → Linear (link or create) → commit on
     existing history → report
   - Short-circuit to `/rkt-sync` if `rkt.json` already present
-- `/rkt-sync`
-- 5 agents ported and parameterized
+- `/rkt-sync` — preserves project-owned files (`project-*.md` rules, `*.project.md`
+  agent overlays) and user-edited sections demarcated by sentinel markers
+- `/rkt-tailor` — scans project, captures domain business rules into project-owned
+  overlays; re-runnable as project evolves
+- 5 agents ported and parameterized — **generic stack conventions only**, no
+  project-specific business logic
 - 4 skills ported and parameterized (`/implement`, `/create-issue`, `/scan`,
   `/resolve-reviews`)
 - All prompts via `AskUserQuestion`
@@ -625,7 +723,11 @@ The MVP is done when Davies can:
    bootstrapped project redirects to `/rkt-sync` rather than re-running
 5. Run `/create-issue`, `/implement`, `/resolve-reviews` against either
    kind of project with zero additional configuration
-6. Run `/rkt-sync` months later to pick up template improvements
+6. Run `/rkt-tailor` after the project has real code, interactively
+   capture project-specific business rules into `.claude/rules/project-*.md`
+   and `agents/*.project.md` overlays
+7. Run `/rkt-sync` months later to pick up plugin template improvements
+   without losing project-owned overlays or user-edited sections
 
 ## References
 

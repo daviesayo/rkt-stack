@@ -12,6 +12,30 @@
 
 ---
 
+## Architecture Update (2026-04-18)
+
+**Principle: plugin = generic stack conventions only.** When porting agents and rules, strip anything that encodes project-specific business logic (e.g., Witness's cool-off mechanics, SPLIT_UNUSUALLY_LOW, specific module paths like `app.identity.routes`, audit-ordering invariants). Those belong in a per-project overlay written by `/rkt-tailor`, not in the shared plugin.
+
+**What counts as generic (keep in plugin agents/rules):**
+- Framework patterns: "FastAPI handlers must be async", "Pydantic models for all validation", "SwiftUI uses iOS 26+ APIs"
+- Security primitives: "no hardcoded secrets", "RLS on all user-facing tables", "no `dangerouslySetInnerHTML` without sanitization"
+- Lean-worker discipline: "don't re-read AGENTS.md; context is injected"
+- Testing conventions: "write tests alongside implementation"
+
+**What counts as project-specific (move to `.claude/rules/project-*.md` or `agents/*.project.md`):**
+- Business rule math (split percentages, cool-off windows, expiry durations)
+- Domain constants (status enums specific to the product, state machine transitions)
+- Module-specific mock paths (`patch("app.identity.routes.get_supabase_admin_client")`)
+- Named features and their invariants ("SPLIT_UNUSUALLY_LOW fires when…")
+
+**New skill added to MVP: `/rkt-tailor`** (see Phase 8.5 below) — scans a bootstrapped project, interactively captures business rules, writes them into project-owned overlays.
+
+**`/rkt-sync` updated** (Phase 9) — must preserve project-owned files (`project-*.md`, `*.project.md`) and user-edited sections (demarcated by `<!-- rkt-managed:start -->` / `<!-- rkt-managed:end -->` sentinel markers).
+
+**Remediation needed for already-ported agents:** Tasks 11–15 were completed before this architectural correction. The 5 agent files contain Witness-specific business logic that must be stripped. See Task 15.1 below.
+
+---
+
 ## File Structure
 
 ```
@@ -1022,9 +1046,66 @@ git commit -m "Port code-reviewer agent, gate stack-specific checks on rkt.json 
 
 ---
 
+### Task 15.1: Remediate ported agents (strip Witness-specific content)
+
+**Background:** Tasks 11–15 were executed before the "generic-only" architectural correction was documented. The ported agents contain Witness-specific business logic that must be stripped.
+
+**Files:** Modify `agents/{backend-implementer,database-implementer,ios-implementer,web-implementer,code-reviewer}.md`
+
+- [ ] **Step 1: For each of the 5 agents, strip project-specific content**
+
+For each file, remove:
+- Module-specific mock paths (`app.identity.routes` etc.)
+- Named business features (cool-off, SPLIT_UNUSUALLY_LOW, status transitions, etc.)
+- Company-specific commit/decision conventions if they reference Witness specifically
+- Any rule that only applies to Witness's data model
+
+Keep:
+- Generic framework conventions (async FastAPI, Pydantic validation, SwiftUI iOS 26+, async/await patterns)
+- Security primitives applicable to the stack (no hardcoded secrets, RLS mandatory, no `dangerouslySetInnerHTML`)
+- Testing conventions generic to the stack
+- PR creation / Linear-referenced workflow (Linear prefix read from `rkt.json`, Claude review trigger via PR comment)
+- Lean-worker discipline ("don't re-read AGENTS.md; context is injected")
+
+- [ ] **Step 2: Add a project-overlay hook to each agent**
+
+At the end of each agent body, before the close, add:
+
+```markdown
+## Project-specific rules
+
+If the project has captured domain business rules via `/rkt-tailor`, they live
+in these files (load them at the start of your task if present):
+
+- `.claude/rules/project-backend.md` (or `project-database.md` / `project-ios.md` / `project-web.md`)
+- `.claude/agents/<your-name>.project.md` (agent-level overlay; optional)
+
+These files contain business rules the plugin can't know about (split math,
+audit invariants, domain constants, state machines). Always check and apply
+project-specific rules on top of the generic ones above.
+```
+
+(Adjust the rule filename for each agent — `project-backend.md` for backend-implementer, etc.)
+
+- [ ] **Step 3: Verify plugin still validates**
+
+```bash
+cd /Users/rocket/Documents/Repositories/rkt-stack
+claude plugin validate .
+```
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add agents/
+git commit -m "Strip Witness-specific content from ported agents; add project-overlay hook"
+```
+
+---
+
 ## Phase 4: Port Rules
 
-Goal: path-scoped rule files that load when Claude touches matching files in a project.
+Goal: path-scoped rule files that load when Claude touches matching files in a project. Same "generic-only" principle applies — strip Witness domain logic from rules when porting.
 
 ### Task 16: Port backend-fastapi.md rule
 
@@ -3126,9 +3207,173 @@ git commit -m "Port /resolve-reviews skill, minor parameterization + AskUserQues
 
 ---
 
+## Phase 8.5: /rkt-tailor Skill
+
+Goal: after bootstrap, interactively capture project-specific business rules into project-owned overlays. Runs when the project has real code; re-runnable as the project evolves.
+
+### Task 45.1: Build rkt-tailor skill
+
+**Files:**
+- Create: `skills/rkt-tailor/SKILL.md`
+- Update: `.claude-plugin/plugin.json` (not needed if skills dir auto-discovers; otherwise verify registration)
+
+- [ ] **Step 1: Create `skills/rkt-tailor/SKILL.md`**
+
+```markdown
+---
+name: rkt-tailor
+description: Use to capture project-specific business rules and domain conventions into project-owned overlays (`.claude/rules/project-*.md`, `agents/*.project.md`). Run after bootstrap, once the project has real code. Triggers on "tailor this project", "capture project rules", "rkt tailor", "project-specific rules", "update agent overlays for this project".
+---
+
+# rkt-tailor
+
+You scan a bootstrapped rkt project and capture its project-specific
+business rules into overlay files that the generic plugin agents read at
+task time. Re-runnable as the project evolves.
+
+## Step 1: Verify project is bootstrapped
+
+```bash
+[[ -f rkt.json ]] || {
+  echo "No rkt.json here. Run /bootstrap first."
+  exit 1
+}
+PRESET=$(jq -r .preset rkt.json)
+```
+
+## Step 2: Gather project context
+
+Read (in this order, quietly — no re-read if already in context):
+
+- `AGENTS.md` — agent conventions and project overview
+- `PROGRESS.md` — what's been built
+- `decisions.md` — accumulated architectural decisions
+- `docs/decisions/agent_learnings.md` — pitfalls seen so far
+- `OPS.md` — infrastructure state
+
+Then scan the codebase based on preset:
+
+- **full / backend**: `backend/app/**/*.py`, `backend/supabase/migrations/*.sql`
+- **full / web**: `web/src/**/*.ts*` (Vite) or `app/**/*.ts*` + `components/**` (Next.js)
+- **full / ios**: `ios/**/*.swift`
+- **backend (standalone)**: `app/**/*.py`, `supabase/migrations/*.sql`
+- **web (standalone)**: `app/**/*.ts*`, `lib/**`, `supabase/migrations/*.sql`
+- **ios (standalone)**: `ios/**/*.swift`
+
+For each scanned domain, look for:
+
+- Status/state enums and the valid transitions between them
+- Business constants (timeouts, limits, percentages, durations)
+- Domain-specific validation rules baked into routes/models
+- Audit/event ordering invariants (if audit_log or similar is present)
+- Module-path conventions for mocking in tests
+- Permission matrices / ACL patterns
+
+## Step 3: Interactively surface findings
+
+For each candidate pattern, use `AskUserQuestion`:
+
+> "I see your backend has a `cooloff` status on contributors with
+> `cooloff_ends_at` set to `now() + 48h`. Should I capture this as a
+> project-specific rule the backend-implementer must enforce?"
+>
+> Options:
+> - `[Yes, add rule]` — writes into `.claude/rules/project-backend.md`
+> - `[Customize wording]` — lets Davies rephrase before writing
+> - `[Skip]` — don't capture
+> - `[Skip all further backend suggestions]` — fast-forward
+
+Group findings by domain so Davies can accept/reject a whole batch:
+
+- Project-backend findings (5) → iterate or bulk-accept
+- Project-database findings (3) → iterate or bulk-accept
+- Project-ios findings (2) → iterate or bulk-accept
+
+## Step 4: Write project-owned overlays
+
+For each accepted rule, append to the appropriate file. Create files if absent:
+
+- `.claude/rules/project-backend.md`
+- `.claude/rules/project-database.md`
+- `.claude/rules/project-ios.md`
+- `.claude/rules/project-web.md`
+
+Each file uses the same frontmatter as plugin rules (path-scoped `appliesTo`):
+
+```markdown
+---
+description: Project-specific business rules for [domain]. Written by /rkt-tailor.
+appliesTo:
+  - "backend/app/**/*.py"  # match the plugin rule's path patterns
+---
+
+# Project-specific [domain] rules
+
+[Captured rules live here, one per section.]
+
+## Cool-off mechanic
+
+When `SPLIT_UNUSUALLY_LOW` fires at signing, the contributor enters
+`status='cooloff'` with `cooloff_ends_at = now() + 48h`. Do not allow
+re-signing during the cooloff window.
+
+...
+```
+
+Optionally, if Davies accepts, write `agents/backend-implementer.project.md`
+with agent-level overlay content — short paragraphs the agent loads at task
+start.
+
+## Step 5: Commit and report
+
+```bash
+git add .claude/rules/project-*.md agents/*.project.md 2>/dev/null
+git commit -m "[rkt-tailor] Capture project-specific rules into overlays"
+```
+
+Report a summary:
+
+> **✓ Captured N rules across domains**
+>
+> - `.claude/rules/project-backend.md`: 5 rules (cool-off, audit ordering, ...)
+> - `.claude/rules/project-database.md`: 3 rules (RLS pattern, ...)
+> - Skipped: 2 (you deferred)
+>
+> Re-run `/rkt-tailor` anytime the project's domain model evolves.
+
+## Re-run behavior
+
+On subsequent runs, read the existing `project-*.md` files first. For each
+newly-scanned pattern:
+
+- Already captured, still matches code → skip silently
+- Already captured, code has diverged → offer `[Update to match code]`,
+  `[Keep existing rule]`, `[Remove rule — obsolete]`
+- New pattern, not captured → offer to add as above
+
+Never touches files outside `.claude/rules/project-*.md` and
+`agents/*.project.md`.
+```
+
+- [ ] **Step 2: Verify skill loads**
+
+```bash
+claude --plugin-dir /Users/rocket/Documents/Repositories/rkt-stack --debug 2>&1 | grep -i rkt-tailor
+```
+
+- [ ] **Step 3: Commit**
+
+```bash
+cd /Users/rocket/Documents/Repositories/rkt-stack
+git add skills/rkt-tailor/SKILL.md
+git commit -m "Add /rkt-tailor skill: capture project-specific rules into overlays"
+```
+
+---
+
 ## Phase 9: /rkt-sync Skill
 
-Goal: after a plugin update, projects can pull in updated templates with conflict resolution.
+Goal: after a plugin update, projects can pull in updated templates with conflict resolution **without clobbering project-owned overlays or user-edited sections**.
 
 ### Task 46: Build rkt-sync skill
 
@@ -3145,10 +3390,30 @@ description: Use to sync project-owned templates (AGENTS.md, rules, PROGRESS.md 
 
 # rkt-sync
 
-You update project-owned template files (AGENTS.md, rules, PROGRESS.md, OPS.md,
-decisions.md, agent_learnings.md, README.md) to match the currently-installed
-rkt plugin version. You present diffs and let the user accept, reject, or merge
-on a per-file basis via `AskUserQuestion`.
+You update **plugin-managed** project files to match the currently-installed
+rkt plugin version, preserving **project-owned** files and user-edited sections.
+
+## What sync touches vs. never touches
+
+**Plugin-managed (may be updated by sync, with user confirmation):**
+- `AGENTS.md`
+- `PROGRESS.md`, `OPS.md`, `README.md`
+- `.claude/rules/backend-fastapi.md`, `supabase.md`, `web-vite.md`, `web-nextjs.md`, `ios-design.md` (only the rules shipped by the plugin)
+- `rkt.json` (version bumps, not user-customized fields)
+
+**Project-owned (NEVER touched by sync):**
+- `.claude/rules/project-*.md` — written by `/rkt-tailor`
+- `agents/*.project.md` — project-level agent overlays
+- `decisions.md` — append-only; sync only creates if absent
+- `docs/decisions/agent_learnings.md` — append-only; sync only creates if absent
+
+**Sentinel-marked sections within plugin-managed files:** any content outside
+`<!-- rkt-managed:start -->` … `<!-- rkt-managed:end -->` markers is treated as
+user territory. Sync only replaces content inside these blocks when it differs
+from the current template output.
+
+You present diffs and let the user accept, reject, or merge on a per-file basis
+via `AskUserQuestion`.
 
 ## Step 1: Verify project is bootstrapped
 
