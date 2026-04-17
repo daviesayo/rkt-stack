@@ -190,10 +190,49 @@ can be added later.
 
 ## Bootstrap Flow
 
-`/bootstrap <preset> <name>` — invoked in an empty target directory.
+`/bootstrap [preset] [name]` — invoked in any target directory. The skill
+detects the current state of the directory and branches into one of three
+paths: NEW (greenfield), ADOPT (existing project, never rkt'd), or redirect
+to `/rkt-sync` (already bootstrapped).
+
+### State detection (runs first, always)
 
 ```dot
-digraph bootstrap {
+digraph state {
+    "Scan directory" [shape=box];
+    "Has rkt.json?" [shape=diamond];
+    "Redirect: 'Already bootstrapped — use /rkt-sync'" [shape=box];
+    "Has code or .git?" [shape=diamond];
+    "NEW mode (greenfield)" [shape=box];
+    "ADOPT mode (existing project)" [shape=box];
+
+    "Scan directory" -> "Has rkt.json?";
+    "Has rkt.json?" -> "Redirect: 'Already bootstrapped — use /rkt-sync'" [label="yes"];
+    "Has rkt.json?" -> "Has code or .git?" [label="no"];
+    "Has code or .git?" -> "NEW mode (greenfield)" [label="no"];
+    "Has code or .git?" -> "ADOPT mode (existing project)" [label="yes"];
+}
+```
+
+Detection signals checked during scan:
+
+| Signal                                       | Used for                                |
+| :------------------------------------------- | :-------------------------------------- |
+| `rkt.json` exists                            | Short-circuit → `/rkt-sync`             |
+| `.git/` exists                               | Skip `git init`                         |
+| `.git/config` has remote                     | Skip `gh repo create`                   |
+| `package.json` contains `"next"`             | Suggest `web` preset (Next.js)          |
+| `package.json` contains `"react"` + `"vite"` | Suggest `web` preset (Vite variant)     |
+| `pyproject.toml` contains `"fastapi"`        | Suggests `backend` component            |
+| `*.xcodeproj` or `*.xcworkspace` at root     | Suggests `ios` component                |
+| `supabase/migrations/` exists                | Signals Supabase in use                 |
+| Multiple of the above                        | Suggest `full`                          |
+| Existing `AGENTS.md` / `decisions.md`        | Mark for conflict resolution            |
+
+### NEW mode (greenfield)
+
+```dot
+digraph bootstrap_new {
     "Step 1: Preflight (light)" [shape=box];
     "Step 2: Gather config (AskUserQuestion)" [shape=box];
     "Step 3: Scaffold folders" [shape=box];
@@ -285,6 +324,152 @@ gh repo create "$PROJECT_NAME" --private --source=. --remote=origin --push
 
 Show Linear URL, GitHub URL, preset used, and next-step suggestions
 (`/scan`, `/create-issue`, `/implement`).
+
+### ADOPT mode (existing project)
+
+Non-destructive by default. Every conflict surfaces as an explicit choice.
+
+```dot
+digraph bootstrap_adopt {
+    "Step A1: Preflight (light)" [shape=box];
+    "Step A2: Detect stack + suggest preset\n(AskUserQuestion: confirm)" [shape=box];
+    "Step A3: Gather remaining config" [shape=box];
+    "Step A4: Additive scaffold (fill gaps only)" [shape=box];
+    "Step A5: Render templates with conflict resolution" [shape=box];
+    "Step A6: Linear — link existing OR create new" [shape=box];
+    "Step A7: (optional) Commit on existing history" [shape=box];
+    "Step A8: Report + next actions" [shape=doublecircle];
+
+    "Step A1: Preflight (light)" -> "Step A2: Detect stack + suggest preset\n(AskUserQuestion: confirm)";
+    "Step A2: Detect stack + suggest preset\n(AskUserQuestion: confirm)" -> "Step A3: Gather remaining config";
+    "Step A3: Gather remaining config" -> "Step A4: Additive scaffold (fill gaps only)";
+    "Step A4: Additive scaffold (fill gaps only)" -> "Step A5: Render templates with conflict resolution";
+    "Step A5: Render templates with conflict resolution" -> "Step A6: Linear — link existing OR create new";
+    "Step A6: Linear — link existing OR create new" -> "Step A7: (optional) Commit on existing history";
+    "Step A7: (optional) Commit on existing history" -> "Step A8: Report + next actions";
+}
+```
+
+#### Step A2 — Detect stack + suggest preset
+
+Run the detection heuristics from the state-detection table. Present the
+suggestion via `AskUserQuestion`:
+
+> "I detected a Next.js 16 project using Supabase. Apply `web` preset?"
+>
+> `[Yes, apply web]` `[Different preset]` `[Cancel]`
+
+Detection is always a *suggestion*, never a silent override. If the user
+picks "Different preset", present the full preset menu.
+
+#### Step A3 — Gather remaining config
+
+Same prompts as NEW mode Step 2, but:
+
+- Skip `git init` prompts — the repo exists
+- **GitHub repo**: default to "Skip" if remote already exists; otherwise
+  offer the normal `[Create private] [Create public] [Skip]` menu
+- **Linear**: see Step A6
+- Issue prefix auto-derivation may prefer existing git remote's repo name
+  over the directory name, if they differ
+
+#### Step A4 — Additive scaffold (fill gaps only)
+
+Compare preset's expected folder structure against what exists:
+
+- Folder exists → skip
+- Folder missing → create
+- File in scaffold exists → do not overwrite; hand off to Step A5
+
+Never deletes or replaces existing user code.
+
+#### Step A5 — Render templates with per-file conflict resolution
+
+For each template file (AGENTS.md, PROGRESS.md, OPS.md, decisions.md,
+agent_learnings.md, README.md, each rule in `.claude/rules/`):
+
+```dot
+digraph conflict {
+    "File exists in project?" [shape=diamond];
+    "Create from template" [shape=box];
+    "Identical to rendered template?" [shape=diamond];
+    "Skip silently" [shape=box];
+    "AskUserQuestion:\n[Keep mine][Replace][Merge (3-way)][Skip]" [shape=box];
+
+    "File exists in project?" -> "Create from template" [label="no"];
+    "File exists in project?" -> "Identical to rendered template?" [label="yes"];
+    "Identical to rendered template?" -> "Skip silently" [label="yes"];
+    "Identical to rendered template?" -> "AskUserQuestion:\n[Keep mine][Replace][Merge (3-way)][Skip]" [label="no"];
+}
+```
+
+The four choices per conflict:
+
+| Choice    | Behavior                                                         |
+| :-------- | :--------------------------------------------------------------- |
+| Keep mine | Leave the existing file untouched                                |
+| Replace   | Overwrite with the freshly-rendered template                     |
+| Merge     | 3-way merge — opens the user's editor with conflict markers      |
+| Skip      | Same as Keep mine, but flag in report as "user deferred"         |
+
+Rules in `.claude/rules/` follow the same conflict flow. If the project
+already has rules the plugin doesn't ship, leave them alone.
+
+#### Step A6 — Linear: link existing or create new
+
+`AskUserQuestion`:
+
+> "Is there an existing Linear project for this repo?"
+>
+> `[Link existing (paste URL)]` `[Create new]` `[Skip Linear integration]`
+
+If "Link existing": prompt for the Linear project URL, parse team ID and
+project ID, store in `rkt.json`.
+If "Create new": same GraphQL mutation as NEW mode Step 6.
+If "Skip": `rkt.json.linear` fields set to `null`. Skills gracefully
+degrade (warn but don't fail) when Linear config is absent.
+
+#### Step A7 — Commit on existing history
+
+If `.git/` exists:
+
+```bash
+git add .
+git commit -m "[rkt] Add workflow tooling and project scaffolding"
+```
+
+(Not `[bootstrap] Initialize …` — that would mis-state what happened.)
+
+If `.git/` does not exist, fall through to NEW mode Step 5 behavior.
+
+#### Step A8 — Report
+
+Summarize what was added, what conflicts were resolved, and what was
+skipped:
+
+> **✓ Applied `web` preset to existing project**
+>
+> Added: `.claude/rules/web-nextjs.md`, `.claude/rules/supabase.md`,
+> `PROGRESS.md`, `OPS.md`, `decisions.md`, `docs/decisions/agent_learnings.md`,
+> `rkt.json`
+>
+> Conflicts resolved: `AGENTS.md` → merged (your existing doc + new sections)
+>
+> Skipped: `README.md` (kept yours)
+>
+> Linear: linked existing project https://linear.app/...
+>
+> GitHub: existing remote `origin` (skipped repo creation)
+>
+> **Next steps:** Run `/scan` to populate the backlog, or `/implement` an
+> existing Linear issue.
+
+### What NOT to auto-detect (always ask)
+
+- **The preset itself** — detection is a suggestion, always confirm
+- **MemPalace prefix** — too important to guess silently
+- **Linear: link vs. create** — context-dependent, always ask
+- **Conflict resolution** — never silently merge or overwrite
 
 ## Ported Skills
 
@@ -393,8 +578,13 @@ Which shows diffs and asks for per-file decisions.
 - Plugin distributed via `daviesayo-marketplace` (own GitHub repo with
   `marketplace.json`)
 - All 4 presets (`full`, `web`, `backend`, `ios`)
-- `/bootstrap` with full flow (preflight → gather → scaffold → render →
-  git init → Linear → gh repo → report)
+- `/bootstrap` with state detection + both NEW and ADOPT modes
+  - NEW: preflight → gather → scaffold → render → git init → Linear →
+    gh repo → report
+  - ADOPT: preflight → detect → gather → additive scaffold → render with
+    per-file conflict resolution → Linear (link or create) → commit on
+    existing history → report
+  - Short-circuit to `/rkt-sync` if `rkt.json` already present
 - `/rkt-sync`
 - 5 agents ported and parameterized
 - 4 skills ported and parameterized (`/implement`, `/create-issue`, `/scan`,
@@ -421,14 +611,20 @@ session (2026-04-17).
 The MVP is done when Davies can:
 
 1. Install the plugin: `claude plugin install rkt@daviesayo-marketplace`
-2. Create an empty directory, `cd` into it, run `claude`, type
-   `/bootstrap full my-new-thing`
-3. Answer the `AskUserQuestion` prompts
-4. Have a fully-wired project: git initialized, Linear project created,
-   folder skeleton in place, AGENTS.md rendered, agents available,
-   and (if opted in) a GitHub repo pushed
-5. Run `/create-issue`, `/implement`, `/resolve-reviews` against the new
-   project with zero additional configuration
+2. **Greenfield path:** create an empty directory, `cd` into it, run
+   `claude`, type `/bootstrap full my-new-thing`, answer the prompts,
+   and end up with a fully-wired project (git initialized, Linear
+   project created, folder skeleton in place, AGENTS.md rendered,
+   and if opted in a GitHub repo pushed)
+3. **Adopt path:** `cd` into an existing repo (e.g., a GitHub fork),
+   run `claude`, type `/bootstrap`, confirm the auto-detected preset,
+   resolve any template conflicts via `AskUserQuestion`, and end up
+   with workflow tooling layered on top of the existing code
+   without anything being overwritten silently
+4. **Re-run safety:** running `/bootstrap` a second time in a
+   bootstrapped project redirects to `/rkt-sync` rather than re-running
+5. Run `/create-issue`, `/implement`, `/resolve-reviews` against either
+   kind of project with zero additional configuration
 6. Run `/rkt-sync` months later to pick up template improvements
 
 ## References
