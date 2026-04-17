@@ -11,25 +11,25 @@
   "userConfig": {
     "default_linear_team_id": {
       "type": "string",
-      "title": "Default Linear team ID",
+      "title": "Default Linear Team ID",
       "description": "Default Linear team ID for new projects (e.g. 'RKT'). Find via: linear api <<< 'query { teams { nodes { id key name } } }'",
       "sensitive": false
     },
     "default_github_owner": {
       "type": "string",
-      "title": "Default GitHub owner",
+      "title": "Default GitHub Owner",
       "description": "GitHub username or org for gh repo create",
       "sensitive": false
     },
     "default_ios_device": {
       "type": "string",
-      "title": "Default iOS device",
+      "title": "Default iOS Device",
       "description": "Default iOS device/simulator name for builds (e.g. 'rocket' or 'iPhone 17 Pro')",
       "sensitive": false
     },
     "default_gh_visibility": {
       "type": "string",
-      "title": "Default GitHub repo visibility",
+      "title": "Default GitHub Repo Visibility",
       "description": "Default visibility for new GitHub repos: 'private' or 'public'",
       "sensitive": false
     }
