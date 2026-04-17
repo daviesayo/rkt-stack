@@ -1,0 +1,84 @@
+# {{PROJECT_NAME_PASCAL}} — Coding Agent Instructions
+
+For coding agents. These instructions govern how any agent operates on this codebase.
+
+**Project config:** Structured values (Linear prefix, MemPalace prefix, deploy targets)
+live in `rkt.json` at the repo root. Read them via `jq -r '.linear.issue_prefix' rkt.json`
+and similar.
+
+---
+
+## Session Start Protocol
+
+Every session, in this order:
+
+1. Read `PROGRESS.md`, `OPS.md`, top of `DEVLOG.md` (if present)
+2. Read `docs/decisions/agent_learnings.md`, `decisions.md`
+3. Run `./scripts/cleanup-merged-worktrees.sh` (if the plugin scripts are available)
+4. Clarify the task if scope is ambiguous
+
+---
+
+## Session End Protocol
+
+After completing meaningful work:
+
+1. **Update `PROGRESS.md`** — mark completed (✅), in-progress (🔄), blocked (⛔)
+2. **Update `OPS.md`** — if production actions were taken or new ops tasks identified
+3. **Check `docs/decisions/agent_learnings.md`** — add entry only if a future agent would likely repeat the mistake
+4. **Prepend to `decisions.md`** — if architectural decisions were made, `[YYYY-MM-DD HH:mm]` format
+
+---
+
+## Domain Ownership
+
+Each domain agent owns specific folders. Agents must never modify files outside their domain.
+
+See `rkt.json:preset` to determine which domains are active.
+
+---
+
+## Conventions
+
+- **Branches:** `{{LINEAR_PREFIX}}-<n>/<domain>/<short-description>` (e.g. `{{LINEAR_PREFIX}}-42/backend/cron-auth`)
+- **PR titles:** include Linear issue ID (e.g. `[{{LINEAR_PREFIX}}-42] Add cron auth`)
+- **PRs:** always drafts until ready. After creating, post `@claude please review this PR` as a **comment**.
+- **Commits:** descriptive messages; no `[Phase N]` prefixes (that was Witness-specific).
+
+---
+
+## Decisions Log
+
+Format: `[YYYY-MM-DD HH:mm] | [decision] | [rationale] | [agent-name]` — reverse chronological, prepend only.
+
+**Domain agents: do NOT write to `decisions.md`** — put decisions in PR body under `## Decisions`. The `/implement` skill consolidates after merge.
+
+---
+
+## Review Gate
+
+PRs get reviewed and fixed in two steps:
+
+1. **`@claude` GitHub review** (automatic) — triggered by `@claude please review this PR` as a PR comment
+2. **`/resolve-reviews`** (after reviews land) — reads GitHub review findings, dispatches domain agents to fix
+
+---
+
+## MemPalace
+
+Three specialists: `{{MEMPALACE_PREFIX}}-architect`, `{{MEMPALACE_PREFIX}}-reviewer`, `{{MEMPALACE_PREFIX}}-ops`. The `/implement` skill queries MemPalace once and distributes findings.
+
+---
+
+## Phases
+
+{{! Phases are optional — Witness used them, other projects may not !}}
+This project is in active development. No phase gating.
+
+---
+
+## Working with Davies
+
+Davies is the founder. Don't over-explain his own decisions. Flag uncovered
+architectural decisions with trade-offs before implementing. When a spec is
+ambiguous, ask — don't assume.
