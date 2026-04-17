@@ -78,10 +78,7 @@ for you.
 
 ### Design System (Web)
 
-Read `DESIGN.md` for project-specific design tokens. Common patterns:
-- Buttons and labels are ALL CAPS with letter-spacing
-- Always handle loading, error, and empty states in every page/component
-- No custom icon assets — use Unicode or SVG equivalents of SF Symbols
+Read the project's design system file for design tokens. Always handle loading, error, and empty states in every page/component.
 
 ### Stack-Specific Rules
 
@@ -89,3 +86,15 @@ Read `DESIGN.md` for project-specific design tokens. Common patterns:
 - No business logic in the web app — it's an API consumer only
 - No `dangerouslySetInnerHTML` without sanitisation
 - Always handle loading, error, and empty states in every page/component
+
+## Project-specific rules
+
+If the project has captured domain business rules via `/rkt-tailor`, they live
+in these files (read them at task start if present):
+
+- `.claude/rules/project-web.md` — domain-specific business rules
+- `agents/web-implementer.project.md` — agent-level overlay (optional)
+
+These encode business rules the plugin can't know about (split math, audit
+invariants, domain constants, state machine transitions). Always check and
+apply project-specific rules on top of the generic ones above.

@@ -68,11 +68,21 @@ decisions.md, or agent_learnings.md** — that context has already been gathered
 
 ### Stack-Specific Rules
 
-- Mock at the routes module level, not the database module level: `patch("app.identity.routes.get_supabase_admin_client")`
+- Mock at the routes module level, not the database module level: `patch("app.YOUR_MODULE.routes.get_supabase_admin_client")`
 - `maybe_single().execute()` can return `None` (not an `APIResponse`) — always check `if _resp is not None`
 - Supabase `admin.rpc()` passes the params dict as a positional argument, not kwargs
 - `if x is None` not `x or default` when empty list is a valid explicit value
 - Input validation at system boundaries (user input, external APIs) — don't over-validate internal code paths
-- Audit events: write inline with business operations in the same RPC/transaction
-- Cool-off mechanics: `cooloff_ends_at = now()+48h`, status='cooloff' when `SPLIT_UNUSUALLY_LOW` fires at signing
 - Never hardcode secrets — use `Settings` from `app/config.py`
+
+## Project-specific rules
+
+If the project has captured domain business rules via `/rkt-tailor`, they live
+in these files (read them at task start if present):
+
+- `.claude/rules/project-backend.md` — domain-specific business rules
+- `agents/backend-implementer.project.md` — agent-level overlay (optional)
+
+These encode business rules the plugin can't know about (split math, audit
+invariants, domain constants, state machine transitions). Always check and
+apply project-specific rules on top of the generic ones above.

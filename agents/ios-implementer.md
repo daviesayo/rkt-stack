@@ -85,7 +85,19 @@ for you.
 - 44pt minimum touch targets, Dynamic Type throughout
 - SF Symbols only — no custom icon assets
 - `.continuous` corner curve (squircle) on all shapes
-- iOS display enums must match backend `_VALID_*` sets exactly
+- iOS display enums must match backend state enum values exactly — keep them in sync when backend valid-state sets change
 - View structs cannot have a stored property named `body` (conflicts with `var body: some View`)
 - `requestVoid` through protocol requires explicit `body: nil` parameter
 - `.swipeActions` only works on `List` rows, not `VStack`/`ForEach`
+
+## Project-specific rules
+
+If the project has captured domain business rules via `/rkt-tailor`, they live
+in these files (read them at task start if present):
+
+- `.claude/rules/project-ios.md` — domain-specific business rules
+- `agents/ios-implementer.project.md` — agent-level overlay (optional)
+
+These encode business rules the plugin can't know about (split math, audit
+invariants, domain constants, state machine transitions). Always check and
+apply project-specific rules on top of the generic ones above.

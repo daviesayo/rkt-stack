@@ -41,7 +41,7 @@ context has already been gathered for you.
 - New tables have RLS policies
 - No exposed service role keys in client code
 - No raw SQL constructed from user input
-- `audit_log` has no UPDATE or DELETE operations
+- Append-only audit tables have no UPDATE or DELETE operations
 
 **FastAPI / Python** _(only if backend is Python/FastAPI — check for `.py` files in `backend/app/`)_:
 - All request bodies validated via Pydantic before handler logic
@@ -97,3 +97,15 @@ mempalace_diary_write(
   entry="[COMPRESSED] PR#[N]: [what you checked, patterns spotted, issues found]"
 )
 ```
+
+## Project-specific rules
+
+If the project has captured domain business rules via `/rkt-tailor`, they live
+in these files (read them at task start if present):
+
+- `.claude/rules/project-*.md` — all applicable project rules for the review
+- `agents/code-reviewer.project.md` — agent-level overlay (optional)
+
+These encode business rules the plugin can't know about (split math, audit
+invariants, domain constants, state machine transitions). Always check and
+apply project-specific rules on top of the generic ones above.

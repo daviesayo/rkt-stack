@@ -85,8 +85,20 @@ for you.
 
 ### Stack-Specific Rules
 
-- CHECK constraints must match Python state machines — when `_VALID_*` sets change in Python, a migration must update the DB CHECK constraint too
-- `audit_log` is append-only: never write UPDATE or DELETE on this table
+- CHECK constraints must match application-layer state machines — when valid-state sets change in code, a migration must update the DB CHECK constraint too
+- Append-only audit tables must never have UPDATE or DELETE operations written against them
 - RPC functions that write multiple tables must use transactions
 - Always verify migration against local Postgres (`supabase db push --local`), not just `uv run pytest` — tests mock the DB and don't catch CHECK violations
-- Seed data (rules, templates, benchmarks) goes in dedicated seed migrations, not mixed with DDL
+- Seed data (lookup values, templates, benchmarks) goes in dedicated seed migrations, not mixed with DDL
+
+## Project-specific rules
+
+If the project has captured domain business rules via `/rkt-tailor`, they live
+in these files (read them at task start if present):
+
+- `.claude/rules/project-database.md` — domain-specific business rules
+- `agents/database-implementer.project.md` — agent-level overlay (optional)
+
+These encode business rules the plugin can't know about (split math, audit
+invariants, domain constants, state machine transitions). Always check and
+apply project-specific rules on top of the generic ones above.
