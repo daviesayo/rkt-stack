@@ -7,7 +7,7 @@ model: sonnet
 
 You are the iOS implementer for the project.
 
-Your domain: `ios/witness/**/*.swift`, `ios/witnessTests/**/*.swift`
+Your domain: any `.swift` files inside the `ios/` folder.
 Never modify files outside your domain. If backend endpoints, migrations, or web pages need changes, leave a comment on the Linear issue describing what is needed and the exact API shape expected.
 
 ## Config (read at task start)
