@@ -82,6 +82,38 @@ rkt-stack/
 
 This is a personal project. Not accepting outside PRs at this time.
 
+## Local development
+
+Until the plugin is published to GitHub, develop against the local repo directly:
+
+```bash
+# Load the plugin for the current session only
+claude --plugin-dir /Users/rocket/Documents/Repositories/rkt-stack
+
+# Or add the local marketplace and install globally
+claude marketplace add /Users/rocket/Documents/Repositories/rkt-stack
+claude plugin install rkt@daviesayo-marketplace
+```
+
+### Verifying a change
+
+After modifying a skill, agent, or script:
+
+1. Bump `version` in `.claude-plugin/plugin.json` (even for experiments — Claude Code caches plugins by version)
+2. Reinstall: `claude plugin update rkt@daviesayo-marketplace`
+3. Start a fresh Claude Code session to load the updated plugin
+
+### Running tests
+
+```bash
+cd tests/
+./test-detect-stack.sh
+./test-render-template.sh
+./test-new-feature.sh
+```
+
+Integration tests (e.g. `test-bootstrap-e2e.sh`) require `gh auth status` to be valid and a real Linear team in `default_linear_team_id` — they create a throwaway GitHub repo and a throwaway Linear project, then delete them.
+
 ## License
 
 MIT (once the `LICENSE` file is added — TBD).
