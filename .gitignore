@@ -1,0 +1,24 @@
+# macOS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Local Claude state
+.claude/settings.local.json
+
+# Node
+node_modules/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Plugin build artifacts (if any)
+dist/
+build/
