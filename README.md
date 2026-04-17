@@ -44,16 +44,71 @@ The plugin ships with four presets that cover the common project shapes:
 
 ## Quickstart
 
-> Not yet implemented. Will look roughly like:
->
-> ```bash
-> # One-time install
-> claude plugin install rkt@daviesayo-marketplace
->
-> # In any empty directory
-> claude
-> /bootstrap full my-project
-> ```
+### One-time install
+
+```bash
+# Add this repo as a Claude Code marketplace
+claude marketplace add daviesayo/rkt-stack
+
+# Install the plugin
+claude plugin install rkt@daviesayo-marketplace
+
+# You'll be prompted for userConfig values on first enable:
+#   - default_linear_team_id
+#   - default_github_owner
+#   - default_ios_device
+#   - default_gh_visibility
+```
+
+### Starting a new project
+
+```bash
+mkdir my-new-thing && cd my-new-thing
+claude
+# Then:
+/bootstrap full my-new-thing
+```
+
+Follow the prompts. You'll end up with a fully-wired repo: Linear project
+created, first commit made, optionally pushed to GitHub.
+
+### Adopting an existing project
+
+```bash
+cd ~/some/existing/repo
+claude
+# Then:
+/bootstrap
+```
+
+The skill detects your stack, suggests a preset, and layers the workflow in
+non-destructively.
+
+### Capturing project-specific rules
+
+Once your project has real code and conventions:
+
+```bash
+cd ~/my-project
+claude
+/rkt-tailor
+```
+
+Captures business rules (state machine transitions, domain constants, etc.)
+into `.claude/rules/project-*.md` and `agents/*.project.md` overlays.
+Re-runnable as the project evolves.
+
+### After the plugin updates
+
+```bash
+# Update the plugin
+claude plugin update rkt@daviesayo-marketplace
+
+# In each existing project, sync templates (preserves your project overlays)
+cd ~/my-project
+claude
+/rkt-sync
+```
 
 ## Development
 
