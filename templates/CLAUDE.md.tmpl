@@ -14,7 +14,7 @@ Every session, in this order:
 
 1. Read `PROGRESS.md`, `OPS.md`, top of `DEVLOG.md` (if present)
 2. Read `docs/decisions/agent_learnings.md`, `decisions.md`
-3. Run `./scripts/cleanup-merged-worktrees.sh` (if the plugin scripts are available)
+3. Run `"${CLAUDE_PLUGIN_ROOT}/scripts/cleanup-merged-worktrees.sh"` (ships with the rkt plugin)
 4. Clarify the task if scope is ambiguous
 
 ---
@@ -43,7 +43,7 @@ See `rkt.json:preset` to determine which domains are active.
 - **Branches:** `{{LINEAR_PREFIX}}-<n>/<domain>/<short-description>` (e.g. `{{LINEAR_PREFIX}}-42/backend/cron-auth`)
 - **PR titles:** include Linear issue ID (e.g. `[{{LINEAR_PREFIX}}-42] Add cron auth`)
 - **PRs:** always drafts until ready. After creating, post `@claude please review this PR` as a **comment**.
-- **Commits:** descriptive messages; no `[Phase N]` prefixes (that was Witness-specific).
+- **Commits:** descriptive messages. Imperative mood ("Add X", "Fix Y").
 
 ---
 
@@ -72,13 +72,13 @@ Three specialists: `{{MEMPALACE_PREFIX}}-architect`, `{{MEMPALACE_PREFIX}}-revie
 
 ## Phases
 
-{{! Phases are optional — Witness used them, other projects may not !}}
-This project is in active development. No phase gating.
+This project is in active development. Update this section if you introduce
+phase gating (e.g. MVP → Beta → GA) and want agents to respect phase boundaries.
 
 ---
 
-## Working with Davies
+## Working with the user
 
-Davies is the founder. Don't over-explain his own decisions. Flag uncovered
-architectural decisions with trade-offs before implementing. When a spec is
-ambiguous, ask — don't assume.
+Don't over-explain the user's own decisions. Flag uncovered architectural
+decisions with trade-offs before implementing. When a spec is ambiguous,
+ask — don't assume.

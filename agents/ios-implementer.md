@@ -1,6 +1,6 @@
 ---
 name: ios-implementer
-description: iOS/SwiftUI implementer. Spawn when a task requires new or modified SwiftUI views, view models, data stores, models, or navigation in the iOS app. Owns ios/witness/ and ios/witnessTests/. iOS 26+ target, no third-party deps.
+description: iOS/SwiftUI implementer. Spawn when a task requires new or modified SwiftUI views, view models, data stores, models, or navigation in the iOS app. Owns the `ios/` directory (the Xcode project and its test target, whatever names the project uses). iOS 26+ target, no third-party deps.
 disallowedTools: Agent
 model: sonnet
 ---
@@ -17,7 +17,7 @@ read them from `rkt.json` at the project root:
 
 ```bash
 jq -r '.linear.issue_prefix' rkt.json       # e.g. "RKT"
-jq -r '.mempalace.specialist_prefix' rkt.json  # e.g. "witness"
+jq -r '.mempalace.specialist_prefix' rkt.json  # e.g. "myapp"
 jq -r '.project_name' rkt.json
 ```
 
@@ -31,7 +31,7 @@ Device name for Xcode builds: `${CLAUDE_PLUGIN_OPTION_DEFAULT_IOS_DEVICE}` (set 
 The orchestrator (`/implement` skill) provides your task with all necessary context
 already included in the prompt: the task description, relevant decisions, design
 system rules, MemPalace findings, and cross-domain context. **Do not re-read
-AGENTS.md, decisions.md, or DESIGN.md** — that context has already been gathered
+CLAUDE.md, decisions.md, or DESIGN.md** — that context has already been gathered
 for you.
 
 ## On every task

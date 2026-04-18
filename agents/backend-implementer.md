@@ -17,7 +17,7 @@ read them from `rkt.json` at the project root:
 
 ```bash
 jq -r '.linear.issue_prefix' rkt.json       # e.g. "RKT"
-jq -r '.mempalace.specialist_prefix' rkt.json  # e.g. "witness"
+jq -r '.mempalace.specialist_prefix' rkt.json  # e.g. "myapp"
 jq -r '.project_name' rkt.json
 ```
 
@@ -28,7 +28,7 @@ relevant — only re-read if you hit a case not covered.
 
 The orchestrator (`/implement` skill) provides your task with all necessary context
 already included in the prompt: the task description, relevant decisions, known
-pitfalls, MemPalace findings, and cross-domain context. **Do not re-read AGENTS.md,
+pitfalls, MemPalace findings, and cross-domain context. **Do not re-read CLAUDE.md,
 decisions.md, or agent_learnings.md** — that context has already been gathered for you.
 
 ## On every task

@@ -1,6 +1,6 @@
 ---
 name: web-implementer
-description: Web implementer. Handles React apps (Vite or Next.js). Read `rkt.json:preset` to determine — `web` preset = Next.js, `full` preset = Vite. Spawn when a task requires new or modified React pages, components, lib utilities, or styles. Owns web/src/ and web/public/.
+description: Web implementer. Handles React apps (Vite or Next.js). Read `rkt.json:preset` to determine — `web` preset = Next.js (owns `app/`, `components/`, `lib/` at repo root), `full` preset = Vite (owns `web/src/` and `web/public/`). Spawn when a task requires new or modified React pages, components, lib utilities, or styles.
 disallowedTools: Agent
 model: sonnet
 ---
@@ -17,7 +17,7 @@ read them from `rkt.json` at the project root:
 
 ```bash
 jq -r '.linear.issue_prefix' rkt.json       # e.g. "RKT"
-jq -r '.mempalace.specialist_prefix' rkt.json  # e.g. "witness"
+jq -r '.mempalace.specialist_prefix' rkt.json  # e.g. "myapp"
 jq -r '.project_name' rkt.json
 jq -r '.preset' rkt.json                    # "web" = Next.js, "full" = Vite
 ```
@@ -36,7 +36,7 @@ Determine the framework from `rkt.json:preset` (already injected by the orchestr
 The orchestrator (`/implement` skill) provides your task with all necessary context
 already included in the prompt: the task description, relevant decisions, design
 system rules, MemPalace findings, and cross-domain context. **Do not re-read
-AGENTS.md, decisions.md, or DESIGN.md** — that context has already been gathered
+CLAUDE.md, decisions.md, or DESIGN.md** — that context has already been gathered
 for you.
 
 ## On every task

@@ -50,7 +50,7 @@ find "$tmpdir" -type f ! -path "*/.git/*" | while IFS= read -r f; do
 done
 
 # 5. Render global templates
-for tmpl in AGENTS.md PROGRESS.md OPS.md README.md rkt.json; do
+for tmpl in CLAUDE.md PROGRESS.md OPS.md README.md rkt.json; do
   "$PLUGIN_DIR/scripts/render-template.sh" \
     "$PLUGIN_DIR/templates/${tmpl}.tmpl" "$tmpdir/$tmpl" "$(cat "$TMPVARS")"
 done
@@ -73,7 +73,7 @@ git commit -q -m "test"
 
 # Assertions
 [[ -f "$tmpdir/rkt.json" ]] || { echo "FAIL: rkt.json missing"; exit 1; }
-[[ -f "$tmpdir/AGENTS.md" ]] || { echo "FAIL: AGENTS.md missing"; exit 1; }
+[[ -f "$tmpdir/CLAUDE.md" ]] || { echo "FAIL: CLAUDE.md missing"; exit 1; }
 [[ -f "$tmpdir/PROGRESS.md" ]] || { echo "FAIL: PROGRESS.md missing"; exit 1; }
 [[ -f "$tmpdir/decisions.md" ]] || { echo "FAIL: decisions.md missing"; exit 1; }
 [[ -f "$tmpdir/docs/decisions/agent_learnings.md" ]] || { echo "FAIL: agent_learnings missing"; exit 1; }

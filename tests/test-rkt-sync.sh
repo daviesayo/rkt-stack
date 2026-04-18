@@ -44,7 +44,7 @@ jq '{
 }' rkt.json > "$TMPVARS"
 
 # Render templates at "old" version
-for tmpl in AGENTS.md PROGRESS.md OPS.md README.md decisions.md; do
+for tmpl in CLAUDE.md PROGRESS.md OPS.md README.md decisions.md; do
   "$PLUGIN_DIR/scripts/render-template.sh" \
     "$PLUGIN_DIR/templates/${tmpl}.tmpl" "$tmpdir/$tmpl" "$(cat "$TMPVARS")"
 done
@@ -83,7 +83,7 @@ jq --arg v "$CURRENT" '.RKT_VERSION = $v' "$TMPVARS" > "${TMPVARS}.new"
 mv "${TMPVARS}.new" "$TMPVARS"
 
 # ── Idempotency check: re-render each template and verify output file exists ──
-for tmpl in AGENTS.md PROGRESS.md OPS.md README.md; do
+for tmpl in CLAUDE.md PROGRESS.md OPS.md README.md; do
   rendered=$(mktemp)
   "$PLUGIN_DIR/scripts/render-template.sh" \
     "$PLUGIN_DIR/templates/${tmpl}.tmpl" "$rendered" "$(cat "$TMPVARS")"
@@ -144,7 +144,7 @@ grep -q "DO NOT overwrite" agents/backend-implementer.project.md || {
 }
 
 # ── Assert rendered files exist and are non-empty ─────────────────────────────
-for f in AGENTS.md PROGRESS.md OPS.md README.md decisions.md "docs/decisions/agent_learnings.md"; do
+for f in CLAUDE.md PROGRESS.md OPS.md README.md decisions.md "docs/decisions/agent_learnings.md"; do
   [[ -s "$f" ]] || { echo "FAIL: $f is missing or empty"; exit 1; }
 done
 

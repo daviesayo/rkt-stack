@@ -2,7 +2,7 @@
 # tests/test-bootstrap-adopt.sh — ADOPT mode integration test
 #
 # Simulates ADOPT by pre-populating a temp directory with Next.js signals
-# and a pre-existing AGENTS.md, then runs the skill's mechanics directly.
+# and a pre-existing CLAUDE.md, then runs the skill's mechanics directly.
 # Conflict resolution is simulated by always choosing "Keep mine" (we
 # cannot call AskUserQuestion from shell).
 set -euo pipefail
@@ -13,25 +13,25 @@ PLUGIN_DIR="$HERE/.."
 tmpdir=$(mktemp -d)
 trap "rm -rf $tmpdir" EXIT
 
-# ── Seed: existing Next.js project with a pre-existing AGENTS.md ──────────────
+# ── Seed: existing Next.js project with a pre-existing CLAUDE.md ──────────────
 cp -R "$HERE/fixtures/nextjs-existing/." "$tmpdir/"
 cd "$tmpdir"
 git init -q -b main
-cat > AGENTS.md <<'EOF'
-# Existing AGENTS.md
+cat > CLAUDE.md <<'EOF'
+# Existing CLAUDE.md
 My own conventions live here. Preserve me.
 EOF
 git add .
 git commit -q -m "initial"
 
-# ── 1. Detection must suggest `web` and flag has_agents_md ───────────────────
+# ── 1. Detection must suggest `web` and flag has_claude_md ───────────────────
 DETECT=$(bash "$PLUGIN_DIR/scripts/detect-stack.sh" "$tmpdir")
 
 [[ $(echo "$DETECT" | jq -r .suggested_preset) == "web" ]] \
   || { echo "FAIL: detect should suggest web (got $(echo "$DETECT" | jq -r .suggested_preset))"; exit 1; }
 
-[[ $(echo "$DETECT" | jq -r .signals.has_agents_md) == "true" ]] \
-  || { echo "FAIL: has_agents_md should be true"; exit 1; }
+[[ $(echo "$DETECT" | jq -r .signals.has_claude_md) == "true" ]] \
+  || { echo "FAIL: has_claude_md should be true"; exit 1; }
 
 # ── 2. Simulate TMPVARS (what A2/A3 would produce) ───────────────────────────
 TMPVARS=$(mktemp)
@@ -74,7 +74,7 @@ grep -q "fake-next-app" "$tmpdir/package.json" \
   || { echo "FAIL: package.json was overwritten (should still contain 'fake-next-app')"; exit 1; }
 
 # ── 4. Render global templates (Step A5) ─────────────────────────────────────
-# AGENTS.md conflict → simulate "Keep mine": skip rendering it.
+# CLAUDE.md conflict → simulate "Keep mine": skip rendering it.
 # All other templates are absent, so create them.
 for tmpl in PROGRESS.md OPS.md rkt.json; do
   "$PLUGIN_DIR/scripts/render-template.sh" \
@@ -88,9 +88,9 @@ mkdir -p "$tmpdir/docs/decisions"
   "$PLUGIN_DIR/templates/agent_learnings.md.tmpl" \
   "$tmpdir/docs/decisions/agent_learnings.md" "$(cat "$TMPVARS")"
 
-# AGENTS.md conflict: "Keep mine" — existing file must still be intact
-grep -q "My own conventions" "$tmpdir/AGENTS.md" \
-  || { echo "FAIL: AGENTS.md was overwritten despite simulated 'Keep mine'"; exit 1; }
+# CLAUDE.md conflict: "Keep mine" — existing file must still be intact
+grep -q "My own conventions" "$tmpdir/CLAUDE.md" \
+  || { echo "FAIL: CLAUDE.md was overwritten despite simulated 'Keep mine'"; exit 1; }
 
 # ── 5. Copy rules (Step A5, rules section) ───────────────────────────────────
 mkdir -p "$tmpdir/.claude/rules"

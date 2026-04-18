@@ -14,7 +14,7 @@ read them from `rkt.json` at the project root:
 
 ```bash
 jq -r '.linear.issue_prefix' rkt.json       # e.g. "RKT"
-jq -r '.mempalace.specialist_prefix' rkt.json  # e.g. "witness"
+jq -r '.mempalace.specialist_prefix' rkt.json  # e.g. "myapp"
 jq -r '.project_name' rkt.json
 jq -r '.deploy.db' rkt.json                  # e.g. "supabase" — gates DB security checks
 jq -r '.preset' rkt.json                     # e.g. "full" (Vite) or "web" (Next.js)
@@ -27,7 +27,7 @@ relevant — only re-read if you hit a case not covered.
 
 The orchestrator (`/implement` skill) provides the PR number and relevant context
 in your prompt: known pitfalls for this area, MemPalace findings, and what to watch
-for. **Do not re-read AGENTS.md, decisions.md, or agent_learnings.md** — that
+for. **Do not re-read CLAUDE.md, decisions.md, or agent_learnings.md** — that
 context has already been gathered for you.
 
 ## On every review

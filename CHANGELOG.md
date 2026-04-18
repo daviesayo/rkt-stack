@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.1.1 — 2026-04-18
+
+### Changed
+
+- **CLAUDE.md is now the primary agent instructions file** (was `AGENTS.md`).
+  If you also use Codex or other cross-tool agent frameworks, create
+  `AGENTS.md` with just `@CLAUDE.md` inside it as a proxy. Claude reads
+  CLAUDE.md natively — no indirection hop.
+- Scripts are now referenced via `${CLAUDE_PLUGIN_ROOT}/scripts/` in all
+  skills and templates. Scripts live in the plugin, not in bootstrapped
+  projects. Fixes `/implement` failing to find `./scripts/new-feature.sh`
+  in projects that don't have a `scripts/` folder.
+
+### Fixed
+
+- `ios-implementer` description no longer claims to own `ios/witness/` —
+  now correctly generic.
+- Agent descriptions for backend/database/web now cover both preset layouts
+  (e.g., `backend/app/` in `full` preset vs. `app/` at root in `backend`
+  preset).
+- `AGENTS.md.tmpl` no longer mentions "Witness-specific" — template is
+  now truly project-agnostic.
+- Example comments in agents changed from `# e.g. "witness"` to
+  `# e.g. "myapp"`.
+- `detect-stack.sh` now reports `has_claude_md` as a primary signal (and
+  keeps `has_agents_md` for backwards compat).
+
 All notable changes to the rkt plugin are documented here.
 
 ## 0.1.0 — 2026-04-18

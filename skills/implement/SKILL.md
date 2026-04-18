@@ -15,7 +15,7 @@ architect subagent.
 inside Claude Code.
 
 **You are the single context gatherer.** Domain agents are lean workers — they don't
-read AGENTS.md, decisions.md, agent_learnings.md, or query MemPalace themselves.
+read CLAUDE.md, decisions.md, agent_learnings.md, or query MemPalace themselves.
 You read everything once and inject the relevant context into each agent's prompt.
 This is critical for token efficiency.
 
@@ -219,10 +219,10 @@ Options:
 Only create worktrees for the domains you need:
 
 ```bash
-./scripts/new-feature.sh ${PREFIX}-[N] [short-description] [domain1] [domain2] ...
+"${CLAUDE_PLUGIN_ROOT}/scripts/new-feature.sh" ${PREFIX}-[N] [short-description] [domain1] [domain2] ...
 ```
 
-Example: `./scripts/new-feature.sh ${PREFIX}-42 cron-auth backend` for a backend-only fix.
+Example: `"${CLAUDE_PLUGIN_ROOT}/scripts/new-feature.sh" ${PREFIX}-42 cron-auth backend` for a backend-only fix. Scripts ship with the rkt plugin — no local `scripts/` folder in the project.
 
 ## Step 6: Spawn domain agents
 
@@ -382,7 +382,7 @@ $LINEAR issue update ${PREFIX}-[N] --state "Done"
 ## Step 11: Clean up worktrees
 
 ```bash
-./scripts/cleanup-feature.sh ${PREFIX}-[N]
+"${CLAUDE_PLUGIN_ROOT}/scripts/cleanup-feature.sh" ${PREFIX}-[N]
 ```
 
 ## Common Mistakes
@@ -395,7 +395,7 @@ $LINEAR issue update ${PREFIX}-[N] --state "Done"
 | Assuming scope not in the plan | Ask if ambiguous. Don't guess. |
 | Creating worktrees for uninvolved domains | Only create worktrees for domains that need code changes |
 | Spawning all 4 agents when only 1-2 are needed | Match agents to actual scope |
-| Telling agents to read AGENTS.md / decisions.md / agent_learnings.md | You already gathered context — inject the relevant bits in their prompt |
+| Telling agents to read CLAUDE.md / decisions.md / agent_learnings.md | You already gathered context — inject the relevant bits in their prompt |
 | Spawning ios + web before backend completes | Respect dependency order: database → backend → (ios \| web) |
 | Hardcoding "RKT-" or project name | Always read from rkt.json via jq |
 | Using text menus instead of AskUserQuestion | All prompts must use AskUserQuestion — never bash read |

@@ -2,8 +2,8 @@
 #
 # cleanup-feature.sh — Remove worktrees and branches after a feature is merged
 #
-# Usage:
-#   ./scripts/cleanup-feature.sh WIT-42
+# Usage (invoke via the rkt plugin path; scripts live in the plugin):
+#   "${CLAUDE_PLUGIN_ROOT}/scripts/cleanup-feature.sh" RKT-42
 
 set -euo pipefail
 

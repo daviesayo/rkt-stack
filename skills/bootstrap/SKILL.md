@@ -27,7 +27,7 @@ echo "$DETECT_OUTPUT"
 Parse the JSON output:
 - If `signals.has_rkt_json == true` → tell the user the project is already
   bootstrapped and suggest `/rkt-sync`. Stop here.
-- If `signals.has_git == true` OR `signals.has_agents_md == true` OR any
+- If `signals.has_git == true` OR `signals.has_claude_md == true` OR `signals.has_agents_md == true` OR any
   stack signals fired → **ADOPT mode** (see Step A1 and beyond)
 - Otherwise → **NEW mode** (see Step N1 and beyond)
 
@@ -174,7 +174,7 @@ extension, render it into the target directory without the `.tmpl` suffix:
 
 ```bash
 TEMPLATES="${CLAUDE_PLUGIN_ROOT}/templates"
-for tmpl in AGENTS.md PROGRESS.md OPS.md README.md rkt.json; do
+for tmpl in CLAUDE.md PROGRESS.md OPS.md README.md rkt.json; do
   "${CLAUDE_PLUGIN_ROOT}/scripts/render-template.sh" \
     "$TEMPLATES/${tmpl}.tmpl" "$TARGET/$tmpl" "$(cat "$TMPVARS")"
 done
@@ -314,7 +314,7 @@ Present a summary to the user:
 
 ### Config files to review
 
-- `AGENTS.md` — agent conventions (already tailored to your preset)
+- `CLAUDE.md` — agent conventions (already tailored to your preset)
 - `rkt.json` — project config (Linear prefix, deploy targets, mempalace prefix)
 - `PROGRESS.md` — update as you work
 ```
@@ -402,7 +402,7 @@ done
 ```
 
 This step only fills structural gaps in the project layout. It does **not**
-handle AGENTS.md, PROGRESS.md, OPS.md, rkt.json, or any other global template —
+handle CLAUDE.md, PROGRESS.md, OPS.md, rkt.json, or any other global template —
 those are handled by Step A5 with per-file conflict resolution.
 
 ### Step A5: Render global templates with per-file conflict resolution
@@ -410,7 +410,7 @@ those are handled by Step A5 with per-file conflict resolution.
 For each of the following files, render from template and compare to the
 existing file (if any):
 
-- `AGENTS.md`
+- `CLAUDE.md`
 - `PROGRESS.md`
 - `OPS.md`
 - `README.md`

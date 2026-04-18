@@ -2,9 +2,9 @@
 #
 # new-feature.sh — Create git worktrees for parallel domain agent work
 #
-# Usage:
-#   ./scripts/new-feature.sh WIT-42 biometric-signing database backend
-#   ./scripts/new-feature.sh WIT-42 biometric-signing              # all domains
+# Usage (invoke via the rkt plugin path; scripts live in the plugin, not your project):
+#   "${CLAUDE_PLUGIN_ROOT}/scripts/new-feature.sh" RKT-42 biometric-signing database backend
+#   "${CLAUDE_PLUGIN_ROOT}/scripts/new-feature.sh" RKT-42 biometric-signing              # all domains
 #
 # Creates a worktree per domain agent under .worktrees/, each on its own branch.
 # Branch naming follows Linear convention: [ISSUE-ID]/[domain]/[description]
@@ -120,5 +120,5 @@ echo "  cd ${WORKTREE_DIR}/${ISSUE_ID}-<domain>"
 echo "  claude --agent <domain>-implementer"
 echo ""
 echo "To clean up after merge:"
-echo "  ./scripts/cleanup-feature.sh ${ISSUE_ID}"
+echo "  \"\${CLAUDE_PLUGIN_ROOT}/scripts/cleanup-feature.sh\" ${ISSUE_ID}"
 echo ""

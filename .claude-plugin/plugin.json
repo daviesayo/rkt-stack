@@ -1,13 +1,19 @@
 {
   "name": "rkt",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Personal Claude Code plugin for project bootstrapping and workflow orchestration",
   "author": {
     "name": "Davies Ayo",
     "url": "https://github.com/daviesayo"
   },
   "license": "MIT",
-  "keywords": ["bootstrap", "scaffolding", "personal", "workflow", "linear"],
+  "keywords": [
+    "bootstrap",
+    "scaffolding",
+    "personal",
+    "workflow",
+    "linear"
+  ],
   "userConfig": {
     "default_linear_team_id": {
       "type": "string",

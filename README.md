@@ -8,7 +8,7 @@ consistent, opinionated development workflow.
 `rkt` is a Claude Code plugin that bundles the skills, agents, rules, and
 scaffolding tooling that evolved during the Witness project — so future projects
 can go from zero to a fully-wired repo (git initialized, Linear project created,
-AGENTS.md rendered, agents ready) in one command.
+CLAUDE.md rendered, agents ready) in one command.
 
 ## Why it exists
 
@@ -123,7 +123,7 @@ rkt-stack/
 ├── skills/                          # /bootstrap, /implement, /create-issue, etc.
 ├── agents/                          # backend, database, ios, web, code-reviewer
 ├── rules/                           # rule templates copied into projects
-├── templates/                       # AGENTS.md, decisions.md, presets/<name>/
+├── templates/                       # CLAUDE.md, decisions.md, presets/<name>/
 ├── scripts/                         # worktree lifecycle scripts
 ├── bin/                             # rkt helper binary (PATH-added by plugin)
 ├── docs/

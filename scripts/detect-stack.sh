@@ -26,6 +26,7 @@ if [[ "$HAS_GIT" == "true" ]]; then
 fi
 
 HAS_RKT_JSON="false"; has "rkt.json" && HAS_RKT_JSON="true"
+HAS_CLAUDE_MD="false"; has "CLAUDE.md" && HAS_CLAUDE_MD="true"
 HAS_AGENTS_MD="false"; has "AGENTS.md" && HAS_AGENTS_MD="true"
 
 HAS_NEXTJS="false"
@@ -72,6 +73,7 @@ cat <<EOF
     "has_git": $HAS_GIT,
     "has_remote": $HAS_REMOTE,
     "has_rkt_json": $HAS_RKT_JSON,
+    "has_claude_md": $HAS_CLAUDE_MD,
     "has_agents_md": $HAS_AGENTS_MD,
     "has_nextjs": $HAS_NEXTJS,
     "has_vite": $HAS_VITE,

@@ -23,7 +23,7 @@ PRESET=$(jq -r .preset rkt.json)
 
 Read (in this order, quietly — no re-read if already in context):
 
-- `AGENTS.md` — agent conventions and project overview
+- `CLAUDE.md` — agent conventions and project overview
 - `PROGRESS.md` — what's been built
 - `decisions.md` — accumulated architectural decisions
 - `docs/decisions/agent_learnings.md` — pitfalls seen so far

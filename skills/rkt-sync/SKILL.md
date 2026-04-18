@@ -1,6 +1,6 @@
 ---
 name: rkt-sync
-description: Use to sync project-owned templates (AGENTS.md, rules, PROGRESS.md etc.) with the latest rkt plugin version after a /plugin update. Triggers on "sync templates", "rkt sync", "update AGENTS.md", "pick up new rkt changes", "refresh my rules".
+description: Use to sync project-owned templates (CLAUDE.md, rules, PROGRESS.md etc.) with the latest rkt plugin version after a /plugin update. Triggers on "sync templates", "rkt sync", "update CLAUDE.md", "pick up new rkt changes", "refresh my rules".
 ---
 
 # rkt-sync
@@ -11,7 +11,7 @@ rkt plugin version, preserving **project-owned** files and user-edited sections.
 ## What sync touches vs. never touches
 
 **Plugin-managed (may be updated by sync, with user confirmation):**
-- `AGENTS.md`
+- `CLAUDE.md`
 - `PROGRESS.md`, `OPS.md`, `README.md`
 - `.claude/rules/backend-fastapi.md`, `supabase.md`, `web-vite.md`, `web-nextjs.md`, `ios-design.md` (only the rules shipped by the plugin and applicable to the project's preset)
 - `rkt.json` (version field only — user-customized fields are preserved)
@@ -103,8 +103,8 @@ CREATED=()
 SKIPPED_PROJECT_OWNED=()
 
 process_file() {
-  local tmpl_name="$1"   # e.g. "AGENTS.md"
-  local target="$2"       # e.g. "AGENTS.md" or "docs/decisions/agent_learnings.md"
+  local tmpl_name="$1"   # e.g. "CLAUDE.md"
+  local target="$2"       # e.g. "CLAUDE.md" or "docs/decisions/agent_learnings.md"
   local append_only="${3:-false}"
 
   # Safety guard: never touch project-owned overlays
@@ -155,7 +155,7 @@ process_file() {
 }
 
 # Process global template files
-process_file "AGENTS.md"    "AGENTS.md"
+process_file "CLAUDE.md"    "CLAUDE.md"
 process_file "PROGRESS.md"  "PROGRESS.md"
 process_file "OPS.md"       "OPS.md"
 process_file "README.md"    "README.md"
@@ -251,7 +251,7 @@ Use `AskUserQuestion`:
 If yes:
 
 ```bash
-git add AGENTS.md PROGRESS.md OPS.md README.md rkt.json decisions.md \
+git add CLAUDE.md PROGRESS.md OPS.md README.md rkt.json decisions.md \
         docs/decisions/agent_learnings.md .claude/rules/
 # Stage only plugin-managed rules — never stage project-*.md
 git reset HEAD .claude/rules/project-*.md 2>/dev/null || true

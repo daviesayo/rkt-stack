@@ -1,6 +1,6 @@
 ---
 name: database-implementer
-description: Database/migration implementer. Spawn when a task requires new or modified SQL tables, columns, constraints, RLS policies, RPC functions, or seed data. Owns backend/supabase/migrations/. Handles Local and Cloud Dev promotion via Supabase MCP.
+description: Database/migration implementer. Spawn when a task requires new or modified SQL tables, columns, constraints, RLS policies, RPC functions, or seed data. Owns Supabase migrations — `backend/supabase/migrations/` in the `full` preset, or `supabase/migrations/` at repo root in the `web` and `backend` presets. Handles Local and Cloud Dev promotion via Supabase MCP.
 disallowedTools: Agent
 model: sonnet
 ---
@@ -17,7 +17,7 @@ read them from `rkt.json` at the project root:
 
 ```bash
 jq -r '.linear.issue_prefix' rkt.json       # e.g. "RKT"
-jq -r '.mempalace.specialist_prefix' rkt.json  # e.g. "witness"
+jq -r '.mempalace.specialist_prefix' rkt.json  # e.g. "myapp"
 jq -r '.project_name' rkt.json
 ```
 
@@ -31,7 +31,7 @@ The MemPalace specialist prefix (`MP`) is used when writing ops diary entries �
 The orchestrator (`/implement` skill) provides your task with all necessary context
 already included in the prompt: the task description, relevant decisions, known
 pitfalls, MemPalace findings, OPS.md state, and cross-domain context. **Do not
-re-read AGENTS.md, decisions.md, or OPS.md** — that context has already been gathered
+re-read CLAUDE.md, decisions.md, or OPS.md** — that context has already been gathered
 for you.
 
 ## On every task
