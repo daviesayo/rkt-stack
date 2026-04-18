@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.1.2 — 2026-04-18
+
+### Fixed
+
+- **Worktree cleanup no longer deletes the directory the shell is standing in.**
+  `cleanup-feature.sh` and `cleanup-merged-worktrees.sh` now auto-return to
+  the main repo before touching worktrees, via a new
+  `ensure_out_of_worktrees` helper in `scripts/lib/common.sh`. Prevents the
+  class of bug where an orchestrator `cd`s into a worktree for manual work,
+  then asks cleanup to run and ends up with a broken shell.
+- **Sync failures during branch creation are now loud.** `new-feature.sh`
+  surfaces `git push` / `git pull` errors instead of silently swallowing
+  them with `|| true`. If sync fails, you see exactly why and can decide
+  whether to proceed.
+- `/implement` Step 11 (cleanup) now explicitly instructs the orchestrator
+  to `cd` to the main repo root before running cleanup, for defense in
+  depth even with the script-level guard.
+
 ## 0.1.1 — 2026-04-18
 
 ### Changed

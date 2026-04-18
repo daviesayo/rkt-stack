@@ -381,6 +381,19 @@ $LINEAR issue update ${PREFIX}-[N] --state "Done"
 
 ## Step 11: Clean up worktrees
 
+**Pre-flight: always run cleanup from the main repo directory, never from
+inside a worktree.** If you `cd`'d into a worktree earlier in the session to
+do manual work, `cd` back out first:
+
+```bash
+# If in any doubt, return to the main repo root before cleanup
+MAIN_REPO=$(git worktree list --porcelain | awk '/^worktree / { print $2; exit }')
+cd "$MAIN_REPO"
+```
+
+The cleanup script itself guards against this (`ensure_out_of_worktrees`) but
+being explicit keeps the shell state sane for anything that runs after:
+
 ```bash
 "${CLAUDE_PLUGIN_ROOT}/scripts/cleanup-feature.sh" ${PREFIX}-[N]
 ```

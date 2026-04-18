@@ -11,6 +11,14 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/common.sh
+source "$SCRIPT_DIR/lib/common.sh"
+
+# If called from inside a worktree (e.g. Claude cd'd in to do manual work),
+# return to the main repo before creating new worktrees.
+ensure_out_of_worktrees
+
 # ── Args ──────────────────────────────────────────────────
 
 if [[ $# -lt 2 ]]; then
@@ -57,12 +65,14 @@ fi
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 WORKTREE_DIR="${REPO_ROOT}/.worktrees"
 
-# Sync local main with origin before branching.
-# Push local commits up, pull remote commits down — so the branch base
-# matches what GitHub considers main and includes all local work.
-echo "Syncing main with origin..."
-git push origin main --quiet 2>/dev/null || true
-git pull origin main --quiet --ff-only 2>/dev/null || true
+# Sync local main with origin before branching — pushes unpushed commits up and
+# pulls remote commits down so the feature branch base matches origin/main. Any
+# unpushed commits would otherwise appear in the feature's PR diff.
+if ! sync_main_with_origin; then
+  echo ""
+  echo "⚠️  Proceeding with a possibly out-of-sync main. Review sync warnings above before merging the PR this branch produces."
+  echo ""
+fi
 BASE_BRANCH="main"
 
 # ── Ensure .worktrees/ is gitignored ─────────────────────

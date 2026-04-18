@@ -7,9 +7,17 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/common.sh
+source "$SCRIPT_DIR/lib/common.sh"
+
+# Safety: never delete the worktree the caller is standing in. If pwd is inside
+# .worktrees/, cd to the main repo first.
+ensure_out_of_worktrees
+
 if [[ $# -lt 1 ]]; then
   echo "Usage: $0 <LINEAR-ISSUE-ID>"
-  echo "Example: $0 WIT-42"
+  echo "Example: $0 RKT-42"
   exit 1
 fi
 
