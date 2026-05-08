@@ -180,16 +180,18 @@ Determine which rules apply to the project's preset, then sync only those.
 ```bash
 PRESET=$(jq -r .preset rkt.json)
 
-# Map presets to rule files they use
+# Map presets to rule files they use. MUST stay in sync with bootstrap's
+# Step N4 / Step A5 mapping in skills/bootstrap/SKILL.md.
 declare -A PRESET_RULES
+PRESET_RULES["full"]="backend-fastapi.md supabase.md web-vite.md ios-design.md"
+PRESET_RULES["web"]="web-nextjs.md supabase.md"
 PRESET_RULES["backend"]="backend-fastapi.md supabase.md"
-PRESET_RULES["web"]="web-vite.md"
-PRESET_RULES["web-next"]="web-nextjs.md"
 PRESET_RULES["ios"]="ios-design.md"
-PRESET_RULES["fullstack"]="backend-fastapi.md supabase.md web-vite.md"
-PRESET_RULES["fullstack-next"]="backend-fastapi.md supabase.md web-nextjs.md"
 
 APPLICABLE_RULES="${PRESET_RULES[$PRESET]:-}"
+if [[ -z "$APPLICABLE_RULES" ]]; then
+  echo "Warning: preset '$PRESET' has no rules mapping. Skipping rule sync." >&2
+fi
 
 for rule_file in $APPLICABLE_RULES; do
   local target=".claude/rules/$rule_file"

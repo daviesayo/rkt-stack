@@ -149,4 +149,54 @@ for f in CLAUDE.md PROGRESS.md OPS.md README.md decisions.md "docs/decisions/age
 done
 
 rm -f "$TMPVARS"
+
+# ── PRESET_RULES mapping must match bootstrap and cover all 4 presets ────────
+# Verify the PRESET_RULES declaration in rkt-sync's SKILL.md matches the
+# canonical mapping in bootstrap/SKILL.md Step N4/A5. Avoids declare -A
+# (bash 4+ only) so this works on macOS's default bash 3.2.
+SYNC_SKILL="$PLUGIN_DIR/skills/rkt-sync/SKILL.md"
+
+assert_preset_rules() {
+  local preset="$1"
+  local expected="$2"
+  local actual_line actual
+  actual_line=$(grep -E "^PRESET_RULES\\[\"$preset\"\\]=" "$SYNC_SKILL" | head -1)
+  [[ -n "$actual_line" ]] || {
+    echo "FAIL: rkt-sync PRESET_RULES has no entry for preset '$preset'"
+    exit 1
+  }
+  # Extract the value via regex (bash 3.2 safe — no associative-array dependency)
+  if [[ "$actual_line" =~ PRESET_RULES\[\"${preset}\"\]=\"([^\"]*)\" ]]; then
+    actual="${BASH_REMATCH[1]}"
+  else
+    echo "FAIL: could not parse value from line: $actual_line"
+    exit 1
+  fi
+  [[ "$actual" == "$expected" ]] || {
+    echo "FAIL: rkt-sync PRESET_RULES[$preset] = '$actual', expected '$expected'"
+    exit 1
+  }
+}
+
+assert_preset_rules "full"    "backend-fastapi.md supabase.md web-vite.md ios-design.md"
+assert_preset_rules "web"     "web-nextjs.md supabase.md"
+assert_preset_rules "backend" "backend-fastapi.md supabase.md"
+assert_preset_rules "ios"     "ios-design.md"
+
+# Every rule file referenced must exist in the plugin's rules/ directory
+for rule in backend-fastapi.md supabase.md web-vite.md web-nextjs.md ios-design.md; do
+  [[ -f "$PLUGIN_DIR/rules/$rule" ]] || {
+    echo "FAIL: rules/$rule missing (referenced by rkt-sync PRESET_RULES)"
+    exit 1
+  }
+done
+
+# rkt-sync MUST NOT keep the stale preset names (web-next / fullstack / fullstack-next)
+for stale in "web-next" "fullstack" "fullstack-next"; do
+  ! grep -qE "^PRESET_RULES\\[\"$stale\"\\]=" "$SYNC_SKILL" || {
+    echo "FAIL: rkt-sync still contains stale PRESET_RULES[\"$stale\"] entry"
+    exit 1
+  }
+done
+
 echo "PASS: test-rkt-sync.sh"
