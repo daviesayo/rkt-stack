@@ -62,8 +62,20 @@ EOF
     return 1
   fi
 
+  # Validate rkt.json is parseable BEFORE checking project_id, otherwise a
+  # malformed file gives the user the misleading "Linear not configured" error
+  # instead of the actual cause.
+  if ! jq empty rkt.json 2>/dev/null; then
+    cat >&2 <<EOF
+Error: rkt.json contains invalid JSON.
+
+Run \`jq . rkt.json\` to see the parser error, then fix the file.
+EOF
+    return 1
+  fi
+
   local project_id
-  project_id=$(jq -r '.linear.project_id // ""' rkt.json 2>/dev/null)
+  project_id=$(jq -r '.linear.project_id // ""' rkt.json)
 
   if [[ -z "$project_id" || "$project_id" == "null" ]]; then
     cat >&2 <<EOF

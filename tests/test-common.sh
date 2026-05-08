@@ -73,5 +73,19 @@ set -e
 echo "$err" | grep -q "/rkt:bootstrap" \
   || { echo "FAIL: require_linear error message should reference /rkt:bootstrap (got: $err)"; exit 1; }
 
+# Case 7: malformed rkt.json fails with a distinct error, not "Linear not configured"
+printf 'not-valid-json{' > rkt.json
+set +e
+err=$(require_linear 2>&1 1>/dev/null)
+exit_code=$?
+set -e
+[[ $exit_code -ne 0 ]] || { echo "FAIL: require_linear should fail on malformed rkt.json"; exit 1; }
+echo "$err" | grep -q "invalid JSON" \
+  || { echo "FAIL: malformed rkt.json should produce 'invalid JSON' error, not (got: $err)"; exit 1; }
+# AND must NOT report the Linear-not-configured message (that would be misleading)
+echo "$err" | grep -q "Linear is not configured" \
+  && { echo "FAIL: malformed rkt.json was reported as 'Linear not configured' (misleading)"; exit 1; } \
+  || true
+
 cd "$saved_pwd"
 echo "PASS: test-common.sh"

@@ -182,13 +182,18 @@ PRESET=$(jq -r .preset rkt.json)
 
 # Map presets to rule files they use. MUST stay in sync with bootstrap's
 # Step N4 / Step A5 mapping in skills/bootstrap/SKILL.md.
-declare -A PRESET_RULES
-PRESET_RULES["full"]="backend-fastapi.md supabase.md web-vite.md ios-design.md"
-PRESET_RULES["web"]="web-nextjs.md supabase.md"
-PRESET_RULES["backend"]="backend-fastapi.md supabase.md"
-PRESET_RULES["ios"]="ios-design.md"
+#
+# Implementation note: bash `case` instead of `declare -A` — associative
+# arrays require bash 4+ but macOS's default bash is 3.2, where `declare -A`
+# fails silently and every key collapses to index 0 (last assignment wins).
+case "$PRESET" in
+  full)    APPLICABLE_RULES="backend-fastapi.md supabase.md web-vite.md ios-design.md" ;;
+  web)     APPLICABLE_RULES="web-nextjs.md supabase.md" ;;
+  backend) APPLICABLE_RULES="backend-fastapi.md supabase.md" ;;
+  ios)     APPLICABLE_RULES="ios-design.md" ;;
+  *)       APPLICABLE_RULES="" ;;
+esac
 
-APPLICABLE_RULES="${PRESET_RULES[$PRESET]:-}"
 if [[ -z "$APPLICABLE_RULES" ]]; then
   echo "Warning: preset '$PRESET' has no rules mapping. Skipping rule sync." >&2
 fi
