@@ -46,7 +46,7 @@ cat > "$TMPVARS" <<'EOF'
   "LINEAR_PROJECT_URL": "",
   "MEMPALACE_PREFIX": "nextjs-existing",
   "GH_VISIBILITY": "skip",
-  "DEPLOY_BACKEND": "null",
+  "DEPLOY_BACKEND": null,
   "DEPLOY_WEB": "vercel",
   "DEPLOY_DB": "supabase",
   "DATE": "2026-04-18",
@@ -124,4 +124,88 @@ git commit -q -m "[rkt] test adoption"
 
 # Cleanup
 rm -f "$TMPVARS"
+
+# ── Test 2: src/-layout fixture must NOT receive root app/ or lib/ ────────────
+tmpdir2=$(mktemp -d)
+trap "rm -rf $tmpdir $tmpdir2" EXIT
+
+cp -R "$HERE/fixtures/nextjs-src-layout/." "$tmpdir2/"
+cd "$tmpdir2"
+git init -q -b main
+git add .
+git commit -q -m "initial"
+
+DETECT2=$(bash "$PLUGIN_DIR/scripts/detect-stack.sh" "$tmpdir2")
+
+[[ $(echo "$DETECT2" | jq -r .signals.nextjs_layout) == "src" ]] \
+  || { echo "FAIL: nextjs_layout should be src for nextjs-src-layout fixture"; exit 1; }
+
+TMPVARS2=$(mktemp)
+cat > "$TMPVARS2" <<'EOF'
+{
+  "PROJECT_NAME": "nextjs-src-layout",
+  "PROJECT_NAME_PASCAL": "NextjsSrcLayout",
+  "PRESET": "web",
+  "LINEAR_PREFIX": "NSL",
+  "LINEAR_TEAM_ID": "placeholder",
+  "LINEAR_PROJECT_ID": "",
+  "LINEAR_PROJECT_URL": "",
+  "MEMPALACE_PREFIX": "nextjs-src-layout",
+  "GH_VISIBILITY": "skip",
+  "DEPLOY_BACKEND": null,
+  "DEPLOY_WEB": "vercel",
+  "DEPLOY_DB": "supabase",
+  "DATE": "2026-04-18",
+  "RKT_VERSION": "0.1.3"
+}
+EOF
+
+# Replicate Step A4's src/-layout skip logic
+NEXTJS_LAYOUT=$(echo "$DETECT2" | jq -r '.signals.nextjs_layout // "none"')
+SKIP_ROOT_APP_LIB="false"
+if [[ $(jq -r .PRESET "$TMPVARS2") == "web" && "$NEXTJS_LAYOUT" == "src" ]]; then
+  SKIP_ROOT_APP_LIB="true"
+fi
+
+SCAFFOLD2="$PLUGIN_DIR/templates/presets/web"
+(cd "$SCAFFOLD2" && find . -type f ! -path "./.*") | while read -r rel; do
+  rel_clean="${rel#./}"
+  if [[ "$SKIP_ROOT_APP_LIB" == "true" ]]; then
+    case "$rel_clean" in
+      app/*|lib/*) continue ;;
+    esac
+  fi
+  dest="$tmpdir2/$rel_clean"
+  if [[ ! -e "$dest" ]]; then
+    mkdir -p "$(dirname "$dest")"
+    if grep -q '{{' "$SCAFFOLD2/$rel" 2>/dev/null; then
+      "$PLUGIN_DIR/scripts/render-template.sh" "$SCAFFOLD2/$rel" "$dest" "$(cat "$TMPVARS2")"
+    else
+      cp "$SCAFFOLD2/$rel" "$dest"
+    fi
+  fi
+done
+
+# Root-level app/ and lib/ MUST NOT exist (they would conflict with src/app/)
+[[ ! -e "$tmpdir2/app/page.tsx" ]] \
+  || { echo "FAIL: $tmpdir2/app/page.tsx exists — preset's root app/ should have been skipped"; exit 1; }
+[[ ! -e "$tmpdir2/app/layout.tsx" ]] \
+  || { echo "FAIL: $tmpdir2/app/layout.tsx exists — preset's root app/ should have been skipped"; exit 1; }
+[[ ! -e "$tmpdir2/lib/supabase.ts" ]] \
+  || { echo "FAIL: $tmpdir2/lib/supabase.ts exists — preset's root lib/ should have been skipped"; exit 1; }
+
+# Project's existing src/app/page.tsx must be preserved
+grep -q "fixture: src layout" "$tmpdir2/src/app/page.tsx" \
+  || { echo "FAIL: src/app/page.tsx was clobbered"; exit 1; }
+
+# Other preset files (e.g. tsconfig.json, supabase migrations) should still be created
+[[ -f "$tmpdir2/tsconfig.json" ]] \
+  || { echo "FAIL: tsconfig.json should have been scaffolded"; exit 1; }
+
+rm -f "$TMPVARS2"
+
+# ── Verify rkt.json from Test 1 has DEPLOY_BACKEND as JSON null, not "null" ───
+[[ $(jq -r '.deploy.backend | type' "$tmpdir/rkt.json") == "null" ]] \
+  || { echo "FAIL: rkt.json deploy.backend should be JSON null, got $(jq -r '.deploy.backend | type' "$tmpdir/rkt.json")"; exit 1; }
+
 echo "PASS: test-bootstrap-adopt.sh"

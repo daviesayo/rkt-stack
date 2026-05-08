@@ -382,12 +382,36 @@ preset using the same mapping as NEW Step N2.
 For every file in `templates/presets/{PRESET}/`, compare against the target.
 Create missing files; **never overwrite existing ones**. Never delete anything.
 
+**Special case — Next.js `src/` directory layout.** When the target uses
+`src/app/` (Next.js's "src directory" feature, surfaced as
+`signals.nextjs_layout == "src"` from Step 0 detection), the preset's
+root-level `app/` and `lib/` directories must NOT be scaffolded — they
+would create a parallel route tree at the root and break the Next.js
+build. Skip those preset paths and report each skip in Step A8.
+
 ```bash
 PRESET=$(jq -r .PRESET "$TMPVARS")
 SCAFFOLD="${CLAUDE_PLUGIN_ROOT}/templates/presets/$PRESET"
 
+# Decide whether to skip preset's root-level app/ and lib/ for src/-layout
+# Next.js projects.
+NEXTJS_LAYOUT=$(echo "$DETECT_OUTPUT" | jq -r '.signals.nextjs_layout // "none"')
+SKIP_ROOT_APP_LIB="false"
+if [[ "$PRESET" == "web" && "$NEXTJS_LAYOUT" == "src" ]]; then
+  SKIP_ROOT_APP_LIB="true"
+fi
+
 (cd "$SCAFFOLD" && find . -type f ! -path "./.*") | while read -r rel; do
-  dest="$TARGET/${rel#./}"
+  rel_clean="${rel#./}"
+  if [[ "$SKIP_ROOT_APP_LIB" == "true" ]]; then
+    case "$rel_clean" in
+      app/*|lib/*)
+        echo "  [skip] $rel_clean — project uses src/ layout"
+        continue
+        ;;
+    esac
+  fi
+  dest="$TARGET/$rel_clean"
   if [[ ! -e "$dest" ]]; then
     mkdir -p "$(dirname "$dest")"
     if grep -q '{{' "$SCAFFOLD/$rel" 2>/dev/null; then
