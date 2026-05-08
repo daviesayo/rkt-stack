@@ -1,5 +1,95 @@
 # Changelog
 
+## 0.2.0 — 2026-05-08
+
+Adds the `/promptsmith` skill — a prompt-engineering tool forked from
+`nidhinjs/prompt-master`, refined through post-implementation verification
+testing (`/writing-skills` methodology) before this release shipped.
+Verification surfaced four refinement candidates; all were grilled on
+before any implementation, and all are folded into this release.
+
+### Added
+
+- **New skill: `/promptsmith`.** A prompt-engineering skill for crafting
+  production-ready prompts for AI tools (Claude, Claude Code, Codex CLI,
+  GPT, Cursor, Gemini, image/video/voice AI). Auto-activates on
+  prompt-engineering requests; also explicitly invocable as `/promptsmith`.
+  - **Two-stage flow.** Stage 1 auto-expands the user's rough idea into
+    a draft using the appropriate output schema. Stage 2 asks targeted
+    clarifying questions only when critical dimensions are genuinely
+    missing — never always-3 like upstream prompt-master.
+  - **Default behavior is interactive.** When critical dimensions are
+    missing, questions go through `AskUserQuestion` and wait for
+    response. Ship-with-flags fallback fires only on explicit user skip
+    ("just produce it," "don't ask me") or detected async/batch use.
+    "I don't know" on a single question skips that question only, not
+    the whole batch.
+  - **`--explain` opt-in mode.** Triggered by the token `--explain` OR
+    natural-language phrases like "explain your reasoning," "show your
+    work," "why this prompt," "how did you get there." Appends a
+    structured `Reasoning` block after the standard output showing
+    schema picked + why, profile loaded + sections applied, intent
+    dimensions extracted, questions asked, assumptions flagged. Default
+    off — the existing hard rule against padding output with unrequested
+    explanations remains authoritative for normal invocations.
+
+- **Five-section tool profile template.** All deepened tool profiles
+  follow: framing / required structure / default mode / quality contract /
+  common failure modes / template references. Three profiles use the new
+  template in this release:
+  - **Codex CLI** (new): agentic loop framing, Goal/Context/Constraints/
+    Done-when required structure, verification-as-contract discipline,
+    fork-instead-of-persist recovery pattern.
+  - **Claude Code** (rebuilt): Opus-4.7-specific behaviors not in the
+    upstream profile — context window as binding constraint, Read tool's
+    all-or-nothing nature, hooks vs CLAUDE.md determinism, kitchen-sink
+    session anti-pattern, two-correction rule, 4.7-vs-4.6 gap-filler
+    regression, monorepo subdirectory trick, MCP server context cost.
+  - **Cursor** (rebuilt; renamed from `cursor-windsurf` since Windsurf
+    has diverged): Cursor 1.x specifics — Ask/Plan/Agent/Manual mode
+    stratification, `@`-pinning mechanics, `.cursor/rules/*.mdc`
+    displacing legacy `.cursorrules`, Auto-mode's Composer-1 routing,
+    Max mode's 200-tool ceiling, Auto-Run permissive allowlist + prompt
+    injection risk.
+
+- **SKKO output schema** (Situation/Task/Objective/Knowledge/Examples) —
+  Template N in `references/templates.md`. Routed automatically by task
+  type: SKKO for generative/creative outputs (writing, marketing, image,
+  video, voice); existing templates (G, H, M, E, F, A) for code,
+  agentic, analytical, pattern, simple tasks. **Structure rule:**
+  Situation, Task, Objective, and Examples are fixed top-level sections;
+  Knowledge may decompose into named peer headers (Brand voice,
+  Constraints, Success criteria, Audience nuances) when substantial.
+  Bounded flexibility, not free-form.
+
+### Changed
+
+- **CLAUDE.md and `plugin.json` description broadened.** rkt is now framed
+  as "personal AI toolbox" rather than "project-bootstrapping workflow" —
+  reflects that the plugin's scope grew beyond bootstrapping and now
+  includes prompt engineering and other ongoing-work skills.
+
+### Deferred
+
+- **GPT-5.5 and Gemini 3 profile rebuilds (T2)** are queued for a future
+  release. The five-section template established here is the standard
+  shape; T2 will follow it.
+
+### Provenance
+
+- `skills/promptsmith/` is forked from
+  [nidhinjs/prompt-master](https://github.com/nidhinjs/prompt-master) at
+  commit `7a02ddd31bad3056cc3ccf0af2b23d7b30d4abc2` (upstream version 1.6.0),
+  MIT-licensed. The fork applies the spirit of upstream
+  [PR #13](https://github.com/nidhinjs/prompt-master/pull/13) (progressive
+  disclosure — tool-routing profiles moved from `SKILL.md` into
+  `references/tool-profiles.md`) and fixes the three structural gaps from
+  upstream [issue #32](https://github.com/nidhinjs/prompt-master/issues/32):
+  data-sensitivity hard rule, verification checklist exit conditions, and
+  the 3-question-limit precedence note. Two-stage flow inspired by
+  [Prompt Cowboy](https://promptcowboy.ai/). The fork is **not tracking
+  upstream** — see `skills/promptsmith/NOTICE.md` for full attribution.
+
 ## 0.1.4 — 2026-05-08
 
 ### Fixed

@@ -27,17 +27,19 @@ dense; the files above are the distilled context.
 
 ## What this plugin is
 
-`rkt` is a Claude Code plugin for Davies's personal project-bootstrapping
-workflow. It scaffolds new projects (or adopts existing ones) with skills,
-agents, rules, and conventions that evolved during Witness.
+`rkt` is Davies's personal AI toolbox — a Claude Code plugin bundling the
+skills, agents, rules, and conventions used across his AI-assisted work.
+Some skills bootstrap and shape projects; others assist ongoing work
+(prompt engineering, etc.). It is personal-only; no external users.
 
 **Installed as:** `rkt@daviesayo-marketplace` (from `daviesayo/rkt-stack` on
-GitHub). Users install via `claude plugin marketplace add daviesayo/rkt-stack`
+GitHub). Install via `claude plugin marketplace add daviesayo/rkt-stack`
 then `claude plugin install rkt@daviesayo-marketplace`.
 
-**Presets:** `full`, `web`, `backend`, `ios` (see `README.md` for the matrix).
+**Presets** (for the bootstrap-family skills): `full`, `web`, `backend`,
+`ios` — see `README.md` for the matrix.
 
-**Shipping components:** 7 skills, 5 agents, 5 rules, 7 templates, 4 preset
+**Shipping components:** 8 skills, 5 agents, 5 rules, 7 templates, 4 preset
 folder scaffolds, 5 scripts, 7 tests.
 
 ---

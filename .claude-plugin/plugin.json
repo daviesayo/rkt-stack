@@ -1,7 +1,7 @@
 {
   "name": "rkt",
-  "version": "0.1.4",
-  "description": "Personal Claude Code plugin for project bootstrapping and workflow orchestration",
+  "version": "0.2.0",
+  "description": "Personal Claude Code plugin — project bootstrapping, workflow orchestration, and prompt engineering",
   "author": {
     "name": "Davies Ayo",
     "url": "https://github.com/daviesayo"
