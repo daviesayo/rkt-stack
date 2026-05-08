@@ -79,14 +79,9 @@ match `[a-z][a-z0-9-]*`. Derive `{{PROJECT_NAME_PASCAL}}` from it (e.g.
 `my-new-thing` → `MyNewThing`) by title-casing each hyphen-separated segment
 and joining without separators.
 
-**Issue prefix**:
-
-Auto-derive via the `derive_prefix` function in
-`${CLAUDE_PLUGIN_ROOT}/scripts/lib/common.sh`. Present as a suggestion:
-"I suggest `MNT` for `my-new-thing`. Accept?" Use `AskUserQuestion` with
-options: `[Accept MNT]`, `[Customize]`, `[Cancel]`.
-
-**Linear team**:
+**Linear team** *(must run BEFORE the issue-prefix prompt — the team key
+is the canonical source of truth for `LINEAR_PREFIX`, and asking the user
+to type one only to override it later is bad UX):*
 
 Query available teams:
 
@@ -98,6 +93,31 @@ linear api <<< 'query { teams { nodes { id key name } } }' | jq -r '.data.teams.
 - If >1 team → use `AskUserQuestion` with team names as options
 - If 0 teams → stop with an actionable error: "No Linear teams found. Create a
   team at linear.app first, or re-run after setting up Linear."
+
+Capture the chosen team's `key` field (e.g. `RKT`, `MCO`) as
+`LINEAR_TEAM_KEY` — Linear identifies issues by team key, not by project
+name, so this is what `/rkt:implement` will use to build branches and PR
+titles (`${LINEAR_TEAM_KEY}-42/...`).
+
+**Issue prefix**:
+
+Default to `LINEAR_TEAM_KEY` from the previous step. Only fall back to the
+project-name derivation (`derive_prefix` in
+`${CLAUDE_PLUGIN_ROOT}/scripts/lib/common.sh`) when Linear is unavailable
+(`linear` CLI missing, or user explicitly skips Linear later). Present as
+a confirmation:
+
+> "Use Linear team key `RKT` as the issue prefix? This is what Linear's
+> GitHub integration auto-links on, so it must match exactly."
+>
+> Use `AskUserQuestion` with options: `[Accept RKT]`, `[Customize]`,
+> `[Cancel]`.
+
+If the user picks `[Customize]`, **warn loudly** that any prefix other than
+the team key will break Linear ↔ GitHub auto-linking. The failure mode is
+silent: a project named `wdyd` under team `RKT` would bootstrap with prefix
+`WDYD`, and every subsequent `gh pr create --title "[WDYD-42] ..."` would
+fail to auto-attach to the matching `RKT-42` Linear issue.
 
 **GitHub repo**:
 
@@ -294,6 +314,19 @@ esac
 If `gh repo create` fails (auth issue, name conflict), warn but don't abort
 the bootstrap. The user can run it manually later.
 
+After the remote is connected (whether just-created or pre-existing), sync
+the canonical rkt label set onto it:
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}/scripts/sync-github-labels.sh"
+```
+
+The script is a no-op when no `origin` remote exists, so it's safe to call
+unconditionally. This ensures the labels referenced by `/rkt:create-issue`
+and `/rkt:implement` (`Feature`, `Bug`, `Improvement`, `Ops`, `Docs`,
+`Backend`, `Database`, `iOS`, `Web`, `Blocked`) exist on the repo before any
+agent tries `gh pr create --label …`.
+
 ### Step N8: Report
 
 Present a summary to the user:
@@ -365,10 +398,11 @@ Prompts are the same as NEW Step N2, with these ADOPT-specific differences:
 - **GitHub repo:** if `signals.has_remote == true` (detected in Step 0), default
   to `[Skip]` — the remote already exists. Otherwise offer the normal
   `[Create private]` / `[Create public]` / `[Skip]` menu.
-- **Issue prefix:** auto-derive from the git remote name if available (e.g. if
-  remote is `git@github.com:org/my-app.git`, derive `MA`); otherwise fall back
-  to the directory basename. Present as a suggestion with `[Accept]` /
-  `[Customize]` / `[Cancel]`.
+- **Issue prefix:** **defer this prompt until Step A6** — the canonical source
+  for the prefix is the Linear team key (whether linking an existing project or
+  creating a new one). For ADOPT mode, asking before Linear is resolved would
+  almost certainly produce a wrong answer. Set a placeholder in TMPVARS for now
+  and overwrite in Step A6.
 - **MemPalace prefix:** default to the project name (slugified). Offer override
   via `AskUserQuestion`.
 - **Linear:** handled separately in Step A6 — ADOPT has the "link existing"
@@ -495,6 +529,11 @@ Use `AskUserQuestion`:
 - Question: "Is there an existing Linear project for this repo?"
 - Options: `[Link existing (paste URL)]`, `[Create new]`, `[Skip Linear]`
 
+In all three branches, the **issue prefix in `TMPVARS.LINEAR_PREFIX` must be
+set from the resolved Linear team key**, not from the project name. The team
+key is what Linear's GitHub integration auto-links on; a mismatch produces a
+silent failure (PRs don't attach to issues).
+
 **If `[Link existing (paste URL)]`:**
 
 - Follow up with a free-text `AskUserQuestion` prompt for the Linear project URL.
@@ -515,20 +554,43 @@ Use `AskUserQuestion`:
 
 - Store `LINEAR_PROJECT_ID`, `LINEAR_PROJECT_URL`, `LINEAR_TEAM_ID`, and
   `LINEAR_PREFIX` (from `team.key`) into `TMPVARS`.
-- Re-render `rkt.json` with the updated `TMPVARS` so the linked project is
-  reflected.
 
-**If `[Create new]`:** use the same GraphQL mutation as NEW Step N6.
+**If `[Create new]`:**
 
-**If `[Skip Linear]`:** set `linear.project_id` and `linear.project_url` to
-empty strings in `rkt.json`. Skills degrade gracefully when these are absent.
+- Pick the Linear team first (same prompt as NEW Step N2 — auto-use if 1
+  team, `AskUserQuestion` if multiple). Store `team.id` as `LINEAR_TEAM_ID`
+  and **`team.key` as `LINEAR_PREFIX`** in `TMPVARS`.
+- Run the same `projectCreate` GraphQL mutation as NEW Step N6 with the
+  resolved `LINEAR_TEAM_ID`.
+- Store `LINEAR_PROJECT_ID` and `LINEAR_PROJECT_URL` in `TMPVARS`.
 
-After resolving Linear, re-render `rkt.json` if its contents changed:
+**If `[Skip Linear]`:**
+
+- Set `linear.project_id` and `linear.project_url` to empty strings in
+  `rkt.json`. Skills degrade gracefully when these are absent (`require_linear`
+  fails fast with an actionable error).
+- For `LINEAR_PREFIX`, fall back to the `derive_prefix` heuristic on the git
+  remote slug (preferred) or directory basename. Surface a follow-up
+  `AskUserQuestion` confirming the derived value with `[Accept]` / `[Customize]`
+  options, and warn that linking Linear later via `/rkt-tailor` will likely
+  rewrite this prefix to match the team key.
+
+After Step A6 resolves, **re-render `CLAUDE.md` and `rkt.json`** with the
+updated `TMPVARS` so the prefix tokens (`{{LINEAR_PREFIX}}`) reflect the
+canonical value:
 
 ```bash
 "${CLAUDE_PLUGIN_ROOT}/scripts/render-template.sh" \
   "${CLAUDE_PLUGIN_ROOT}/templates/rkt.json.tmpl" \
   "$TARGET/rkt.json" "$(cat "$TMPVARS")"
+
+# CLAUDE.md only re-renders if the user accepted Replace/Merge in Step A5.
+# If they kept their own CLAUDE.md, the warning in Step A8 covers prefix drift.
+if grep -q "{{LINEAR_PREFIX}}" "$TARGET/CLAUDE.md" 2>/dev/null; then
+  "${CLAUDE_PLUGIN_ROOT}/scripts/render-template.sh" \
+    "${CLAUDE_PLUGIN_ROOT}/templates/CLAUDE.md.tmpl" \
+    "$TARGET/CLAUDE.md" "$(cat "$TMPVARS")"
+fi
 ```
 
 ### Step A7: Commit on existing history (surgical staging)
@@ -578,6 +640,11 @@ if ! git diff --cached --quiet; then
 else
   echo "No changes staged — nothing to commit"
 fi
+
+# Sync the canonical rkt label set onto the GitHub remote (no-op if absent).
+# Runs after the commit so any synced label changes don't try to enter the
+# bootstrap commit.
+"${CLAUDE_PLUGIN_ROOT}/scripts/sync-github-labels.sh"
 ```
 
 ### Step A8: Report

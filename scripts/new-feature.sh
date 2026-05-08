@@ -4,10 +4,16 @@
 #
 # Usage (invoke via the rkt plugin path; scripts live in the plugin, not your project):
 #   "${CLAUDE_PLUGIN_ROOT}/scripts/new-feature.sh" RKT-42 biometric-signing database backend
-#   "${CLAUDE_PLUGIN_ROOT}/scripts/new-feature.sh" RKT-42 biometric-signing              # all domains
+#   "${CLAUDE_PLUGIN_ROOT}/scripts/new-feature.sh" RKT-42 biometric-signing              # all code domains
+#   "${CLAUDE_PLUGIN_ROOT}/scripts/new-feature.sh" RKT-42 backfill-decisions docs        # docs-only
 #
-# Creates a worktree per domain agent under .worktrees/, each on its own branch.
-# Branch naming follows Linear convention: [ISSUE-ID]/[domain]/[description]
+# Creates a worktree per domain under .worktrees/, each on its own branch.
+# Branch naming follows Linear convention: [ISSUE-ID]/[domain]/[description].
+#
+# Domains: database, backend, ios, web are owned by spawned subagents.
+# `docs` is orchestrator-owned (no subagent) — the worktree exists so the
+# orchestrator can branch + PR for root meta files (PROGRESS.md,
+# decisions.md, OPS.md, README.md, docs/**, ADRs).
 
 set -euo pipefail
 
@@ -24,11 +30,13 @@ ensure_out_of_worktrees
 if [[ $# -lt 2 ]]; then
   echo "Usage: $0 <LINEAR-ISSUE-ID> <short-description> [domain1 domain2 ...]"
   echo ""
-  echo "Domains: database, backend, ios, web (default: all)"
+  echo "Domains: database, backend, ios, web, docs (default: all 4 code domains)"
+  echo "         docs is orchestrator-owned (no subagent spawn)"
   echo ""
   echo "Examples:"
   echo "  $0 RKT-42 biometric-signing backend ios    # only backend + ios"
-  echo "  $0 RKT-42 biometric-signing                # all 4 domains"
+  echo "  $0 RKT-42 biometric-signing                # all 4 code domains (no docs)"
+  echo "  $0 RKT-42 backfill-decisions docs          # docs-only worktree"
   exit 1
 fi
 
@@ -41,7 +49,8 @@ DESCRIPTION=$(echo "$DESCRIPTION" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9
 
 # ── Resolve domains ──────────────────────────────────────
 
-ALL_DOMAINS=("database" "backend" "ios" "web")
+CODE_DOMAINS=("database" "backend" "ios" "web")
+ALL_DOMAINS=("database" "backend" "ios" "web" "docs")
 
 if [[ $# -gt 0 ]]; then
   DOMAINS=("$@")
@@ -57,7 +66,10 @@ if [[ $# -gt 0 ]]; then
     fi
   done
 else
-  DOMAINS=("${ALL_DOMAINS[@]}")
+  # Default to code domains only — docs is opt-in, since it's orchestrator-
+  # owned and including it by default would create an empty worktree on every
+  # implement run.
+  DOMAINS=("${CODE_DOMAINS[@]}")
 fi
 
 # ── Config ────────────────────────────────────────────────
@@ -122,7 +134,12 @@ printf "  %-12s %-45s %s\n" "DOMAIN" "BRANCH" "AGENT"
 printf "  %-12s %-45s %s\n" "──────" "──────" "─────"
 for domain in "${DOMAINS[@]}"; do
   BRANCH="${ISSUE_ID}/${domain}/${DESCRIPTION}"
-  printf "  %-12s %-45s %s\n" "$domain" "$BRANCH" "${domain}-implementer"
+  if [[ "$domain" == "docs" ]]; then
+    AGENT="orchestrator (no spawn)"
+  else
+    AGENT="${domain}-implementer"
+  fi
+  printf "  %-12s %-45s %s\n" "$domain" "$BRANCH" "$AGENT"
 done
 echo ""
 echo "To spawn an agent in a worktree:"

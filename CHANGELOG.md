@@ -1,5 +1,67 @@
 # Changelog
 
+## 0.3.0 — 2026-05-08
+
+Three rough edges from the wdyd-platform `/rkt:implement` run, all addressed.
+Driven from a structured feedback brief. Pre-release verification: full test
+suite + plugin validate.
+
+### Fixed
+
+- **Bootstrap derives `linear.issue_prefix` from the Linear team key, not the
+  project name.** A project named `wdyd` under team `RKT` was bootstrapping
+  with prefix `WDYD`, and every `gh pr create --title "[WDYD-42] ..."` was
+  silently failing to attach to the matching `RKT-42` Linear issue. NEW mode
+  now prompts for the team before the prefix and defaults the prefix to
+  `team.key`. ADOPT-create-new uses the same source. ADOPT-link-existing was
+  already correct.- **`/rkt:implement` Step 0b verifies prefix-vs-team-key on every invocation.**
+  Fails loudly with an actionable error pointing at `/rkt:rkt-tailor` if the
+  prefix in `rkt.json` disagrees with what Linear actually uses for the
+  project's team. ~200ms cost (one Linear API call); chosen always-on over
+  cached because the failure mode it guards against is silent.- **`/rkt:rkt-tailor` adds a Step 1b prefix-repair action.** Detects drift,
+  rewrites `rkt.json:linear.issue_prefix`, re-renders `CLAUDE.md`, commits.
+  Does not rewrite existing branches/PRs — only fixes the source so future
+  work picks up the correct prefix.
+### Added
+
+- **Canonical GitHub label manifest at `templates/github-labels.json`.** Used
+  by `scripts/sync-github-labels.sh`, surfaced in `/rkt:create-issue`,
+  `/rkt:implement`, and the four domain agents. The set covers types
+  (`Feature`, `Bug`, `Improvement`, `Ops`, `Docs`), domains (`Backend`,
+  `Database`, `iOS`, `Web`), and the special `Blocked` label — exactly what
+  the skills reference, with stable colour assignments.- **`scripts/sync-github-labels.sh`** — idempotently syncs the manifest onto
+  the current repo's `origin` remote (`gh label create --force`). No-op when
+  no remote / no `gh` CLI; hard error only on missing or malformed manifest.
+  Wired into bootstrap NEW Step N7 and ADOPT Step A7 so labels exist on the
+  repo before any agent runs `gh pr create`.- **Label-recovery hook in domain agents.** When `gh pr create --label` fails
+  with "could not add label", the agent runs `sync-github-labels.sh` and
+  retries once. Covers older bootstraps and label resets that drop the
+  canonical set.- **`docs` domain in `/rkt:implement`** — orchestrator-owned, no subagent
+  spawn. Owns root meta files (`PROGRESS.md`, `decisions.md`, `OPS.md`,
+  `dev-log.md`/`DEVLOG.md`, `README.md`, `CLAUDE.md`, `AGENTS.md`),
+  `docs/**`, ADRs. Pure-bookkeeping issues (e.g. backfilling `decisions.md`,
+  reflecting shipped phases in `PROGRESS.md`) now have a first-class home
+  instead of forcing an awkward `Web` label. Worktree+PR is still the
+  default (consistent with other domains, gets auto-review).- **`new-feature.sh` accepts `docs` as a domain.** Default invocation
+  (no domain args) still creates only the four code domains — `docs` is
+  opt-in to avoid empty worktrees on every implement run.
+
+### Tests
+
+- `tests/test-sync-github-labels.sh` — manifest well-formedness, no-remote
+  no-op path, missing-manifest hard-error path, missing-`gh` graceful skip,
+  `--quiet` suppression.
+- `tests/test-prefix-from-team-key.sh` — regression catch on the
+  team-key-as-prefix contract across `bootstrap`, `implement`, and
+  `rkt-tailor` SKILL.md files; end-to-end render assertion that
+  `TMPVARS.LINEAR_PREFIX` flows correctly into `rkt.json` and that no
+  `WDYD`-style hardcoded prefix can leak into the rendered `CLAUDE.md`
+  when the team key is `RKT`.
+- `tests/test-new-feature.sh` extended — `docs` accepted as a domain,
+  branch follows `[ISSUE-ID]/docs/[description]` convention, default
+  invocation skips `docs` (opt-in), invalid domain still rejected, usage
+  text mentions `docs`.
+
 ## 0.2.0 — 2026-05-08
 
 Adds the `/promptsmith` skill — a prompt-engineering tool forked from

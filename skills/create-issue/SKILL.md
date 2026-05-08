@@ -146,6 +146,7 @@ Every issue gets **two labels** — one type label and one domain label:
 | `Database` | Supabase migrations, RLS policies, RPC functions, schema changes |
 | `iOS` | SwiftUI views, view models, stores, models, navigation |
 | `Web` | React pages, components, lib utilities, styles |
+| `Docs` | Root meta files (PROGRESS.md, decisions.md, OPS.md, README.md, CLAUDE.md), `docs/**`, ADRs. Orchestrator-owned in `/rkt:implement` — no subagent spawn |
 
 **Special labels:**
 | Label | When to use |
@@ -157,6 +158,7 @@ Every issue gets **two labels** — one type label and one domain label:
 - New iOS feature: `--label "Feature" --label "iOS"`
 - Multi-domain feature: `--label "Feature" --label "Backend" --label "iOS"`
 - Migration task: `--label "Ops" --label "Database"`
+- Backfill `decisions.md`: `--label "Improvement" --label "Docs"`
 - Blocked feature: `--label "Feature" --label "Backend" --label "Blocked"`
 
 ## Step 5: Capture context to MemPalace

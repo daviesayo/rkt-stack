@@ -50,6 +50,48 @@ Use these variables throughout. Never hardcode project names, prefixes, or IDs.
 run with `[Skip Linear]` and the user later tries to invoke a Linear-dependent
 skill before linking a project.
 
+### Step 0b: Verify the issue prefix matches the Linear team key
+
+The prefix in `rkt.json:linear.issue_prefix` must match the team key Linear
+uses to identify issues — otherwise branches like `${PREFIX}-42/...` and PR
+titles like `[${PREFIX}-42] ...` will fail to auto-link to Linear via the
+GitHub integration. Older bootstraps (pre-0.3.0) derived the prefix from the
+project name, which can drift from the team key.
+
+```bash
+# Fetch one issue from the project and check team.key. We try issue #1 first;
+# if that doesn't exist, list any one issue under the project and use that.
+VERIFY_RESP=$($LINEAR api --variable projectId="$PROJECT_ID" <<'GRAPHQL'
+query($projectId: String!) {
+  issues(filter: { project: { id: { eq: $projectId } } }, first: 1) {
+    nodes { team { key } }
+  }
+}
+GRAPHQL
+)
+
+ACTUAL_KEY=$(echo "$VERIFY_RESP" | jq -r '.data.issues.nodes[0].team.key // empty')
+
+if [[ -n "$ACTUAL_KEY" && "$ACTUAL_KEY" != "$PREFIX" ]]; then
+  cat >&2 <<EOF
+Error: rkt.json says issue_prefix is '$PREFIX' but Linear team key is '$ACTUAL_KEY'.
+
+Branches and PR titles built with '$PREFIX' will fail to auto-link to Linear.
+Run /rkt:rkt-tailor to repair (it will rewrite rkt.json and re-render CLAUDE.md
+with the correct prefix).
+EOF
+  exit 1
+fi
+# Empty ACTUAL_KEY means the project has no issues yet; verification is
+# inconclusive but not a failure — first issue created via /rkt:create-issue
+# will use the correct prefix.
+```
+
+Skip this verification only when the user explicitly says they're working on
+the very first issue in a brand-new project (no Linear issues exist yet) —
+in that case, the project's `issue_prefix` will be validated the moment the
+first issue is created.
+
 ## Step 1: Gather the plan
 
 Look at the current conversation for plan artifacts. Extract:
@@ -169,6 +211,15 @@ Analyse the issue and determine:
    - `backend` — new/modified API endpoints, business logic, rules, tests
    - `ios` — new/modified SwiftUI views, view models, stores, models
    - `web` — new/modified React pages, components, lib utilities
+   - `docs` — root meta files (`PROGRESS.md`, `decisions.md`, `OPS.md`,
+     `dev-log.md`/`DEVLOG.md`, `README.md`, `CLAUDE.md`, `AGENTS.md`),
+     `docs/**`, ADRs. **Owner is the orchestrator (you), inline — no
+     subagent spawn.** Pure-bookkeeping issues live here (e.g. backfilling
+     `decisions.md`, updating `PROGRESS.md` to reflect shipped phases,
+     ADRs that describe past work). Default to creating a worktree and PR
+     for consistency with other domains and so the auto-review path still
+     applies; only commit directly to main for trivial doc fixes when the
+     user explicitly says so.
 
 2. **Dependency order** — based on the real dependency chain:
 
@@ -202,6 +253,14 @@ Analyse the issue and determine:
    **Key rule:** database and backend are sequential (each waits for completion).
    iOS and web are parallel (spawn both with `run_in_background: true`).
    Skip layers that aren't needed. A backend-only fix is just one agent.
+
+   **Docs-only issues:** the `docs` domain doesn't appear in the graph above
+   because it has no spawned agent. If `docs` is the only domain affected,
+   skip Step 6 entirely — create the worktree (`new-feature.sh ${PREFIX}-N
+   <slug> docs`), do the doc edits inline as the orchestrator, push, and
+   open the PR yourself. If `docs` is one of several domains, do the doc
+   work last (after code-affecting agents complete) so the docs reflect what
+   actually shipped.
 
 3. **Task description for each domain** — what specifically needs to be built, including
    any cross-domain context (API shapes, schema columns, etc.)
@@ -412,6 +471,7 @@ being explicit keeps the shell state sane for anything that runs after:
 |---|---|
 | Spawning an architect subagent | You ARE the orchestrator — run decomposition inline |
 | Writing application code yourself | Domain agents write code. You orchestrate. |
+| Spawning a domain agent for a docs-only issue | The `docs` domain is **orchestrator-owned**. Update `PROGRESS.md` / `decisions.md` / `README.md` / `docs/**` inline in a worktree — don't spawn `web-implementer` for it. |
 | Skipping Linear issue creation | The issue is the coordination point — always create or reference one |
 | Assuming scope not in the plan | Ask if ambiguous. Don't guess. |
 | Creating worktrees for uninvolved domains | Only create worktrees for domains that need code changes |
@@ -419,4 +479,5 @@ being explicit keeps the shell state sane for anything that runs after:
 | Telling agents to read CLAUDE.md / decisions.md / agent_learnings.md | You already gathered context — inject the relevant bits in their prompt |
 | Spawning ios + web before backend completes | Respect dependency order: database → backend → (ios \| web) |
 | Hardcoding "RKT-" or project name | Always read from rkt.json via jq |
+| Skipping the Step 0b prefix verification | The check is fast (~200ms) and the failure mode it guards against (PRs not auto-linking to Linear) is silent — never skip it |
 | Using text menus instead of AskUserQuestion | All prompts must use AskUserQuestion — never bash read |

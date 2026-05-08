@@ -66,6 +66,12 @@ decisions.md, or agent_learnings.md** — that context has already been gathered
    gh pr comment "$PR_URL" --body "@claude please review this PR"
    ```
 
+   **Label recovery.** If `gh pr create` fails with `could not add label` /
+   `label … not found`, the canonical rkt label set isn't on this repo. Run
+   `"${CLAUDE_PLUGIN_ROOT}/scripts/sync-github-labels.sh"` to sync them, then
+   retry `gh pr create` once. Bootstrap normally seeds these at setup time;
+   recovery here covers older bootstraps and label resets.
+
 ### Stack-Specific Rules
 
 - Mock at the routes module level, not the database module level: `patch("app.YOUR_MODULE.routes.get_supabase_admin_client")`

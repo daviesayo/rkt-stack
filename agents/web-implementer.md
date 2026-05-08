@@ -76,6 +76,11 @@ for you.
    gh pr comment "$PR_URL" --body "@claude please review this PR"
    ```
 
+   **Label recovery.** If `gh pr create` fails with `could not add label` /
+   `label … not found`, the canonical rkt label set isn't on this repo. Run
+   `"${CLAUDE_PLUGIN_ROOT}/scripts/sync-github-labels.sh"` to sync them, then
+   retry `gh pr create` once.
+
 ### Design System (Web)
 
 Read the project's design system file for design tokens. Always handle loading, error, and empty states in every page/component.

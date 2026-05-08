@@ -1,0 +1,15 @@
+{
+  "_comment": "Canonical GitHub label set for rkt-bootstrapped projects. Read by scripts/sync-github-labels.sh and surfaced in skills (create-issue, implement, rkt-tailor). Edit here to add or rename a label; bootstrap and rkt-tailor sync this file onto each project's GitHub repo.",
+  "labels": [
+    { "name": "Feature",     "color": "2e7d32", "description": "New functionality that doesn't exist yet" },
+    { "name": "Bug",         "color": "d73a4a", "description": "Something is broken or behaving incorrectly" },
+    { "name": "Improvement", "color": "a2eeef", "description": "Enhancement to existing functionality" },
+    { "name": "Ops",         "color": "8b0000", "description": "Infrastructure, migrations, config, deploy tasks" },
+    { "name": "Docs",        "color": "0075ca", "description": "Documentation, ADRs, dev logs, root meta files" },
+    { "name": "Backend",     "color": "0e8a16", "description": "FastAPI endpoints, business logic, rules engine, Python tests" },
+    { "name": "Database",    "color": "5319e7", "description": "Supabase migrations, RLS policies, RPC functions, schema changes" },
+    { "name": "iOS",         "color": "fbca04", "description": "SwiftUI views, view models, stores, models, navigation" },
+    { "name": "Web",         "color": "1d76db", "description": "React pages, components, lib utilities, styles" },
+    { "name": "Blocked",     "color": "b60205", "description": "Cannot proceed until a dependency is resolved" }
+  ]
+}

@@ -19,6 +19,68 @@ task time. Re-runnable as the project evolves.
 PRESET=$(jq -r .preset rkt.json)
 ```
 
+## Step 1b: Repair issue prefix if it drifted from the Linear team key
+
+Older bootstraps (pre-0.3.0) derived `linear.issue_prefix` from the project
+name, which can disagree with the Linear team key. The team key is the
+source of truth — that's what Linear's GitHub integration auto-links on, and
+what `/rkt:implement` uses to build branches and PR titles.
+
+Skip this step if the project has no Linear configured (`linear.project_id`
+empty) — the prefix is best-effort in that case and there's nothing to
+verify against.
+
+```bash
+PREFIX=$(jq -r .linear.issue_prefix rkt.json)
+PROJECT_ID=$(jq -r .linear.project_id rkt.json)
+
+if [[ -n "$PROJECT_ID" && "$PROJECT_ID" != "null" ]]; then
+  # Fetch any one issue from the project to read team.key.
+  VERIFY_RESP=$(linear api --variable projectId="$PROJECT_ID" <<'GRAPHQL'
+  query($projectId: String!) {
+    issues(filter: { project: { id: { eq: $projectId } } }, first: 1) {
+      nodes { team { key id } }
+    }
+  }
+GRAPHQL
+)
+  ACTUAL_KEY=$(echo "$VERIFY_RESP" | jq -r '.data.issues.nodes[0].team.key // empty')
+  ACTUAL_TEAM_ID=$(echo "$VERIFY_RESP" | jq -r '.data.issues.nodes[0].team.id // empty')
+
+  if [[ -z "$ACTUAL_KEY" ]]; then
+    # Project has no issues yet — fall back to fetching the project's teams.
+    TEAM_RESP=$(linear api --variable projectId="$PROJECT_ID" <<'GRAPHQL'
+    query($projectId: String!) {
+      project(id: $projectId) { teams { nodes { id key } } }
+    }
+GRAPHQL
+)
+    ACTUAL_KEY=$(echo "$TEAM_RESP" | jq -r '.data.project.teams.nodes[0].key // empty')
+    ACTUAL_TEAM_ID=$(echo "$TEAM_RESP" | jq -r '.data.project.teams.nodes[0].id // empty')
+  fi
+
+  if [[ -n "$ACTUAL_KEY" && "$ACTUAL_KEY" != "$PREFIX" ]]; then
+    # Drift detected. Offer to repair via AskUserQuestion:
+    #   "[Repair: rewrite rkt.json + re-render CLAUDE.md with prefix '$ACTUAL_KEY']"
+    #   "[Keep '$PREFIX' (will break Linear auto-linking)]"
+    #   "[Cancel]"
+    #
+    # On Repair:
+    #   1. jq update rkt.json: linear.issue_prefix = $ACTUAL_KEY, team_id = $ACTUAL_TEAM_ID
+    #   2. Re-render CLAUDE.md from templates/CLAUDE.md.tmpl with the new prefix
+    #      ONLY if the user hasn't taken it over (no rkt-managed sentinel
+    #      blocks deleted) — otherwise show a diff and ask per-block
+    #   3. Commit: "[rkt-tailor] Repair issue prefix: $PREFIX -> $ACTUAL_KEY"
+    #   4. Note: existing branches/PRs that already use the old prefix stay
+    #      as-is; new work picks up the new prefix
+  fi
+fi
+```
+
+The repair action is intentionally not destructive: it never rewrites
+existing branch names, PR titles, or commits. It only rewrites `rkt.json`
+and re-renders `CLAUDE.md` so future work uses the correct prefix.
+
 ## Step 2: Gather project context
 
 Read (in this order, quietly — no re-read if already in context):
