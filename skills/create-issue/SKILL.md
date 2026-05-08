@@ -17,12 +17,18 @@ inside Claude Code.
 ## Step 0: Read project config
 
 ```bash
+source "${CLAUDE_PLUGIN_ROOT}/scripts/lib/common.sh"
+require_linear || exit 1
+
 PREFIX=$(jq -r .linear.issue_prefix rkt.json)
 PROJECT_ID=$(jq -r .linear.project_id rkt.json)
 PROJECT_NAME=$(jq -r .project_name rkt.json)
 MP=$(jq -r .mempalace.specialist_prefix rkt.json)
 LINEAR=$(which linear 2>/dev/null || echo /opt/homebrew/bin/linear)
 ```
+
+`require_linear` exits early with a clear message if `rkt.json` is missing or
+`linear.project_id` is empty.
 
 ## Step 1: Understand what the user wants
 

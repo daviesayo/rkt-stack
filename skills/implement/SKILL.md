@@ -30,9 +30,12 @@ in the main session because:
 
 ## Step 0: Read project config
 
-Before doing anything else, read the project config:
+Before doing anything else, verify Linear is configured and read the project config:
 
 ```bash
+source "${CLAUDE_PLUGIN_ROOT}/scripts/lib/common.sh"
+require_linear || exit 1
+
 PREFIX=$(jq -r .linear.issue_prefix rkt.json)
 PROJECT_ID=$(jq -r .linear.project_id rkt.json)
 PROJECT_NAME=$(jq -r .project_name rkt.json)
@@ -41,6 +44,11 @@ LINEAR=$(which linear 2>/dev/null || echo /opt/homebrew/bin/linear)
 ```
 
 Use these variables throughout. Never hardcode project names, prefixes, or IDs.
+
+`require_linear` exits early with a clear message if `rkt.json` is missing or
+`linear.project_id` is empty. This prevents silent failures when bootstrap was
+run with `[Skip Linear]` and the user later tries to invoke a Linear-dependent
+skill before linking a project.
 
 ## Step 1: Gather the plan
 
