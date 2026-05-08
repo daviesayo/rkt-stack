@@ -382,12 +382,40 @@ preset using the same mapping as NEW Step N2.
 For every file in `templates/presets/{PRESET}/`, compare against the target.
 Create missing files; **never overwrite existing ones**. Never delete anything.
 
+**Special case — Next.js `src/` directory layout.** When the target uses
+`src/app/` (Next.js's "src directory" feature, surfaced as
+`signals.nextjs_layout == "src"` from Step 0 detection), the preset's
+root-level `app/` and `lib/` directories must NOT be scaffolded — they
+would create a parallel route tree at the root and break the Next.js
+build. Skip those preset paths and report each skip in Step A8.
+
 ```bash
 PRESET=$(jq -r .PRESET "$TMPVARS")
 SCAFFOLD="${CLAUDE_PLUGIN_ROOT}/templates/presets/$PRESET"
 
+# Track every path bootstrap creates so Step A7 can stage them surgically
+# (initialize once per bootstrap; A4 and A5 both append to it).
+STAGED_PATHS="${STAGED_PATHS:-$(mktemp)}"
+
+# Decide whether to skip preset's root-level app/ and lib/ for src/-layout
+# Next.js projects.
+NEXTJS_LAYOUT=$(echo "$DETECT_OUTPUT" | jq -r '.signals.nextjs_layout // "none"')
+SKIP_ROOT_APP_LIB="false"
+if [[ "$PRESET" == "web" && "$NEXTJS_LAYOUT" == "src" ]]; then
+  SKIP_ROOT_APP_LIB="true"
+fi
+
 (cd "$SCAFFOLD" && find . -type f ! -path "./.*") | while read -r rel; do
-  dest="$TARGET/${rel#./}"
+  rel_clean="${rel#./}"
+  if [[ "$SKIP_ROOT_APP_LIB" == "true" ]]; then
+    case "$rel_clean" in
+      app/*|lib/*)
+        echo "  [skip] $rel_clean — project uses src/ layout"
+        continue
+        ;;
+    esac
+  fi
+  dest="$TARGET/$rel_clean"
   if [[ ! -e "$dest" ]]; then
     mkdir -p "$(dirname "$dest")"
     if grep -q '{{' "$SCAFFOLD/$rel" 2>/dev/null; then
@@ -396,6 +424,7 @@ SCAFFOLD="${CLAUDE_PLUGIN_ROOT}/templates/presets/$PRESET"
     else
       cp "$SCAFFOLD/$rel" "$dest"
     fi
+    echo "$rel_clean" >> "$STAGED_PATHS"
   fi
   # If file exists → skip. Step A5 handles global template conflicts.
 done
@@ -440,6 +469,12 @@ Track outcomes for Step A8:
 # Outcomes accumulate per file:
 # "created", "identical_skip", "replaced", "kept_mine", "merged", "skipped"
 ```
+
+When a resolution results in the destination being **created**, **replaced**,
+or **merged**, also append the destination path to `$STAGED_PATHS` (the same
+file Step A4 initialized). Step A7 stages only the paths in this file —
+files that were `kept_mine`, `identical_skip`, or `skipped` must NOT be
+appended, since the user explicitly opted to leave them untouched.
 
 **Preset → rules mapping** (same as NEW Step N4):
 
@@ -496,34 +531,53 @@ After resolving Linear, re-render `rkt.json` if its contents changed:
   "$TARGET/rkt.json" "$(cat "$TMPVARS")"
 ```
 
-### Step A7: Commit on existing history
+### Step A7: Commit on existing history (surgical staging)
 
-If `.git/` exists in the target directory:
+Stage **only** the paths that bootstrap itself created or modified — never
+`git add .`. The list of paths lives in `$STAGED_PATHS`, populated by
+Steps A4 and A5. Pre-existing dirty work on tracked files (an unrelated
+in-flight feature, debug edits, etc.) must stay unstaged so it doesn't get
+swallowed into the bootstrap commit with wrong attribution.
 
 ```bash
 cd "$TARGET"
-git add .
+
+# Handle the rare ADOPT case where the target has no git history yet.
+if [[ ! -d "$TARGET/.git" ]]; then
+  git init -b main
+fi
+
+# Surface pre-existing modifications to tracked files. Surgical staging
+# below won't include them, but the user should see what they are.
+if git rev-parse --verify HEAD >/dev/null 2>&1; then
+  DIRTY=$(git diff HEAD --name-only 2>/dev/null | head -10 || true)
+  if [[ -n "$DIRTY" ]]; then
+    echo "⚠️  Pre-existing changes detected — these will NOT be staged into the bootstrap commit:"
+    echo "$DIRTY" | sed 's/^/    /'
+    echo "    (commit or stash them separately if you want them included)"
+  fi
+fi
+
+# Surgical staging: stage only paths recorded by Step A4/A5.
+if [[ -n "${STAGED_PATHS:-}" && -s "$STAGED_PATHS" ]]; then
+  while IFS= read -r path; do
+    [[ -e "$TARGET/$path" ]] && git add -- "$path"
+  done < "$STAGED_PATHS"
+fi
+
+# Commit if anything got staged
 if ! git diff --cached --quiet; then
-  git commit -m "[rkt] Add workflow tooling and project scaffolding"
+  if [[ -n "$(git rev-list --all 2>/dev/null | head -1)" ]]; then
+    MSG="[rkt] Add workflow tooling and project scaffolding"
+  else
+    MSG="[rkt] Initial commit with workflow tooling"
+  fi
+  git commit -m "$MSG"
+  ADOPT_SHA=$(git rev-parse --short HEAD)
+  echo "Commit: $ADOPT_SHA"
 else
   echo "No changes staged — nothing to commit"
 fi
-```
-
-If `.git/` does NOT exist (rare for ADOPT — e.g. a fork downloaded as a zip):
-
-```bash
-cd "$TARGET"
-git init -b main
-git add .
-git commit -m "[rkt] Initial commit with workflow tooling"
-```
-
-Report the resulting commit SHA to the user:
-
-```bash
-ADOPT_SHA=$(git rev-parse --short HEAD)
-echo "Commit: $ADOPT_SHA"
 ```
 
 ### Step A8: Report

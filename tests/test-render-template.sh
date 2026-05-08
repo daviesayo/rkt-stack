@@ -38,4 +38,31 @@ exit_code=$?
 set -e
 [[ $exit_code -ne 0 ]] || { echo "FAIL: should error on unreplaced token"; exit 1; }
 
+# Test: JSON null / number / boolean / string preserve their types in JSON output
+cat > "$tmpdir/types.tmpl" <<'EOF'
+{
+  "name": "{{NAME}}",
+  "count": "{{COUNT}}",
+  "active": "{{ACTIVE}}",
+  "missing": "{{MISSING}}"
+}
+EOF
+TYPED_VARS='{"NAME":"hello","COUNT":42,"ACTIVE":true,"MISSING":null}'
+bash "$SCRIPT" "$tmpdir/types.tmpl" "$tmpdir/types.out" "$TYPED_VARS"
+
+# Output must be valid JSON
+jq empty "$tmpdir/types.out" 2>/dev/null || { echo "FAIL: typed render produced invalid JSON"; cat "$tmpdir/types.out"; exit 1; }
+
+# Each value must have the right JSON type
+[[ $(jq -r '.name | type' "$tmpdir/types.out") == "string" ]] || { echo "FAIL: name type"; exit 1; }
+[[ $(jq -r '.count | type' "$tmpdir/types.out") == "number" ]] || { echo "FAIL: count type ($(jq -r '.count | type' "$tmpdir/types.out"))"; exit 1; }
+[[ $(jq -r '.active | type' "$tmpdir/types.out") == "boolean" ]] || { echo "FAIL: active type"; exit 1; }
+[[ $(jq -r '.missing | type' "$tmpdir/types.out") == "null" ]] || { echo "FAIL: missing type"; exit 1; }
+
+# Values themselves must be correct
+[[ $(jq -r '.name' "$tmpdir/types.out") == "hello" ]] || { echo "FAIL: name value"; exit 1; }
+[[ $(jq -r '.count' "$tmpdir/types.out") == "42" ]] || { echo "FAIL: count value"; exit 1; }
+[[ $(jq -r '.active' "$tmpdir/types.out") == "true" ]] || { echo "FAIL: active value"; exit 1; }
+[[ $(jq -r '.missing' "$tmpdir/types.out") == "null" ]] || { echo "FAIL: missing value"; exit 1; }
+
 echo "PASS: test-render-template.sh"

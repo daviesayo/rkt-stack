@@ -32,6 +32,19 @@ HAS_AGENTS_MD="false"; has "AGENTS.md" && HAS_AGENTS_MD="true"
 HAS_NEXTJS="false"
 has "package.json" '"next"' && HAS_NEXTJS="true"
 
+# Next.js routing layout: "src" if app/ lives under src/; "root" if it's
+# at the project root; "none" otherwise (or not a Next.js project).
+# Bootstrap uses this to avoid copying preset's root-level app/ and lib/
+# into a project that already routes from src/app/ and src/lib/.
+NEXTJS_LAYOUT="none"
+if [[ "$HAS_NEXTJS" == "true" ]]; then
+  if [[ -d "$TARGET/src/app" ]]; then
+    NEXTJS_LAYOUT="src"
+  elif [[ -d "$TARGET/app" ]]; then
+    NEXTJS_LAYOUT="root"
+  fi
+fi
+
 HAS_VITE="false"
 has "package.json" '"vite"' && has "package.json" '"react"' && HAS_VITE="true"
 
@@ -76,6 +89,7 @@ cat <<EOF
     "has_claude_md": $HAS_CLAUDE_MD,
     "has_agents_md": $HAS_AGENTS_MD,
     "has_nextjs": $HAS_NEXTJS,
+    "nextjs_layout": "$NEXTJS_LAYOUT",
     "has_vite": $HAS_VITE,
     "has_fastapi": $HAS_FASTAPI,
     "has_xcodeproj": $HAS_XCODEPROJ,

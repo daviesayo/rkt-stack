@@ -15,12 +15,20 @@ assert_suggests() {
 
 assert_suggests "empty-dir" "null"
 assert_suggests "nextjs-existing" "web"
+assert_suggests "nextjs-src-layout" "web"
 assert_suggests "fastapi-existing" "backend"
 assert_suggests "full-existing" "full"
 
 # Test specific flags in the JSON output
 output=$(bash "$SCRIPT" "$FIXTURES/nextjs-existing")
 echo "$output" | jq -e '.signals.has_nextjs == true' >/dev/null || { echo "FAIL: has_nextjs flag missing"; exit 1; }
+[[ $(echo "$output" | jq -r '.signals.nextjs_layout') == "none" ]] \
+  || { echo "FAIL: nextjs-existing should have nextjs_layout=none (got $(echo "$output" | jq -r '.signals.nextjs_layout'))"; exit 1; }
+
+output=$(bash "$SCRIPT" "$FIXTURES/nextjs-src-layout")
+echo "$output" | jq -e '.signals.has_nextjs == true' >/dev/null || { echo "FAIL: nextjs-src-layout has_nextjs flag missing"; exit 1; }
+[[ $(echo "$output" | jq -r '.signals.nextjs_layout') == "src" ]] \
+  || { echo "FAIL: nextjs-src-layout should have nextjs_layout=src (got $(echo "$output" | jq -r '.signals.nextjs_layout'))"; exit 1; }
 
 output=$(bash "$SCRIPT" "$FIXTURES/full-existing")
 echo "$output" | jq -e '.signals.has_xcodeproj == true' >/dev/null || { echo "FAIL: has_xcodeproj flag missing"; exit 1; }

@@ -20,10 +20,22 @@ trap "rm -f $tmpfile" EXIT
 
 while IFS= read -r line; do
   key=$(echo "$line" | jq -r '.key')
-  value=$(echo "$line" | jq -r '.value')
-  # Use awk for substitution — avoids sed delimiter conflicts with special chars
-  awk -v k="{{$key}}" -v v="$value" '{ gsub(k, v); print }' "$OUTPUT" > "$tmpfile"
-  mv "$tmpfile" "$OUTPUT"
+  type=$(echo "$line" | jq -r '.value | type')
+
+  if [[ "$type" == "string" ]]; then
+    # Strings keep the template's surrounding quotes (if any)
+    value=$(echo "$line" | jq -r '.value')
+    awk -v k="{{$key}}" -v v="$value" '{ gsub(k, v); print }' "$OUTPUT" > "$tmpfile"
+    mv "$tmpfile" "$OUTPUT"
+  else
+    # null / number / boolean: emit as JSON literal, consuming surrounding quotes
+    # in JSON contexts (e.g. "{{KEY}}" → null) and replacing bare {{KEY}} elsewhere.
+    value=$(echo "$line" | jq -c '.value')
+    awk -v k="\"{{$key}}\"" -v v="$value" '{ gsub(k, v); print }' "$OUTPUT" > "$tmpfile"
+    mv "$tmpfile" "$OUTPUT"
+    awk -v k="{{$key}}" -v v="$value" '{ gsub(k, v); print }' "$OUTPUT" > "$tmpfile"
+    mv "$tmpfile" "$OUTPUT"
+  fi
 done < <(echo "$VARS_JSON" | jq -c 'to_entries[]')
 
 # Check for unreplaced tokens

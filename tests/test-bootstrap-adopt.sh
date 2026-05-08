@@ -46,7 +46,7 @@ cat > "$TMPVARS" <<'EOF'
   "LINEAR_PROJECT_URL": "",
   "MEMPALACE_PREFIX": "nextjs-existing",
   "GH_VISIBILITY": "skip",
-  "DEPLOY_BACKEND": "null",
+  "DEPLOY_BACKEND": null,
   "DEPLOY_WEB": "vercel",
   "DEPLOY_DB": "supabase",
   "DATE": "2026-04-18",
@@ -124,4 +124,168 @@ git commit -q -m "[rkt] test adoption"
 
 # Cleanup
 rm -f "$TMPVARS"
+
+# ── Test 2: src/-layout fixture must NOT receive root app/ or lib/ ────────────
+tmpdir2=$(mktemp -d)
+trap "rm -rf $tmpdir $tmpdir2" EXIT
+
+cp -R "$HERE/fixtures/nextjs-src-layout/." "$tmpdir2/"
+cd "$tmpdir2"
+git init -q -b main
+git add .
+git commit -q -m "initial"
+
+DETECT2=$(bash "$PLUGIN_DIR/scripts/detect-stack.sh" "$tmpdir2")
+
+[[ $(echo "$DETECT2" | jq -r .signals.nextjs_layout) == "src" ]] \
+  || { echo "FAIL: nextjs_layout should be src for nextjs-src-layout fixture"; exit 1; }
+
+TMPVARS2=$(mktemp)
+cat > "$TMPVARS2" <<'EOF'
+{
+  "PROJECT_NAME": "nextjs-src-layout",
+  "PROJECT_NAME_PASCAL": "NextjsSrcLayout",
+  "PRESET": "web",
+  "LINEAR_PREFIX": "NSL",
+  "LINEAR_TEAM_ID": "placeholder",
+  "LINEAR_PROJECT_ID": "",
+  "LINEAR_PROJECT_URL": "",
+  "MEMPALACE_PREFIX": "nextjs-src-layout",
+  "GH_VISIBILITY": "skip",
+  "DEPLOY_BACKEND": null,
+  "DEPLOY_WEB": "vercel",
+  "DEPLOY_DB": "supabase",
+  "DATE": "2026-04-18",
+  "RKT_VERSION": "0.1.3"
+}
+EOF
+
+# Replicate Step A4's src/-layout skip logic
+NEXTJS_LAYOUT=$(echo "$DETECT2" | jq -r '.signals.nextjs_layout // "none"')
+SKIP_ROOT_APP_LIB="false"
+if [[ $(jq -r .PRESET "$TMPVARS2") == "web" && "$NEXTJS_LAYOUT" == "src" ]]; then
+  SKIP_ROOT_APP_LIB="true"
+fi
+
+SCAFFOLD2="$PLUGIN_DIR/templates/presets/web"
+(cd "$SCAFFOLD2" && find . -type f ! -path "./.*") | while read -r rel; do
+  rel_clean="${rel#./}"
+  if [[ "$SKIP_ROOT_APP_LIB" == "true" ]]; then
+    case "$rel_clean" in
+      app/*|lib/*) continue ;;
+    esac
+  fi
+  dest="$tmpdir2/$rel_clean"
+  if [[ ! -e "$dest" ]]; then
+    mkdir -p "$(dirname "$dest")"
+    if grep -q '{{' "$SCAFFOLD2/$rel" 2>/dev/null; then
+      "$PLUGIN_DIR/scripts/render-template.sh" "$SCAFFOLD2/$rel" "$dest" "$(cat "$TMPVARS2")"
+    else
+      cp "$SCAFFOLD2/$rel" "$dest"
+    fi
+  fi
+done
+
+# Root-level app/ and lib/ MUST NOT exist (they would conflict with src/app/)
+[[ ! -e "$tmpdir2/app/page.tsx" ]] \
+  || { echo "FAIL: $tmpdir2/app/page.tsx exists — preset's root app/ should have been skipped"; exit 1; }
+[[ ! -e "$tmpdir2/app/layout.tsx" ]] \
+  || { echo "FAIL: $tmpdir2/app/layout.tsx exists — preset's root app/ should have been skipped"; exit 1; }
+[[ ! -e "$tmpdir2/lib/supabase.ts" ]] \
+  || { echo "FAIL: $tmpdir2/lib/supabase.ts exists — preset's root lib/ should have been skipped"; exit 1; }
+
+# Project's existing src/app/page.tsx must be preserved
+grep -q "fixture: src layout" "$tmpdir2/src/app/page.tsx" \
+  || { echo "FAIL: src/app/page.tsx was clobbered"; exit 1; }
+
+# Other preset files (e.g. tsconfig.json, supabase migrations) should still be created
+[[ -f "$tmpdir2/tsconfig.json" ]] \
+  || { echo "FAIL: tsconfig.json should have been scaffolded"; exit 1; }
+
+rm -f "$TMPVARS2"
+
+# ── Verify rkt.json from Test 1 has DEPLOY_BACKEND as JSON null, not "null" ───
+[[ $(jq -r '.deploy.backend | type' "$tmpdir/rkt.json") == "null" ]] \
+  || { echo "FAIL: rkt.json deploy.backend should be JSON null, got $(jq -r '.deploy.backend | type' "$tmpdir/rkt.json")"; exit 1; }
+
+# ── Test 3: surgical staging excludes pre-existing dirty work ────────────────
+tmpdir3=$(mktemp -d)
+trap "rm -rf $tmpdir $tmpdir2 $tmpdir3" EXIT
+
+cp -R "$HERE/fixtures/nextjs-existing/." "$tmpdir3/"
+cd "$tmpdir3"
+git init -q -b main
+git add .
+git commit -q -m "initial"
+
+# Pre-existing dirty work: modify a tracked file
+echo "// in-flight feature work" >> package.json
+
+STAGED_PATHS3=$(mktemp)
+TMPVARS3=$(mktemp)
+cat > "$TMPVARS3" <<'EOF'
+{
+  "PROJECT_NAME": "test",
+  "PROJECT_NAME_PASCAL": "Test",
+  "PRESET": "web",
+  "LINEAR_PREFIX": "T",
+  "LINEAR_TEAM_ID": "x",
+  "LINEAR_PROJECT_ID": "",
+  "LINEAR_PROJECT_URL": "",
+  "MEMPALACE_PREFIX": "test",
+  "GH_VISIBILITY": "skip",
+  "DEPLOY_BACKEND": null,
+  "DEPLOY_WEB": "vercel",
+  "DEPLOY_DB": "supabase",
+  "DATE": "2026-04-18",
+  "RKT_VERSION": "0.1.3"
+}
+EOF
+
+# Simulate Step A4 (additive scaffold tracking $STAGED_PATHS3)
+SCAFFOLD3="$PLUGIN_DIR/templates/presets/web"
+(cd "$SCAFFOLD3" && find . -type f ! -path "./.*") | while read -r rel; do
+  rel_clean="${rel#./}"
+  dest="$tmpdir3/$rel_clean"
+  if [[ ! -e "$dest" ]]; then
+    mkdir -p "$(dirname "$dest")"
+    if grep -q '{{' "$SCAFFOLD3/$rel" 2>/dev/null; then
+      "$PLUGIN_DIR/scripts/render-template.sh" "$SCAFFOLD3/$rel" "$dest" "$(cat "$TMPVARS3")"
+    else
+      cp "$SCAFFOLD3/$rel" "$dest"
+    fi
+    echo "$rel_clean" >> "$STAGED_PATHS3"
+  fi
+done
+
+# Simulate Step A5 — render rkt.json and track it
+"$PLUGIN_DIR/scripts/render-template.sh" \
+  "$PLUGIN_DIR/templates/rkt.json.tmpl" "$tmpdir3/rkt.json" "$(cat "$TMPVARS3")"
+echo "rkt.json" >> "$STAGED_PATHS3"
+
+# Step A7 — surgical staging from $STAGED_PATHS3 only
+cd "$tmpdir3"
+while IFS= read -r path; do
+  [[ -e "$tmpdir3/$path" ]] && git add -- "$path"
+done < "$STAGED_PATHS3"
+
+git commit -q -m "[rkt] surgical staging test"
+
+COMMIT_FILES=$(git diff-tree --no-commit-id --name-only -r HEAD)
+
+# package.json modification must NOT be in the bootstrap commit
+echo "$COMMIT_FILES" | grep -q "^package.json$" \
+  && { echo "FAIL: package.json was included in bootstrap commit (surgical staging should have excluded it)"; exit 1; } \
+  || true
+
+# rkt.json must be in the bootstrap commit (sanity)
+echo "$COMMIT_FILES" | grep -q "^rkt.json$" \
+  || { echo "FAIL: rkt.json missing from bootstrap commit"; exit 1; }
+
+# Pre-existing modification must still be in the working tree
+git diff HEAD -- package.json | grep -q "in-flight feature work" \
+  || { echo "FAIL: pre-existing modification to package.json was lost"; exit 1; }
+
+rm -f "$TMPVARS3" "$STAGED_PATHS3"
+
 echo "PASS: test-bootstrap-adopt.sh"
