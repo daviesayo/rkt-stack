@@ -208,4 +208,84 @@ rm -f "$TMPVARS2"
 [[ $(jq -r '.deploy.backend | type' "$tmpdir/rkt.json") == "null" ]] \
   || { echo "FAIL: rkt.json deploy.backend should be JSON null, got $(jq -r '.deploy.backend | type' "$tmpdir/rkt.json")"; exit 1; }
 
+# ── Test 3: surgical staging excludes pre-existing dirty work ────────────────
+tmpdir3=$(mktemp -d)
+trap "rm -rf $tmpdir $tmpdir2 $tmpdir3" EXIT
+
+cp -R "$HERE/fixtures/nextjs-existing/." "$tmpdir3/"
+cd "$tmpdir3"
+git init -q -b main
+git add .
+git commit -q -m "initial"
+
+# Pre-existing dirty work: modify a tracked file
+echo "// in-flight feature work" >> package.json
+
+STAGED_PATHS3=$(mktemp)
+TMPVARS3=$(mktemp)
+cat > "$TMPVARS3" <<'EOF'
+{
+  "PROJECT_NAME": "test",
+  "PROJECT_NAME_PASCAL": "Test",
+  "PRESET": "web",
+  "LINEAR_PREFIX": "T",
+  "LINEAR_TEAM_ID": "x",
+  "LINEAR_PROJECT_ID": "",
+  "LINEAR_PROJECT_URL": "",
+  "MEMPALACE_PREFIX": "test",
+  "GH_VISIBILITY": "skip",
+  "DEPLOY_BACKEND": null,
+  "DEPLOY_WEB": "vercel",
+  "DEPLOY_DB": "supabase",
+  "DATE": "2026-04-18",
+  "RKT_VERSION": "0.1.3"
+}
+EOF
+
+# Simulate Step A4 (additive scaffold tracking $STAGED_PATHS3)
+SCAFFOLD3="$PLUGIN_DIR/templates/presets/web"
+(cd "$SCAFFOLD3" && find . -type f ! -path "./.*") | while read -r rel; do
+  rel_clean="${rel#./}"
+  dest="$tmpdir3/$rel_clean"
+  if [[ ! -e "$dest" ]]; then
+    mkdir -p "$(dirname "$dest")"
+    if grep -q '{{' "$SCAFFOLD3/$rel" 2>/dev/null; then
+      "$PLUGIN_DIR/scripts/render-template.sh" "$SCAFFOLD3/$rel" "$dest" "$(cat "$TMPVARS3")"
+    else
+      cp "$SCAFFOLD3/$rel" "$dest"
+    fi
+    echo "$rel_clean" >> "$STAGED_PATHS3"
+  fi
+done
+
+# Simulate Step A5 — render rkt.json and track it
+"$PLUGIN_DIR/scripts/render-template.sh" \
+  "$PLUGIN_DIR/templates/rkt.json.tmpl" "$tmpdir3/rkt.json" "$(cat "$TMPVARS3")"
+echo "rkt.json" >> "$STAGED_PATHS3"
+
+# Step A7 — surgical staging from $STAGED_PATHS3 only
+cd "$tmpdir3"
+while IFS= read -r path; do
+  [[ -e "$tmpdir3/$path" ]] && git add -- "$path"
+done < "$STAGED_PATHS3"
+
+git commit -q -m "[rkt] surgical staging test"
+
+COMMIT_FILES=$(git diff-tree --no-commit-id --name-only -r HEAD)
+
+# package.json modification must NOT be in the bootstrap commit
+echo "$COMMIT_FILES" | grep -q "^package.json$" \
+  && { echo "FAIL: package.json was included in bootstrap commit (surgical staging should have excluded it)"; exit 1; } \
+  || true
+
+# rkt.json must be in the bootstrap commit (sanity)
+echo "$COMMIT_FILES" | grep -q "^rkt.json$" \
+  || { echo "FAIL: rkt.json missing from bootstrap commit"; exit 1; }
+
+# Pre-existing modification must still be in the working tree
+git diff HEAD -- package.json | grep -q "in-flight feature work" \
+  || { echo "FAIL: pre-existing modification to package.json was lost"; exit 1; }
+
+rm -f "$TMPVARS3" "$STAGED_PATHS3"
+
 echo "PASS: test-bootstrap-adopt.sh"
