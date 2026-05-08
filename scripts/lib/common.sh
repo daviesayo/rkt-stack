@@ -43,6 +43,53 @@ fail() {
   exit 1
 }
 
+# require_linear — guard for skills that depend on a linked Linear project.
+# Reads rkt.json in the current working directory and verifies linear.project_id
+# is set. Prints an actionable error and returns 1 if not. Returns 0 on success.
+#
+# Bootstrap explicitly supports a "Skip Linear" path that leaves project_id
+# empty; without this guard, dependent skills (implement, create-issue, scan)
+# pass --project-id "" to the linear CLI and either error opaquely or silently
+# operate on the wrong scope.
+require_linear() {
+  if [[ ! -f "rkt.json" ]]; then
+    cat >&2 <<EOF
+Error: rkt.json not found in $(pwd).
+
+This skill must run from the root of an rkt-bootstrapped project.
+If this is a new project, run /rkt:bootstrap first.
+EOF
+    return 1
+  fi
+
+  # Validate rkt.json is parseable BEFORE checking project_id, otherwise a
+  # malformed file gives the user the misleading "Linear not configured" error
+  # instead of the actual cause.
+  if ! jq empty rkt.json 2>/dev/null; then
+    cat >&2 <<EOF
+Error: rkt.json contains invalid JSON.
+
+Run \`jq . rkt.json\` to see the parser error, then fix the file.
+EOF
+    return 1
+  fi
+
+  local project_id
+  project_id=$(jq -r '.linear.project_id // ""' rkt.json)
+
+  if [[ -z "$project_id" || "$project_id" == "null" ]]; then
+    cat >&2 <<EOF
+Error: Linear is not configured for this project.
+
+This skill needs a linked Linear project. Either:
+  - Run /rkt:bootstrap and pick [Link existing] or [Create new] when prompted
+  - Or edit rkt.json to set linear.project_id and linear.project_url
+
+EOF
+    return 1
+  fi
+}
+
 # ensure_out_of_worktrees — if pwd is inside .worktrees/, cd to the main repo.
 # Protects cleanup scripts from deleting the directory the caller is standing in.
 ensure_out_of_worktrees() {

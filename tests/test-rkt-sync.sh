@@ -149,4 +149,70 @@ for f in CLAUDE.md PROGRESS.md OPS.md README.md decisions.md "docs/decisions/age
 done
 
 rm -f "$TMPVARS"
+
+# ── Preset → rules mapping must match bootstrap and cover all 4 presets ─────
+# Extract the case statement from rkt-sync's SKILL.md and EXECUTE it. This
+# catches runtime regressions (e.g. bash-version bugs in declare -A) that a
+# pure-text grep cannot. Skips need to mirror bootstrap's Step N4/A5 mapping.
+SYNC_SKILL="$PLUGIN_DIR/skills/rkt-sync/SKILL.md"
+
+# Pull the `case "$PRESET" in ... esac` block out of the SKILL prose
+case_block=$(awk '
+  /^case "\$PRESET" in$/ { capturing = 1 }
+  capturing             { print }
+  /^esac$/              { capturing = 0 }
+' "$SYNC_SKILL")
+
+[[ -n "$case_block" ]] || {
+  echo "FAIL: no \`case \"\$PRESET\" in ... esac\` block found in rkt-sync SKILL"
+  exit 1
+}
+
+# Run the extracted block for each preset and verify the resolved rules
+assert_preset_resolves() {
+  local preset="$1"
+  local expected="$2"
+  local actual
+  actual=$(PRESET="$preset" bash -c "$case_block; printf '%s' \"\$APPLICABLE_RULES\"")
+  [[ "$actual" == "$expected" ]] || {
+    echo "FAIL: rkt-sync runtime: PRESET=$preset → '$actual', expected '$expected'"
+    exit 1
+  }
+}
+
+assert_preset_resolves "full"    "backend-fastapi.md supabase.md web-vite.md ios-design.md"
+assert_preset_resolves "web"     "web-nextjs.md supabase.md"
+assert_preset_resolves "backend" "backend-fastapi.md supabase.md"
+assert_preset_resolves "ios"     "ios-design.md"
+
+# Unknown preset must resolve to empty (defensive — no silent fallback)
+unknown=$(PRESET="bogus" bash -c "$case_block; printf '%s' \"\$APPLICABLE_RULES\"" 2>/dev/null)
+[[ -z "$unknown" ]] || {
+  echo "FAIL: unknown preset 'bogus' resolved to '$unknown' (expected empty)"
+  exit 1
+}
+
+# Every rule file referenced must exist in the plugin's rules/ directory
+for rule in backend-fastapi.md supabase.md web-vite.md web-nextjs.md ios-design.md; do
+  [[ -f "$PLUGIN_DIR/rules/$rule" ]] || {
+    echo "FAIL: rules/$rule missing (referenced by rkt-sync case statement)"
+    exit 1
+  }
+done
+
+# rkt-sync MUST NOT keep the stale preset names anywhere
+for stale in "web-next" "fullstack" "fullstack-next"; do
+  ! grep -qE "(^|\s)${stale}\)" "$SYNC_SKILL" || {
+    echo "FAIL: rkt-sync still has '${stale})' case branch"
+    exit 1
+  }
+done
+
+# Defense in depth: declare -A must NOT reappear in rkt-sync's preset block
+# (it's bash 4+ and degrades silently on macOS bash 3.2).
+! grep -q "declare -A PRESET_RULES" "$SYNC_SKILL" || {
+  echo "FAIL: rkt-sync uses 'declare -A PRESET_RULES' which silently breaks on bash 3.2"
+  exit 1
+}
+
 echo "PASS: test-rkt-sync.sh"
