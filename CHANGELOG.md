@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.1.3 — 2026-05-08
+
+### Fixed
+
+- **Bootstrap: skip preset `app/` and `lib/` when target Next.js project uses
+  the `src/` directory layout.** Detection now reports
+  `signals.nextjs_layout: "src" | "root" | "none"`. ADOPT mode's additive
+  scaffold (Step A4) reads it and skips the preset's root-level `app/*` and
+  `lib/*` paths when `nextjs_layout == "src"` so they don't fight an
+  existing `src/app/` route tree. Previously the preset wrote a parallel
+  route tree at the project root and broke the Next.js build. (RKT-103)
+- **Bootstrap: render JSON null / number / boolean values in `rkt.json` as
+  the correct JSON type instead of strings.** `render-template.sh` now
+  detects the value type and consumes the template's surrounding quotes
+  for non-string types, so `"backend": "{{DEPLOY_BACKEND}}"` with a JSON
+  null value renders as `"backend": null` (not the string `"null"`).
+  Affected `deploy.backend` for the `web` preset and any other typed
+  values that flow through TMPVARS. (RKT-103)
+- **Bootstrap: stage only bootstrap-introduced paths instead of `git add .`.**
+  Step A4/A5 record every created path to `$STAGED_PATHS`; Step A7 stages
+  only those. Pre-existing modifications to tracked files now stay
+  unstaged with a visible warning at the start of A7, so an in-flight
+  feature won't get swept into the `[rkt] Add workflow tooling` commit
+  with the wrong attribution. (RKT-103)
+
+### Tests
+
+- New fixture `tests/fixtures/nextjs-src-layout/` exercising the `src/`
+  directory regression.
+- `tests/test-render-template.sh` covers JSON null, number, boolean, and
+  string type preservation through template substitution.
+- `tests/test-bootstrap-adopt.sh` adds Test 2 (src/-layout skip) and
+  Test 3 (surgical staging preserves pre-existing dirty work).
+
 ## 0.1.2 — 2026-04-18
 
 ### Fixed
