@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.1.4 — 2026-05-08
+
+### Fixed
+
+- **`rkt-sync`: replaced nonexistent preset names with the canonical four.**
+  `PRESET_RULES` was keyed by `web-next`, `fullstack`, and `fullstack-next`
+  — none of which are real presets. Result: `/rkt:rkt-sync` was a silent
+  no-op for `full`, `backend`, and `ios` projects (no rules synced) and
+  applied `web-vite` to `web` projects that actually use Next.js. The map
+  now mirrors bootstrap's Step N4/A5 mapping exactly. (RKT-109)
+
+### Added
+
+- **`require_linear` guard for Linear-dependent skills.** Bootstrap supports
+  a `[Skip Linear]` path that leaves `linear.project_id` empty. Previously,
+  `/rkt:implement`, `/rkt:create-issue`, and `/rkt:scan` would pass
+  `--project-id ""` to the linear CLI and either error opaquely or operate
+  on the wrong scope (`/scan` would list issues across the entire workspace
+  instead of just the project). The new guard in `scripts/lib/common.sh`
+  fails fast with an actionable error pointing to `/rkt:bootstrap`. Wired
+  into Step 0 of all three skills. (RKT-110)
+
+### Tests
+
+- `tests/test-rkt-sync.sh` asserts all 4 presets resolve to the bootstrap-
+  canonical rule set, every rule file referenced exists, and the stale
+  preset names are gone from rkt-sync.
+- `tests/test-common.sh` covers `require_linear` across 6 cases (missing
+  rkt.json, empty/null/absent linear, valid project_id, error message
+  shape).
+
 ## 0.1.3 — 2026-05-08
 
 ### Fixed
