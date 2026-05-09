@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.2 — 2026-05-09
+
+Fixes Codex marketplace discovery for the Git-backed marketplace install.
+
+### Fixed
+
+- **Codex marketplace path now uses `./plugins/rkt`.** Codex rejects an empty
+  normalized plugin path from `./`, so the marketplace entry now points at a
+  non-empty plugin wrapper path.
+- **`plugins/rkt` wrapper keeps one source of truth.** The wrapper is made of
+  symlinks back to the repo-root plugin manifest, skills, scripts, templates,
+  rules, and agents, so Git-backed upgrades still update the canonical repo
+  contents rather than a copied plugin tree.
+
 ## 0.3.1 — 2026-05-09
 
 Codex support release. This adds a Codex-native plugin manifest and marketplace

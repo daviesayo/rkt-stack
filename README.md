@@ -135,7 +135,8 @@ Code project using the plugin — it is the plugin's development workspace.
 rkt-stack/
 ├── .claude-plugin/plugin.json       # plugin manifest
 ├── .codex-plugin/plugin.json        # Codex plugin manifest
-├── .agents/plugins/marketplace.json # Codex marketplace entry, rooted at ./
+├── .agents/plugins/marketplace.json # Codex marketplace entry, rooted at ./plugins/rkt
+├── plugins/rkt/                     # Codex wrapper with symlinks to repo-root content
 ├── skills/                          # /bootstrap, /implement, /create-issue, etc.
 ├── agents/                          # backend, database, ios, web, code-reviewer
 ├── rules/                           # rule templates copied into projects

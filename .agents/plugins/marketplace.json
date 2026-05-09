@@ -8,7 +8,7 @@
       "name": "rkt",
       "source": {
         "source": "local",
-        "path": "./"
+        "path": "./plugins/rkt"
       },
       "policy": {
         "installation": "AVAILABLE",

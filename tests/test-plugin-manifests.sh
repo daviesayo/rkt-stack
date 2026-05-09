@@ -32,9 +32,17 @@ if [[ "$codex_skill_path" != "./skills/" ]]; then
 fi
 
 marketplace_path="$(jq -r '.plugins[] | select(.name == "rkt") | .source.path' "$CODEX_MARKETPLACE")"
-if [[ "$marketplace_path" != "./" ]]; then
-  echo "Codex marketplace should point at repo root ./, got $marketplace_path" >&2
+if [[ "$marketplace_path" != "./plugins/rkt" ]]; then
+  echo "Codex marketplace should point at ./plugins/rkt, got $marketplace_path" >&2
   exit 1
 fi
+
+PLUGIN_WRAPPER="$ROOT/plugins/rkt"
+for path in .codex-plugin .claude-plugin skills scripts templates rules agents; do
+  if [[ ! -L "$PLUGIN_WRAPPER/$path" ]]; then
+    echo "Codex plugin wrapper should symlink $path back to the repo root" >&2
+    exit 1
+  fi
+done
 
 echo "Plugin manifests are valid and in sync."
