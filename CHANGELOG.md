@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.1 — 2026-05-09
+
+Codex support release. This adds a Codex-native plugin manifest and marketplace
+entry while keeping the existing Claude Code plugin layout intact.
+
+### Added
+
+- **Codex plugin manifest at `.codex-plugin/plugin.json`.** Loads the existing
+  `skills/` tree from the repo root, includes Codex interface metadata, and is
+  version-locked with the Claude plugin manifest.
+- **Codex marketplace entry at `.agents/plugins/marketplace.json`.** Points the
+  `rkt` plugin at `./` so a Git-backed Codex marketplace can install the plugin
+  from the same repository root instead of a copied nested plugin directory.
+- **Manifest sync test.** `tests/test-plugin-manifests.sh` validates both
+  plugin manifests and asserts that Claude and Codex versions stay in sync.
+
 ## 0.3.0 — 2026-05-08
 
 Three rough edges from the wdyd-platform `/rkt:implement` run, all addressed.

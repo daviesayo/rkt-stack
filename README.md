@@ -1,11 +1,11 @@
 # rkt-stack
 
-Davies's personal Claude Code plugin for spinning up new projects with a
+Davies's personal Claude Code and Codex plugin for spinning up new projects with a
 consistent, opinionated development workflow.
 
 ## What this is
 
-`rkt` is a Claude Code plugin that bundles the skills, agents, rules, and
+`rkt` is a Claude Code and Codex plugin that bundles the skills, agents, rules, and
 scaffolding tooling that evolved during the Witness project — so future projects
 can go from zero to a fully-wired repo (git initialized, Linear project created,
 CLAUDE.md rendered, agents ready) in one command.
@@ -46,6 +46,8 @@ The plugin ships with four presets that cover the common project shapes:
 
 ### One-time install
 
+Claude Code:
+
 ```bash
 # Add this repo as a Claude Code marketplace
 claude marketplace add daviesayo/rkt-stack
@@ -58,6 +60,18 @@ claude plugin install rkt@daviesayo-marketplace
 #   - default_github_owner
 #   - default_ios_device
 #   - default_gh_visibility
+```
+
+Codex:
+
+```toml
+[marketplaces.daviesayo-marketplace]
+source_type = "git"
+source = "git@github.com:daviesayo/rkt-stack.git"
+ref = "main"
+
+[plugins."rkt@daviesayo-marketplace"]
+enabled = true
 ```
 
 ### Starting a new project
@@ -120,6 +134,8 @@ Code project using the plugin — it is the plugin's development workspace.
 ```
 rkt-stack/
 ├── .claude-plugin/plugin.json       # plugin manifest
+├── .codex-plugin/plugin.json        # Codex plugin manifest
+├── .agents/plugins/marketplace.json # Codex marketplace entry, rooted at ./
 ├── skills/                          # /bootstrap, /implement, /create-issue, etc.
 ├── agents/                          # backend, database, ios, web, code-reviewer
 ├── rules/                           # rule templates copied into projects

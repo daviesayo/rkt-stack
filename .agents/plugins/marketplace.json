@@ -1,0 +1,20 @@
+{
+  "name": "daviesayo-marketplace",
+  "interface": {
+    "displayName": "Davies's Personal Plugins"
+  },
+  "plugins": [
+    {
+      "name": "rkt",
+      "source": {
+        "source": "local",
+        "path": "./"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Coding"
+    }
+  ]
+}

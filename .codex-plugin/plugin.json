@@ -1,0 +1,39 @@
+{
+  "name": "rkt",
+  "version": "0.3.1",
+  "description": "Personal AI toolbox - project bootstrapping, workflow orchestration, and prompt engineering",
+  "author": {
+    "name": "Davies Ayo",
+    "url": "https://github.com/daviesayo"
+  },
+  "homepage": "https://github.com/daviesayo/rkt-stack",
+  "repository": "https://github.com/daviesayo/rkt-stack",
+  "license": "MIT",
+  "keywords": [
+    "bootstrap",
+    "scaffolding",
+    "personal",
+    "workflow",
+    "linear",
+    "prompt-engineering"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "rkt",
+    "shortDescription": "Project bootstrapping, workflow orchestration, and prompt engineering.",
+    "longDescription": "Davies's personal AI toolbox for spinning up project workflows, coordinating implementation, resolving reviews, syncing project scaffolding, and crafting production-ready prompts.",
+    "developerName": "Davies Ayo",
+    "category": "Coding",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/daviesayo/rkt-stack",
+    "brandColor": "#111827",
+    "defaultPrompt": [
+      "Bootstrap this repo with my rkt workflow",
+      "Implement the next Linear issue with rkt",
+      "Help me craft a production-ready prompt"
+    ]
+  }
+}
