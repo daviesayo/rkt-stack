@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.3 — 2026-05-16
+
+Adds visual identity analysis and DESIGN.md generation skills to the rkt plugin.
+
+### Added
+
+- **`visual-identity-folder-analysis` skill.** Analyzes folders of visual
+  references into contact sheets, palette samples, image-by-image audits, and
+  a cohesive visual identity report.
+- **`visual-identity-to-design-md` skill.** Extends visual identity analysis
+  into a stack-aware `DESIGN.md`/`design.md` contract for component-based
+  product work, with Google DESIGN.md linting guidance.
+
 ## 0.3.2 — 2026-05-09
 
 Fixes Codex marketplace discovery for the Git-backed marketplace install.
