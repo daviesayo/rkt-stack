@@ -18,7 +18,7 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PLUGIN_DIR="$(cd "$HERE/.." && pwd)"
+PLUGIN_DIR="$(cd "$HERE/../plugins/rkt" && pwd)"
 
 # 1. Bootstrap NEW: team selection precedes prefix prompt.
 grep -q "must run BEFORE the issue-prefix prompt" "$PLUGIN_DIR/skills/bootstrap/SKILL.md" \

@@ -10,14 +10,19 @@ must contain enough detail that an implementing agent can start work immediately
 without re-discovering context. That means: specific file paths, code references,
 relevant doc pointers, and the current state of related systems.
 
-**UX principle:** All interactive prompts use the `AskUserQuestion` tool — never bash
+**UX principle:** All interactive prompts use the host's native structured question tool — never bash
 `read` or free-text options. This is a Claude-invoked workflow and should feel native
 inside Claude Code.
+
+**Host portability:** Before referencing bundled rkt files, set
+`RKT_PLUGIN_ROOT="${RKT_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-<installed-rkt-plugin-root>}}"`.
+Use the host's native structured question tool when available; if unavailable,
+ask a concise direct question and wait.
 
 ## Step 0: Read project config
 
 ```bash
-source "${CLAUDE_PLUGIN_ROOT}/scripts/lib/common.sh"
+source "${RKT_PLUGIN_ROOT}/scripts/lib/common.sh"
 require_linear || exit 1
 
 PREFIX=$(jq -r .linear.issue_prefix rkt.json)
@@ -39,7 +44,7 @@ From the conversation, extract:
 - **How urgent** it is (P1 urgent, P2 high, P3 medium, P4 low)
 - **What label(s)** fit — see label reference below
 
-If anything is ambiguous, use `AskUserQuestion` to clarify. Don't guess scope.
+If anything is ambiguous, use the host's native structured question tool to clarify. Don't guess scope.
 
 ## Step 2: Research the codebase
 
@@ -63,7 +68,7 @@ This research step is what separates a useful issue from a vague one.
 
 ## Step 3: Draft and confirm
 
-Show the user the issue before creating it, then use `AskUserQuestion`:
+Show the user the issue before creating it, then use the host's native structured question tool:
 
 > **Title:** [concise title]
 > **Label:** [Bug/Feature/Improvement/Ops]
@@ -194,7 +199,7 @@ After creation, show:
 ## Multiple issues
 
 If the user wants to create several issues at once, draft them all first in a table,
-get approval via `AskUserQuestion`, then create sequentially. Don't batch-create
+get approval via the host's native structured question tool, then create sequentially. Don't batch-create
 without showing the list.
 
 ## Scaling detail to issue size
@@ -221,8 +226,8 @@ The test: **could an agent who has never seen this codebase read this issue and 
 | Mistake | Fix |
 |---|---|
 | Using raw `linear-cli` for issue creation | Always use this skill — it knows the template and label conventions |
-| Creating without showing the draft first | Always present the draft via AskUserQuestion and wait for confirmation |
-| Guessing priority | Ask via AskUserQuestion if unclear — default to P3 |
+| Creating without showing the draft first | Always present the draft via the host's native structured question tool and wait for confirmation |
+| Guessing priority | Ask via the host's native structured question tool if unclear — default to P3 |
 | Missing `--project-id` | Every issue must land in the correct Linear project — read from rkt.json |
 | Vague requirements like "update the backend" | Name the file, the function, the endpoint |
 | Skipping the research step | A 30-second grep saves the implementing agent 10 minutes of exploration |

@@ -10,9 +10,14 @@ into a Linear issue, decompose the work into domain tasks, and spawn domain agen
 directly from this session. You are the orchestrator — you do NOT hand off to an
 architect subagent.
 
-**UX principle:** All interactive prompts use the `AskUserQuestion` tool — never bash
+**UX principle:** All interactive prompts use the host's native structured question tool — never bash
 `read` or free-text options. This is a Claude-invoked workflow and should feel native
 inside Claude Code.
+
+**Host portability:** Before referencing bundled rkt files, set
+`RKT_PLUGIN_ROOT="${RKT_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-<installed-rkt-plugin-root>}}"`.
+Use the host's native structured question tool when available; if unavailable,
+ask a concise direct question and wait.
 
 **You are the single context gatherer.** Domain agents are lean workers — they don't
 read CLAUDE.md, decisions.md, agent_learnings.md, or query MemPalace themselves.
@@ -33,7 +38,7 @@ in the main session because:
 Before doing anything else, verify Linear is configured and read the project config:
 
 ```bash
-source "${CLAUDE_PLUGIN_ROOT}/scripts/lib/common.sh"
+source "${RKT_PLUGIN_ROOT}/scripts/lib/common.sh"
 require_linear || exit 1
 
 PREFIX=$(jq -r .linear.issue_prefix rkt.json)
@@ -103,7 +108,7 @@ Look at the current conversation for plan artifacts. Extract:
 - **Acceptance criteria** — how do we know it's done?
 
 If any of these are missing or ambiguous, ask the user before proceeding via
-`AskUserQuestion`. Don't guess scope.
+the host's native structured question tool. Don't guess scope.
 
 ## Step 2: Create the Linear issue (or use an existing one)
 
@@ -140,9 +145,9 @@ $LINEAR issue create \
   --project-id "$(jq -r .linear.project_id rkt.json)"
 ```
 
-Show the user the issue ID and a brief summary. Use `AskUserQuestion` to confirm:
+Show the user the issue ID and a brief summary. Use the host's native structured question tool to confirm:
 
-> Use `AskUserQuestion` with options:
+> Use the host's native structured question tool with options:
 > - `[Proceed]` — continue with this issue
 > - `[Edit first]` — pause to adjust before continuing
 > - `[Cancel]` — abort
@@ -265,7 +270,7 @@ Analyse the issue and determine:
 3. **Task description for each domain** — what specifically needs to be built, including
    any cross-domain context (API shapes, schema columns, etc.)
 
-Present the decomposition to the user via `AskUserQuestion`:
+Present the decomposition to the user via the host's native structured question tool:
 
 > **Decomposition for ${PREFIX}-XX:**
 >
@@ -286,10 +291,10 @@ Options:
 Only create worktrees for the domains you need:
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}/scripts/new-feature.sh" ${PREFIX}-[N] [short-description] [domain1] [domain2] ...
+"${RKT_PLUGIN_ROOT}/scripts/new-feature.sh" ${PREFIX}-[N] [short-description] [domain1] [domain2] ...
 ```
 
-Example: `"${CLAUDE_PLUGIN_ROOT}/scripts/new-feature.sh" ${PREFIX}-42 cron-auth backend` for a backend-only fix. Scripts ship with the rkt plugin — no local `scripts/` folder in the project.
+Example: `"${RKT_PLUGIN_ROOT}/scripts/new-feature.sh" ${PREFIX}-42 cron-auth backend` for a backend-only fix. Scripts ship with the rkt plugin — no local `scripts/` folder in the project.
 
 ## Step 6: Spawn domain agents
 
@@ -462,7 +467,7 @@ The cleanup script itself guards against this (`ensure_out_of_worktrees`) but
 being explicit keeps the shell state sane for anything that runs after:
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}/scripts/cleanup-feature.sh" ${PREFIX}-[N]
+"${RKT_PLUGIN_ROOT}/scripts/cleanup-feature.sh" ${PREFIX}-[N]
 ```
 
 ## Common Mistakes
@@ -480,4 +485,4 @@ being explicit keeps the shell state sane for anything that runs after:
 | Spawning ios + web before backend completes | Respect dependency order: database → backend → (ios \| web) |
 | Hardcoding "RKT-" or project name | Always read from rkt.json via jq |
 | Skipping the Step 0b prefix verification | The check is fast (~200ms) and the failure mode it guards against (PRs not auto-linking to Linear) is silent — never skip it |
-| Using text menus instead of AskUserQuestion | All prompts must use AskUserQuestion — never bash read |
+| Using text menus instead of the host's native structured question tool | All prompts must use the host's native structured question tool — never bash read |

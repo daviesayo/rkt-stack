@@ -69,7 +69,7 @@ After extracting intent (see Intent Extraction below), pick an output schema (se
 
 Ask up to 3 clarifying questions **only when critical dimensions are genuinely missing** — not always. If the missing info is already inferable from session context or doesn't materially change the prompt, do NOT ask. Show the draft alongside the questions so the user reacts in context.
 
-**Default behavior is interactive — ask and wait.** Use `AskUserQuestion` for the critical questions (free-text follow-ups in skills are forbidden — always the structured tool).
+**Default behavior is interactive — ask and wait.** Use the host's native structured question tool for the critical questions (free-text follow-ups in skills are forbidden — always the structured tool).
 - If the user answers → apply answers → produce the final prompt.
 - If the user answers "I don't know" or skips an individual question → skip that question only, continue with the rest, flag that single assumption at the end.
 - If the user explicitly says "skip," "just produce it," "don't ask me," or signals async/batch use → produce the final prompt with reasonable defaults AND append assumption flags for ALL skipped Qs.

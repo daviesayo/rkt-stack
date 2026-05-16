@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../plugins/rkt" && pwd)"
 
 ANALYSIS_SKILL="$ROOT/skills/visual-identity-folder-analysis"
 DESIGN_SKILL="$ROOT/skills/visual-identity-to-design-md"

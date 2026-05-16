@@ -3,8 +3,9 @@
 # sync-github-labels.sh — Sync the canonical rkt label set onto the current
 # repository's GitHub remote. Idempotent (`gh label create --force`).
 #
-# Reads the manifest at ${CLAUDE_PLUGIN_ROOT}/templates/github-labels.json
-# (falls back to repo-relative path when run from the plugin dev workspace).
+# Reads the manifest at ${RKT_PLUGIN_ROOT}/templates/github-labels.json
+# (or ${CLAUDE_PLUGIN_ROOT} in Claude Code; falls back to repo-relative path
+# when run from the plugin dev workspace).
 #
 # Skips silently and exits 0 when:
 #   - no `origin` remote is configured (e.g. NEW bootstrap with [Skip] for GH)
@@ -13,8 +14,8 @@
 # Exits non-zero only when the manifest itself is missing or malformed.
 #
 # Usage:
-#   "${CLAUDE_PLUGIN_ROOT}/scripts/sync-github-labels.sh"
-#   "${CLAUDE_PLUGIN_ROOT}/scripts/sync-github-labels.sh" --quiet
+#   "${RKT_PLUGIN_ROOT}/scripts/sync-github-labels.sh"
+#   "${RKT_PLUGIN_ROOT}/scripts/sync-github-labels.sh" --quiet
 
 set -euo pipefail
 
@@ -24,7 +25,7 @@ QUIET="false"
 log() { [[ "$QUIET" == "true" ]] || echo "$@"; }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+PLUGIN_ROOT="${RKT_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}}"
 MANIFEST="$PLUGIN_ROOT/templates/github-labels.json"
 
 [[ -f "$MANIFEST" ]] || {

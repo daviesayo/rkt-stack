@@ -8,6 +8,19 @@ description: Use to sync project-owned templates (CLAUDE.md, rules, PROGRESS.md 
 You update **plugin-managed** project files to match the currently-installed
 rkt plugin version, preserving **project-owned** files and user-edited sections.
 
+## Host portability
+
+Before referencing bundled rkt files, resolve the plugin root:
+
+```bash
+RKT_PLUGIN_ROOT="${RKT_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-<installed-rkt-plugin-root>}}"
+```
+
+In Claude Code, `CLAUDE_PLUGIN_ROOT` normally supplies this path. In Codex or
+local development contexts, resolve `<installed-rkt-plugin-root>` to the real
+rkt plugin package root. Use the host's native structured question tool when
+available; if unavailable, ask a concise direct question and wait.
+
 ## What sync touches vs. never touches
 
 **Plugin-managed (may be updated by sync, with user confirmation):**
@@ -28,7 +41,7 @@ user territory. Sync only replaces content inside these blocks when it differs
 from the current template output.
 
 You present diffs and let the user accept, reject, or merge on a per-file basis
-via `AskUserQuestion`.
+via the host's native structured question tool.
 
 ## Step 1: Verify project is bootstrapped
 
@@ -39,7 +52,7 @@ via `AskUserQuestion`.
 }
 
 PROJECT_VERSION=$(jq -r .bootstrap.rkt_plugin_version rkt.json)
-CURRENT_VERSION=$(jq -r .version "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json")
+CURRENT_VERSION=$(jq -r .version "${RKT_PLUGIN_ROOT}/.claude-plugin/plugin.json")
 
 echo "Project bootstrapped with rkt $PROJECT_VERSION"
 echo "Currently installed: rkt $CURRENT_VERSION"
@@ -56,7 +69,7 @@ Then exit.
 If the plugin ships a CHANGELOG.md, surface the relevant entries:
 
 ```bash
-CHANGELOG="${CLAUDE_PLUGIN_ROOT}/CHANGELOG.md"
+CHANGELOG="${RKT_PLUGIN_ROOT}/CHANGELOG.md"
 if [[ -f "$CHANGELOG" ]]; then
   echo "## Changes since $PROJECT_VERSION"
   # Print lines between current version heading and project version heading
@@ -116,8 +129,8 @@ process_file() {
 
   local rendered
   rendered=$(mktemp)
-  "${CLAUDE_PLUGIN_ROOT}/scripts/render-template.sh" \
-    "${CLAUDE_PLUGIN_ROOT}/templates/${tmpl_name}.tmpl" "$rendered" "$(cat "$TMPVARS")"
+  "${RKT_PLUGIN_ROOT}/scripts/render-template.sh" \
+    "${RKT_PLUGIN_ROOT}/templates/${tmpl_name}.tmpl" "$rendered" "$(cat "$TMPVARS")"
 
   if [[ ! -e "$target" ]]; then
     # File absent — create it
@@ -146,7 +159,7 @@ process_file() {
   diff -u "$target" "$rendered" | head -60 || true
   echo ""
 
-  # AskUserQuestion: present options
+  # the host's native structured question tool: present options
   # [Accept update]    → cp "$rendered" "$target"
   # [Keep mine]        → keep existing, no change
   # [Show 3-way merge] → git merge-file or open in EDITOR
@@ -207,7 +220,7 @@ for rule_file in $APPLICABLE_RULES; do
     continue
   fi
 
-  local plugin_source="${CLAUDE_PLUGIN_ROOT}/rules/$rule_file"
+  local plugin_source="${RKT_PLUGIN_ROOT}/rules/$rule_file"
   [[ -f "$plugin_source" ]] || continue
 
   if [[ ! -e "$target" ]]; then
@@ -226,7 +239,7 @@ for rule_file in $APPLICABLE_RULES; do
   diff -u "$target" "$plugin_source" | head -60 || true
   echo ""
 
-  # AskUserQuestion: [Accept update], [Keep mine], [Show 3-way merge]
+  # the host's native structured question tool: [Accept update], [Keep mine], [Show 3-way merge]
 done
 
 # Explicitly skip any project-owned rules discovered in .claude/rules/
@@ -250,7 +263,7 @@ echo "Updated rkt.json → rkt_plugin_version = $CURRENT_VERSION"
 
 ## Step 7: Commit (optional)
 
-Use `AskUserQuestion`:
+Use the host's native structured question tool:
 
 - "Commit the synced templates?"
 - Options: `[Yes, commit]`, `[Leave uncommitted for review]`

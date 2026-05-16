@@ -2,7 +2,7 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SCRIPT="$HERE/../scripts/new-feature.sh"
+SCRIPT="$HERE/../plugins/rkt/scripts/new-feature.sh"
 
 # Setup: create a throwaway git repo
 tmpdir=$(mktemp -d)

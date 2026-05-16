@@ -62,11 +62,14 @@ Keep the front matter compatible with the current Google linter:
 If no analysis exists, run:
 
 ```bash
-RKT_PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-<rkt-plugin-root>}"
+RKT_PLUGIN_ROOT="${RKT_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-<installed-rkt-plugin-root>}}"
 python3 "$RKT_PLUGIN_ROOT/skills/visual-identity-folder-analysis/scripts/prepare_visual_references.py" "<source-folder>" --out "<output-dir>"
 ```
 
-In Claude Code plugin contexts, `${CLAUDE_PLUGIN_ROOT}` is normally available. In Codex or local development contexts, resolve `<rkt-plugin-root>` to the installed rkt plugin/repo root before running the command.
+In Claude Code plugin contexts, `${CLAUDE_PLUGIN_ROOT}` normally supplies this
+path. In Codex or local development contexts, resolve
+`<installed-rkt-plugin-root>` to the real rkt plugin package root before running
+the command.
 
 Then inspect:
 

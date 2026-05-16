@@ -2,7 +2,7 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$HERE/../scripts/lib/common.sh"
+source "$HERE/../plugins/rkt/scripts/lib/common.sh"
 
 # Test: derive_prefix converts kebab-case to uppercase initials
 result=$(derive_prefix "my-new-thing")

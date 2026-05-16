@@ -2,7 +2,7 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SCRIPT="$HERE/../scripts/detect-stack.sh"
+SCRIPT="$HERE/../plugins/rkt/scripts/detect-stack.sh"
 FIXTURES="$HERE/fixtures"
 
 assert_suggests() {

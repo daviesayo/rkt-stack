@@ -8,6 +8,22 @@ description: Use to scaffold a new project (greenfield) or adopt an existing one
 You scaffold a new project or adopt an existing one into Davies's rkt workflow.
 You run in the target directory (the user has already `cd`'d there).
 
+## Host portability
+
+Before referencing bundled rkt files, resolve the plugin root:
+
+```bash
+RKT_PLUGIN_ROOT="${RKT_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-<installed-rkt-plugin-root>}}"
+```
+
+In Claude Code, `CLAUDE_PLUGIN_ROOT` normally supplies this path. In Codex or
+local development contexts, resolve `<installed-rkt-plugin-root>` to the real
+rkt plugin package root, usually the directory containing `.codex-plugin/`,
+`skills/`, `scripts/`, and `templates/`.
+
+For interactive prompts, use the host's native structured question tool when
+available; if the host lacks one, ask a concise direct question and wait.
+
 **Two modes, chosen by state detection:**
 
 - **NEW** — target directory is empty (or close to it). Greenfield scaffolding.
@@ -20,7 +36,7 @@ Before doing anything else, scan the target directory:
 
 ```bash
 TARGET="$(pwd)"
-DETECT_OUTPUT=$("${CLAUDE_PLUGIN_ROOT}/scripts/detect-stack.sh" "$TARGET")
+DETECT_OUTPUT=$("${RKT_PLUGIN_ROOT}/scripts/detect-stack.sh" "$TARGET")
 echo "$DETECT_OUTPUT"
 ```
 
@@ -56,25 +72,25 @@ If any are missing, report them in a table and note which steps will fail:
 | `linear`   | yes      | Step N6 (Linear project)  |
 | `jq`       | yes      | all template rendering    |
 
-Do **not** auto-install — that's deferred. Use `AskUserQuestion` with options
+Do **not** auto-install — that's deferred. Use the host's native structured question tool with options
 `[Proceed anyway]` and `[Cancel]` to ask whether to continue, noting which steps
 will be skipped due to missing tools.
 
 ### Step N2: Gather config
 
-Use `AskUserQuestion` for every prompt — never use bash `read` or plain text
+Use the host's native structured question tool for every prompt — never use bash `read` or plain text
 questions.
 
 **Preset** (if not passed as arg):
 
-Use `AskUserQuestion` with:
+Use the host's native structured question tool with:
 - Question: "Which preset?"
 - Options: `full`, `web`, `backend`, `ios`
 - Multi-select: false
 
 **Project name** (if not passed as arg):
 
-Use `AskUserQuestion` as a free-text prompt. Validate the response: it must
+Use the host's native structured question tool as a free-text prompt. Validate the response: it must
 match `[a-z][a-z0-9-]*`. Derive `{{PROJECT_NAME_PASCAL}}` from it (e.g.
 `my-new-thing` → `MyNewThing`) by title-casing each hyphen-separated segment
 and joining without separators.
@@ -90,7 +106,7 @@ linear api <<< 'query { teams { nodes { id key name } } }' | jq -r '.data.teams.
 ```
 
 - If 1 team → auto-use it, no prompt needed
-- If >1 team → use `AskUserQuestion` with team names as options
+- If >1 team → use the host's native structured question tool with team names as options
 - If 0 teams → stop with an actionable error: "No Linear teams found. Create a
   team at linear.app first, or re-run after setting up Linear."
 
@@ -103,14 +119,14 @@ titles (`${LINEAR_TEAM_KEY}-42/...`).
 
 Default to `LINEAR_TEAM_KEY` from the previous step. Only fall back to the
 project-name derivation (`derive_prefix` in
-`${CLAUDE_PLUGIN_ROOT}/scripts/lib/common.sh`) when Linear is unavailable
+`${RKT_PLUGIN_ROOT}/scripts/lib/common.sh`) when Linear is unavailable
 (`linear` CLI missing, or user explicitly skips Linear later). Present as
 a confirmation:
 
 > "Use Linear team key `RKT` as the issue prefix? This is what Linear's
 > GitHub integration auto-links on, so it must match exactly."
 >
-> Use `AskUserQuestion` with options: `[Accept RKT]`, `[Customize]`,
+> Use the host's native structured question tool with options: `[Accept RKT]`, `[Customize]`,
 > `[Cancel]`.
 
 If the user picks `[Customize]`, **warn loudly** that any prefix other than
@@ -121,13 +137,13 @@ fail to auto-attach to the matching `RKT-42` Linear issue.
 
 **GitHub repo**:
 
-Use `AskUserQuestion` with options: `[Create private]`, `[Create public]`,
+Use the host's native structured question tool with options: `[Create private]`, `[Create public]`,
 `[Skip]`. Default to `${CLAUDE_PLUGIN_OPTION_DEFAULT_GH_VISIBILITY}` if that
 env var is set.
 
 **MemPalace specialist prefix**:
 
-Use `AskUserQuestion` with options: `[Use project name (slugified)]`,
+Use the host's native structured question tool with options: `[Use project name (slugified)]`,
 `[Customize]`. Default is the project name slugified (same as PROJECT_NAME).
 
 Store all gathered values in a temp JSON file for subsequent steps:
@@ -149,7 +165,7 @@ cat > "$TMPVARS" <<EOF
   "DEPLOY_WEB": "...",
   "DEPLOY_DB": "...",
   "DATE": "$(date +%Y-%m-%d)",
-  "RKT_VERSION": "$(jq -r .version "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json")"
+  "RKT_VERSION": "$(jq -r .version "${RKT_PLUGIN_ROOT}/.claude-plugin/plugin.json")"
 }
 EOF
 ```
@@ -166,7 +182,7 @@ Copy the chosen preset's folder skeleton into the target directory:
 
 ```bash
 PRESET=$(jq -r .PRESET "$TMPVARS")
-SCAFFOLD="${CLAUDE_PLUGIN_ROOT}/templates/presets/$PRESET"
+SCAFFOLD="${RKT_PLUGIN_ROOT}/templates/presets/$PRESET"
 cp -R "$SCAFFOLD/." "$TARGET/"
 ```
 
@@ -181,7 +197,7 @@ binary assets.)
 find "$TARGET" -type f ! -path "*/.git/*" | while IFS= read -r f; do
   if grep -q '{{' "$f" 2>/dev/null; then
     tmp="$f.rendered"
-    "${CLAUDE_PLUGIN_ROOT}/scripts/render-template.sh" "$f" "$tmp" "$(cat "$TMPVARS")"
+    "${RKT_PLUGIN_ROOT}/scripts/render-template.sh" "$f" "$tmp" "$(cat "$TMPVARS")"
     mv "$tmp" "$f"
   fi
 done
@@ -189,21 +205,21 @@ done
 
 ### Step N4: Render global templates
 
-For each global template in `${CLAUDE_PLUGIN_ROOT}/templates/` with a `.tmpl`
+For each global template in `${RKT_PLUGIN_ROOT}/templates/` with a `.tmpl`
 extension, render it into the target directory without the `.tmpl` suffix:
 
 ```bash
-TEMPLATES="${CLAUDE_PLUGIN_ROOT}/templates"
+TEMPLATES="${RKT_PLUGIN_ROOT}/templates"
 for tmpl in CLAUDE.md PROGRESS.md OPS.md README.md rkt.json; do
-  "${CLAUDE_PLUGIN_ROOT}/scripts/render-template.sh" \
+  "${RKT_PLUGIN_ROOT}/scripts/render-template.sh" \
     "$TEMPLATES/${tmpl}.tmpl" "$TARGET/$tmpl" "$(cat "$TMPVARS")"
 done
 
 # decisions.md and agent_learnings.md go in specific subfolders
 mkdir -p "$TARGET/docs/decisions"
-"${CLAUDE_PLUGIN_ROOT}/scripts/render-template.sh" \
+"${RKT_PLUGIN_ROOT}/scripts/render-template.sh" \
   "$TEMPLATES/decisions.md.tmpl" "$TARGET/decisions.md" "$(cat "$TMPVARS")"
-"${CLAUDE_PLUGIN_ROOT}/scripts/render-template.sh" \
+"${RKT_PLUGIN_ROOT}/scripts/render-template.sh" \
   "$TEMPLATES/agent_learnings.md.tmpl" "$TARGET/docs/decisions/agent_learnings.md" "$(cat "$TMPVARS")"
 ```
 
@@ -220,7 +236,7 @@ case "$PRESET" in
 esac
 
 for rule in "${RULES[@]}"; do
-  cp "${CLAUDE_PLUGIN_ROOT}/rules/${rule}.md" "$TARGET/.claude/rules/${rule}.md"
+  cp "${RKT_PLUGIN_ROOT}/rules/${rule}.md" "$TARGET/.claude/rules/${rule}.md"
 done
 ```
 
@@ -318,7 +334,7 @@ After the remote is connected (whether just-created or pre-existing), sync
 the canonical rkt label set onto it:
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}/scripts/sync-github-labels.sh"
+"${RKT_PLUGIN_ROOT}/scripts/sync-github-labels.sh"
 ```
 
 The script is a no-op when no `origin` remote exists, so it's safe to call
@@ -363,7 +379,7 @@ empty, display "failed — retry later". If GitHub was skipped, display "skipped
 ### Step A1: Preflight
 
 Same as Step N1 — check that `git`, `gh`, `linear`, and `jq` are installed.
-Warn on any that are missing with the same table and `AskUserQuestion` offering
+Warn on any that are missing with the same table and the host's native structured question tool offering
 `[Proceed anyway]` or `[Cancel]`.
 
 ### Step A2: Detect stack and confirm preset
@@ -374,13 +390,13 @@ Re-use the detection output captured in Step 0:
 SUGGESTED=$(echo "$DETECT_OUTPUT" | jq -r .suggested_preset)
 ```
 
-Use `AskUserQuestion` to confirm:
+Use the host's native structured question tool to confirm:
 
 - If `SUGGESTED` is not `null`:
   - Question: "I detected `{{detected signals summary}}`. Apply `{{SUGGESTED}}` preset?"
   - Options: `[Yes, apply {{SUGGESTED}}]`, `[Different preset]`, `[Cancel]`
   - If the user picks `[Different preset]`, follow up with a second
-    `AskUserQuestion` offering the full preset menu: `full`, `web`,
+    the host's native structured question tool offering the full preset menu: `full`, `web`,
     `backend`, `ios`.
 - If `SUGGESTED` is `null` (no signals matched):
   - Question: "Couldn't auto-detect the stack. Which preset?"
@@ -393,7 +409,7 @@ Write the confirmed preset into `TMPVARS.PRESET` exactly as in NEW mode.
 Prompts are the same as NEW Step N2, with these ADOPT-specific differences:
 
 - **Project name:** default to the current directory basename (`basename "$(pwd)"`).
-  Offer override via `AskUserQuestion` with the basename pre-filled as the
+  Offer override via the host's native structured question tool with the basename pre-filled as the
   suggested value.
 - **GitHub repo:** if `signals.has_remote == true` (detected in Step 0), default
   to `[Skip]` — the remote already exists. Otherwise offer the normal
@@ -404,7 +420,7 @@ Prompts are the same as NEW Step N2, with these ADOPT-specific differences:
   almost certainly produce a wrong answer. Set a placeholder in TMPVARS for now
   and overwrite in Step A6.
 - **MemPalace prefix:** default to the project name (slugified). Offer override
-  via `AskUserQuestion`.
+  via the host's native structured question tool.
 - **Linear:** handled separately in Step A6 — ADOPT has the "link existing"
   path that NEW mode does not.
 
@@ -425,7 +441,7 @@ build. Skip those preset paths and report each skip in Step A8.
 
 ```bash
 PRESET=$(jq -r .PRESET "$TMPVARS")
-SCAFFOLD="${CLAUDE_PLUGIN_ROOT}/templates/presets/$PRESET"
+SCAFFOLD="${RKT_PLUGIN_ROOT}/templates/presets/$PRESET"
 
 # Track every path bootstrap creates so Step A7 can stage them surgically
 # (initialize once per bootstrap; A4 and A5 both append to it).
@@ -453,7 +469,7 @@ fi
   if [[ ! -e "$dest" ]]; then
     mkdir -p "$(dirname "$dest")"
     if grep -q '{{' "$SCAFFOLD/$rel" 2>/dev/null; then
-      "${CLAUDE_PLUGIN_ROOT}/scripts/render-template.sh" \
+      "${RKT_PLUGIN_ROOT}/scripts/render-template.sh" \
         "$SCAFFOLD/$rel" "$dest" "$(cat "$TMPVARS")"
     else
       cp "$SCAFFOLD/$rel" "$dest"
@@ -487,7 +503,7 @@ existing file (if any):
 1. Render the template into a temp file.
 2. If the destination does not exist → create it (move rendered temp into place).
 3. If the destination is identical to the rendered output → skip silently.
-4. If they differ → a conflict exists. Use `AskUserQuestion` with these options:
+4. If they differ → a conflict exists. Use the host's native structured question tool with these options:
    - `[Keep mine]` — leave the existing file untouched; discard the rendered copy
    - `[Replace]` — overwrite the existing file with the rendered version
    - `[Merge (3-way)]` — run `git merge-file` (or open `$EDITOR` with conflict
@@ -524,7 +540,7 @@ identical, prompt if different.
 
 ### Step A6: Linear — link existing or create new
 
-Use `AskUserQuestion`:
+Use the host's native structured question tool:
 
 - Question: "Is there an existing Linear project for this repo?"
 - Options: `[Link existing (paste URL)]`, `[Create new]`, `[Skip Linear]`
@@ -536,7 +552,7 @@ silent failure (PRs don't attach to issues).
 
 **If `[Link existing (paste URL)]`:**
 
-- Follow up with a free-text `AskUserQuestion` prompt for the Linear project URL.
+- Follow up with a free-text prompt through the host's native structured question tool for the Linear project URL.
 - Parse the project ID from the URL. Linear project URLs follow the form:
   `https://linear.app/<workspace>/project/<slug>-<uuid>`
 - Fetch project details to confirm the project and extract team info:
@@ -558,7 +574,7 @@ silent failure (PRs don't attach to issues).
 **If `[Create new]`:**
 
 - Pick the Linear team first (same prompt as NEW Step N2 — auto-use if 1
-  team, `AskUserQuestion` if multiple). Store `team.id` as `LINEAR_TEAM_ID`
+  team, the host's native structured question tool if multiple). Store `team.id` as `LINEAR_TEAM_ID`
   and **`team.key` as `LINEAR_PREFIX`** in `TMPVARS`.
 - Run the same `projectCreate` GraphQL mutation as NEW Step N6 with the
   resolved `LINEAR_TEAM_ID`.
@@ -571,7 +587,7 @@ silent failure (PRs don't attach to issues).
   fails fast with an actionable error).
 - For `LINEAR_PREFIX`, fall back to the `derive_prefix` heuristic on the git
   remote slug (preferred) or directory basename. Surface a follow-up
-  `AskUserQuestion` confirming the derived value with `[Accept]` / `[Customize]`
+  the host's native structured question tool confirming the derived value with `[Accept]` / `[Customize]`
   options, and warn that linking Linear later via `/rkt-tailor` will likely
   rewrite this prefix to match the team key.
 
@@ -580,15 +596,15 @@ updated `TMPVARS` so the prefix tokens (`{{LINEAR_PREFIX}}`) reflect the
 canonical value:
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}/scripts/render-template.sh" \
-  "${CLAUDE_PLUGIN_ROOT}/templates/rkt.json.tmpl" \
+"${RKT_PLUGIN_ROOT}/scripts/render-template.sh" \
+  "${RKT_PLUGIN_ROOT}/templates/rkt.json.tmpl" \
   "$TARGET/rkt.json" "$(cat "$TMPVARS")"
 
 # CLAUDE.md only re-renders if the user accepted Replace/Merge in Step A5.
 # If they kept their own CLAUDE.md, the warning in Step A8 covers prefix drift.
 if grep -q "{{LINEAR_PREFIX}}" "$TARGET/CLAUDE.md" 2>/dev/null; then
-  "${CLAUDE_PLUGIN_ROOT}/scripts/render-template.sh" \
-    "${CLAUDE_PLUGIN_ROOT}/templates/CLAUDE.md.tmpl" \
+  "${RKT_PLUGIN_ROOT}/scripts/render-template.sh" \
+    "${RKT_PLUGIN_ROOT}/templates/CLAUDE.md.tmpl" \
     "$TARGET/CLAUDE.md" "$(cat "$TMPVARS")"
 fi
 ```
@@ -644,7 +660,7 @@ fi
 # Sync the canonical rkt label set onto the GitHub remote (no-op if absent).
 # Runs after the commit so any synced label changes don't try to enter the
 # bootstrap commit.
-"${CLAUDE_PLUGIN_ROOT}/scripts/sync-github-labels.sh"
+"${RKT_PLUGIN_ROOT}/scripts/sync-github-labels.sh"
 ```
 
 ### Step A8: Report
@@ -683,7 +699,7 @@ presenting the report.
 
 ### What NOT to auto-decide in ADOPT mode (always ask)
 
-These four things must always be prompted via `AskUserQuestion` — never inferred
+These four things must always be prompted via the host's native structured question tool — never inferred
 and silently applied:
 
 | Decision | Why |

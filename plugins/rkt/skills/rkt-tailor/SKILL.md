@@ -9,6 +9,11 @@ You scan a bootstrapped rkt project and capture its project-specific
 business rules into overlay files that the generic plugin agents read at
 task time. Re-runnable as the project evolves.
 
+## Host portability
+
+Use the host's native structured question tool when available; if unavailable,
+ask a concise direct question and wait.
+
 ## Step 1: Verify project is bootstrapped
 
 ```bash
@@ -60,7 +65,7 @@ GRAPHQL
   fi
 
   if [[ -n "$ACTUAL_KEY" && "$ACTUAL_KEY" != "$PREFIX" ]]; then
-    # Drift detected. Offer to repair via AskUserQuestion:
+    # Drift detected. Offer to repair via the host's native structured question tool:
     #   "[Repair: rewrite rkt.json + re-render CLAUDE.md with prefix '$ACTUAL_KEY']"
     #   "[Keep '$PREFIX' (will break Linear auto-linking)]"
     #   "[Cancel]"
@@ -111,7 +116,7 @@ For each scanned domain, look for:
 
 ## Step 3: Interactively surface findings
 
-For each candidate pattern, use `AskUserQuestion`:
+For each candidate pattern, use the host's native structured question tool:
 
 > "I see your backend has a `cooloff` status on contributors with
 > `cooloff_ends_at` set to `now() + 48h`. Should I capture this as a

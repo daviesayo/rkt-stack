@@ -2,12 +2,18 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PLUGIN_DIR="$ROOT/plugins/rkt"
 
-CLAUDE_MANIFEST="$ROOT/.claude-plugin/plugin.json"
-CODEX_MANIFEST="$ROOT/.codex-plugin/plugin.json"
+CLAUDE_MANIFEST="$PLUGIN_DIR/.claude-plugin/plugin.json"
+CODEX_MANIFEST="$PLUGIN_DIR/.codex-plugin/plugin.json"
 CODEX_MARKETPLACE="$ROOT/.agents/plugins/marketplace.json"
+CLAUDE_MARKETPLACE="$ROOT/.claude-plugin/marketplace.json"
 
-for file in "$CLAUDE_MANIFEST" "$CODEX_MANIFEST" "$CODEX_MARKETPLACE"; do
+for file in "$CLAUDE_MANIFEST" "$CODEX_MANIFEST" "$CODEX_MARKETPLACE" "$CLAUDE_MARKETPLACE"; do
+  if [[ ! -f "$file" || -L "$file" ]]; then
+    echo "Expected real manifest file at ${file#$ROOT/}" >&2
+    exit 1
+  fi
   jq empty "$file"
 done
 
@@ -37,12 +43,31 @@ if [[ "$marketplace_path" != "./plugins/rkt" ]]; then
   exit 1
 fi
 
-PLUGIN_WRAPPER="$ROOT/plugins/rkt"
-for path in .codex-plugin .claude-plugin skills scripts templates rules agents; do
-  if [[ ! -L "$PLUGIN_WRAPPER/$path" ]]; then
-    echo "Codex plugin wrapper should symlink $path back to the repo root" >&2
+claude_source="$(jq -r '.plugins[] | select(.name == "rkt") | .source' "$CLAUDE_MARKETPLACE")"
+if [[ "$claude_source" != "./plugins/rkt" ]]; then
+  echo "Claude marketplace should point at ./plugins/rkt, got $claude_source" >&2
+  exit 1
+fi
+
+for path in .codex-plugin .claude-plugin skills scripts templates rules agents README.md CHANGELOG.md LICENSE; do
+  if [[ ! -e "$PLUGIN_DIR/$path" || -L "$PLUGIN_DIR/$path" ]]; then
+    echo "Plugin package should contain a real $path at plugins/rkt/$path" >&2
     exit 1
   fi
 done
+
+skill_count=$(find "$PLUGIN_DIR/skills" -mindepth 2 -maxdepth 2 -name SKILL.md | wc -l | tr -d ' ')
+if [[ "$skill_count" -lt 1 ]]; then
+  echo "Plugin package should contain skill files under plugins/rkt/skills" >&2
+  exit 1
+fi
+
+tmpdir=$(mktemp -d)
+trap 'rm -rf "$tmpdir"' EXIT
+cp -R "$PLUGIN_DIR" "$tmpdir/rkt"
+jq empty "$tmpdir/rkt/.claude-plugin/plugin.json"
+jq empty "$tmpdir/rkt/.codex-plugin/plugin.json"
+[[ -d "$tmpdir/rkt/skills" ]] || { echo "Packaged plugin copy is missing skills/"; exit 1; }
+[[ -f "$tmpdir/rkt/skills/bootstrap/SKILL.md" ]] || { echo "Packaged plugin copy is missing bootstrap skill"; exit 1; }
 
 echo "Plugin manifests are valid and in sync."

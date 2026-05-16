@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.3.4 — 2026-05-16
+
+Fixes cross-tool plugin packaging so Claude Code and Codex install the same
+canonical rkt package.
+
+### Fixed
+
+- **`plugins/rkt` is now the real plugin root.** Replaces the symlink-only
+  wrapper with tracked manifests, skills, scripts, templates, rules, agents,
+  README, and LICENSE under `plugins/rkt/`, avoiding Codex's empty cache
+  install failure for `rkt@daviesayo-marketplace`.
+- **Claude and Codex marketplaces both target `./plugins/rkt`.** The root
+  marketplace catalogs stay at `.claude-plugin/marketplace.json` and
+  `.agents/plugins/marketplace.json`; the actual plugin package lives in one
+  place.
+- **Skills use host-neutral runtime wording.** Bundled-file snippets now use
+  `RKT_PLUGIN_ROOT` with `CLAUDE_PLUGIN_ROOT` as the Claude fallback, and
+  interactive prompts reference the host's native structured question tool.
+
+### Tests
+
+- `tests/test-plugin-manifests.sh` now asserts real packaged manifests and
+  skill files under `plugins/rkt`, verifies both marketplace paths, and copies
+  the package to a temp dir as a cache-shape smoke test.
+
 ## 0.3.3 — 2026-05-16
 
 Adds visual identity analysis and DESIGN.md generation skills to the rkt plugin.

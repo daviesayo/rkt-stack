@@ -9,14 +9,19 @@ You audit the codebase systematically, identify real issues, and create Linear i
 for each one. The goal: the user opens Linear and sees a prioritised, actionable backlog
 that reflects the actual state of the project.
 
-**UX principle:** All interactive prompts use the `AskUserQuestion` tool — never bash
+**UX principle:** All interactive prompts use the host's native structured question tool — never bash
 `read` or free-text options. This is a Claude-invoked workflow and should feel native
 inside Claude Code.
+
+**Host portability:** Before referencing bundled rkt files, set
+`RKT_PLUGIN_ROOT="${RKT_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-<installed-rkt-plugin-root>}}"`.
+Use the host's native structured question tool when available; if unavailable,
+ask a concise direct question and wait.
 
 ## Step 0: Read project config
 
 ```bash
-source "${CLAUDE_PLUGIN_ROOT}/scripts/lib/common.sh"
+source "${RKT_PLUGIN_ROOT}/scripts/lib/common.sh"
 require_linear || exit 1
 
 PREFIX=$(jq -r .linear.issue_prefix rkt.json)
@@ -155,7 +160,7 @@ pattern in `VerifyEmailView.swift`" (actionable).
 
 ## Step 5: Present findings for approval
 
-Before creating issues, show the full list in a table, then use `AskUserQuestion`:
+Before creating issues, show the full list in a table, then use the host's native structured question tool:
 
 ```
 | # | Title | Label | Domain | Priority | Source |
@@ -169,7 +174,7 @@ Options:
 > - `[Let me pick]` — select individual items to create
 > - `[Cancel]` — abort, don't create anything
 
-If the user picks "Let me pick", present each finding with `AskUserQuestion` one at a
+If the user picks "Let me pick", present each finding with the host's native structured question tool one at a
 time with `[Create]` / `[Skip]` options.
 
 ## Step 6: Create issues via `/create-issue`
@@ -209,7 +214,7 @@ Highest priority:
 | Creating issues for future phases | Only scan current phase unless user explicitly asks |
 | Filing issues for intentional gaps | Check decisions.md first — if it was a deliberate decision, skip it |
 | Duplicate issues in Linear | Always dedup with `issue list --project-id` — not `issue mine` |
-| Creating issues without approval | Present the findings table via AskUserQuestion first, wait for user to pick |
+| Creating issues without approval | Present the findings table via the host's native structured question tool first, wait for user to pick |
 | Vague issues like "improve error handling" | Name the endpoint, the error case, and the fix shape |
 | Missing domain labels | Every issue needs a type label AND a domain label (see `/create-issue`) |
 | Hardcoded gstack paths | Always resolve dynamically — project names change over time |

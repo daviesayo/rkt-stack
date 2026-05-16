@@ -10,7 +10,7 @@
   "plugins": [
     {
       "name": "rkt",
-      "source": "./",
+      "source": "./plugins/rkt",
       "description": "Project bootstrapping and workflow orchestration"
     }
   ]

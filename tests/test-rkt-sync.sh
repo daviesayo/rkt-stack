@@ -4,7 +4,7 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PLUGIN_DIR="$HERE/.."
+PLUGIN_DIR="$HERE/../plugins/rkt"
 
 tmpdir=$(mktemp -d)
 trap "rm -rf $tmpdir" EXIT

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SCRIPT="$HERE/../scripts/render-template.sh"
+SCRIPT="$HERE/../plugins/rkt/scripts/render-template.sh"
 
 tmpdir=$(mktemp -d)
 trap "rm -rf $tmpdir" EXIT

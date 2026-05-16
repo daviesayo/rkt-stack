@@ -9,9 +9,12 @@ You are the review-to-fix pipeline. GitHub's `@claude` and other bot reviewers
 leave findings on PRs — your job is to read those findings, classify them, and
 dispatch domain agents to implement the fixes. You do NOT run your own review.
 
-**UX principle:** All interactive prompts use the `AskUserQuestion` tool — never bash
+**UX principle:** All interactive prompts use the host's native structured question tool — never bash
 `read` or free-text options. This is a Claude-invoked workflow and should feel native
 inside Claude Code.
+
+**Host portability:** Use the host's native structured question tool when
+available; if unavailable, ask a concise direct question and wait.
 
 **Same orchestration pattern as `/implement`:** domain agents are lean workers.
 You read all context once and inject the relevant bits into each agent's prompt.
@@ -90,7 +93,7 @@ suggestion's fix lives in a different domain:
 
 ## Step 4: Confirmation gate
 
-Use `AskUserQuestion` to present all three classifications and get confirmation
+Use the host's native structured question tool to present all three classifications and get confirmation
 before dispatching anything:
 
 > **Review findings for ${PREFIX}-XX:**
@@ -220,4 +223,4 @@ Skip this step if the fixes were one-off and don't reveal a pattern.
 | Dumping all context on every agent | Distill only what's relevant to each fix |
 | Skipping classification — treating all findings as actionable | Always classify first. Some findings are stale or need human judgment. |
 | Auto-fixing something that contradicts an established codebase pattern | Classify as "Needs user decision" — don't override patterns silently |
-| Using text menus instead of AskUserQuestion | All prompts must use AskUserQuestion |
+| Using text menus instead of the host's native structured question tool | All prompts must use the host's native structured question tool |
