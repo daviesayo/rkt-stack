@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.5 — 2026-05-17
+
+Fixes Codex skill discovery for the visual identity DESIGN.md skill.
+
+### Fixed
+
+- **`visual-identity-to-design-md` now has loader-safe skill metadata.**
+  Shortens the frontmatter description to a single triggering-condition string
+  so Codex does not skip the skill during discovery.
+- **Manifest tests now validate skill frontmatter shape.** The packaging test
+  checks every bundled `SKILL.md` has scalar `name` and `description` fields.
+
 ## 0.3.4 — 2026-05-16
 
 Fixes cross-tool plugin packaging so Claude Code and Codex install the same

@@ -1,6 +1,6 @@
 ---
 name: visual-identity-to-design-md
-description: Analyze a folder of visual references into a visual identity report, then create a stack-appropriate DESIGN.md/design.md file for agents and component-based product work. Use when the user asks to turn moodboards, screenshots, posters, brand references, or visual inspiration into an AI-readable design system file; when they mention DESIGN.md, Google Stitch, design tokens, component architecture, or stack-specific design contracts; or when they want visual identity analysis followed by a linted design system artifact. This skill extends visual-identity-folder-analysis and should grill the user if the target platform, stack, output location, or intended use is unclear.
+description: Use when turning moodboards, screenshots, posters, brand references, or visual inspiration into an AI-readable DESIGN.md/design.md file with visual analysis, design tokens, component architecture, stack-specific guidance, and linter validation.
 ---
 
 # Visual Identity To DESIGN.md

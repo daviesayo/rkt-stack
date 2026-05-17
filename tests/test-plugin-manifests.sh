@@ -62,6 +62,24 @@ if [[ "$skill_count" -lt 1 ]]; then
   exit 1
 fi
 
+while IFS= read -r skill_file; do
+  ruby -r yaml -e '
+    path = ARGV.fetch(0)
+    body = File.read(path)
+    match = body.match(/\A---\n(.*?)\n---/m)
+    abort("#{path}: missing YAML frontmatter") unless match
+    data = YAML.safe_load(match[1])
+    unless data.is_a?(Hash)
+      abort("#{path}: frontmatter must be a mapping")
+    end
+    %w[name description].each do |key|
+      unless data[key].is_a?(String) && !data[key].strip.empty?
+        abort("#{path}: #{key} must be a non-empty string")
+      end
+    end
+  ' "$skill_file"
+done < <(find "$PLUGIN_DIR/skills" -mindepth 2 -maxdepth 2 -name SKILL.md | sort)
+
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT
 cp -R "$PLUGIN_DIR" "$tmpdir/rkt"
