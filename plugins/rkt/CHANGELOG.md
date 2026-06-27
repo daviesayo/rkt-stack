@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.3.6 — 2026-06-27
+
+Adds `/office-hours` — a YC-style product diagnostic and design session skill.
+
+### Added
+
+- **`/office-hours` skill.** Two-mode product thinking session: Startup mode
+  runs six forcing questions (demand reality, status quo, desperate specificity,
+  narrowest wedge, observation, future-fit) with anti-sycophancy rules and
+  concrete pushback patterns; Builder mode is a generative design partner for
+  side projects and hacks. Produces a design doc in `docs/design/`, runs an
+  adversarial spec review loop before presenting for approval, and closes with
+  signal reflection and a concrete assignment. Cross-model second opinion routes
+  to Codex CLI, OpenRouter MCP, or a Claude subagent in priority order.
+
 ## 0.3.5 — 2026-05-17
 
 Fixes Codex skill discovery for the visual identity DESIGN.md skill.
