@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.7 — 2026-06-28
+
+Adds `/scaffold` skill with shared memory pattern setup.
+
+### Added
+
+- **`/scaffold` skill** (moved from `~/.claude/commands/scaffold.md` into the rkt plugin). Scaffolds `AGENTS.md` + `CLAUDE.md` from the reusable template, fills in project-specific facts, and now also wires the shared memory pattern: creates the per-project memory dir under `~/.claude/projects/<encoded-path>/memory/`, symlinks it as `.memory/` at the repo root, adds `.memory` to `.gitignore`, and copies `memory-read.mdc` + `memory-write.mdc` from the canonical rkt-stack templates into `.cursor/rules/`. All memory steps are idempotent — skipped silently if already present.
+
 ## 0.3.6 — 2026-06-27
 
 Adds `/office-hours` — a YC-style product diagnostic and design session skill.
