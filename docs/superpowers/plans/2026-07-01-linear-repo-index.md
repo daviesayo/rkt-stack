@@ -21,9 +21,11 @@ hierarchy, enrichment, and index-refresh behavior respectively.
 - Package root is `plugins/rkt/`; do NOT recreate root-level `skills/`, `scripts/`, etc. (AGENTS.md "Package Shape").
 - Skills/scripts resolve `RKT_PLUGIN_ROOT="${RKT_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-<installed-rkt-plugin-root>}}"`; never reference `./scripts/` (AGENTS.md "Runtime Paths").
 - No bash `read` for skill prompts — use the host's native structured question tool (AGENTS.md "Guardrails").
-- Bump BOTH manifests (`plugins/rkt/.claude-plugin/plugin.json`, `plugins/rkt/.codex-plugin/plugin.json`) in lockstep; prepend a `plugins/rkt/CHANGELOG.md` `[Unreleased]` entry (AGENTS.md "Making Changes").
+- Bump BOTH manifests (`plugins/rkt/.claude-plugin/plugin.json`, `plugins/rkt/.codex-plugin/plugin.json`) in lockstep; prepend a NEW dated version section to `plugins/rkt/CHANGELOG.md` matching its existing format (`## 0.x.0 — YYYY-MM-DD`, NOT an `[Unreleased]` heading — the file does not use one) (AGENTS.md "Making Changes").
 - Tests idempotent: temp dirs, cleanup traps, stub `linear`/`gh` (AGENTS.md "Guardrails").
 - Linear reads/writes go through `linear` CLI + `linear api` GraphQL, NOT the Linear MCP.
+- **`linear api` invocation:** feed the GraphQL document on **stdin via a `<<'GRAPHQL'` heredoc**, exactly as the shipped `bootstrap/SKILL.md` Step N6 does (`linear api --variable k=v <<'GRAPHQL' … GRAPHQL`). Do NOT use `<<<` here-strings for multi-line queries and do NOT rely on a positional query argument. Bootstrap's heredoc form is the proven in-repo pattern — match it.
+- **PR links** in the index come from each issue's **Linear attachments** (populated by Linear's native GitHub integration when a PR references the issue). There is NO separate `gh`-based backfill pass (the spec's C5 `gh` idea is intentionally dropped — Linear already has the link, so a second source would only add drift).
 - Linear is authoritative; `LINEAR.md` is regenerable and never hand-edited.
 - Verify every `linear api` GraphQL field name against the CLI's schema before use — do not ship guessed field names.
 - All Linear failures are non-fatal: warn and continue (matches bootstrap's existing pattern).
@@ -51,7 +53,7 @@ one thing everything else depends on; fully TDD-able with fixtures.
 - Create: `tests/test-linear-index-render.sh`
 - Create: `tests/fixtures/linear-index/basic.json`
 - Create: `tests/fixtures/linear-index/expected-basic.md`
-- Create: `tests/fixtures/linear-index/paginated-60.json` (>50 issues)
+  (the >50-issue pagination fixture is generated in-test, not a committed file)
 
 **Interfaces:**
 - Consumes: a JSON object on stdin with shape (normalized, NOT raw GraphQL —
@@ -109,10 +111,18 @@ Create `tests/fixtures/linear-index/expected-basic.md`:
 | RKT-12 | Webhook handler | 🔄 In Progress | Feature·Backend | — |
 
 ## No milestone
+
 | ID | Title | Status | Labels | PR |
 |----|-------|--------|--------|----|
 | RKT-30 | Fix null deref | 📋 Todo | Bug·iOS | — |
 ```
+
+> Whitespace rule (regular): each section header (`## Milestone…` / `## No
+> milestone`) is preceded by one blank line; each sub-block inside a section (the
+> directs table, and each `### Epic` block) is also preceded by exactly one blank
+> line; no blank line between a table header and its rows or between an epic
+> heading and its table. The blank line after `## No milestone` is intentional
+> and matches the `printf '\n'` before every directs table.
 
 - [ ] **Step 3: Write the failing test**
 
@@ -182,14 +192,18 @@ labels_of() { jq -r --arg id "$1" '.issues[]|select(.id==$id)|(.labels|join("·"
 # Ordered milestone ids: targetDate asc (null last), then name
 mids=$(jq -r '[.milestones[]]|sort_by((.targetDate//"9999-99-99"), .name)|.[].id' <<<"$payload")
 
-render_children() { # milestoneFilterExpr
+num='sub("^[A-Za-z0-9]+-";"")|tonumber'   # generic prefix (RKT-, MCO-, …), not hardcoded
+
+render_children() { # $1 = a valid jq boolean fragment, e.g. '.milestoneId=="m1"' or '.milestoneId==null'
   local mfilter="$1"
+  # NOTE: $mfilter is interpolated into the jq PROGRAM text (valid jq), never
+  # passed via --argjson (which would treat the expression as JSON and abort).
   # epic parents in this milestone, by issue number
   local epics
-  epics=$(jq -r --argjson mf "$mfilter" '[.issues[]|select(.isEpic==true)|select('"$mfilter"')]|sort_by(.id|ltrimstr("RKT-")|tonumber)|.[].id' <<<"$payload")
+  epics=$(jq -r '[.issues[]|select(.isEpic==true)|select('"$mfilter"')]|sort_by(.id|'"$num"')|.[].id' <<<"$payload")
   # direct (non-epic, no parent) issues first
   local directs
-  directs=$(jq -r '[.issues[]|select(.isEpic==false and .parentId==null)|select('"$mfilter"')]|sort_by(.id|ltrimstr("RKT-")|tonumber)|.[].id' <<<"$payload")
+  directs=$(jq -r '[.issues[]|select(.isEpic==false and .parentId==null)|select('"$mfilter"')]|sort_by(.id|'"$num"')|.[].id' <<<"$payload")
   if [ -n "$directs" ]; then
     printf '\n'; tablehdr
     while IFS= read -r id; do [ -z "$id" ] && continue
@@ -204,7 +218,7 @@ render_children() { # milestoneFilterExpr
     es=$(jq -r --arg i "$eid" '.issues[]|select(.id==$i)|.stateType' <<<"$payload")
     printf '\n### Epic %s — %s  (%s)\n' "$eid" "$et" "$(glyph "$es")"
     tablehdr
-    local kids; kids=$(jq -r --arg e "$eid" '[.issues[]|select(.parentId==$e)]|sort_by(.id|ltrimstr("RKT-")|tonumber)|.[].id' <<<"$payload")
+    local kids; kids=$(jq -r --arg e "$eid" '[.issues[]|select(.parentId==$e)]|sort_by(.id|'"$num"')|.[].id' <<<"$payload")
     while IFS= read -r kid; do [ -z "$kid" ] && continue
       local kt ks kp; kt=$(jq -r --arg i "$kid" '.issues[]|select(.id==$i)|.title' <<<"$payload")
       ks=$(jq -r --arg i "$kid" '.issues[]|select(.id==$i)|.stateType' <<<"$payload")
@@ -238,15 +252,20 @@ Run: `bash tests/test-linear-index-render.sh`
 Expected: `PASS test-linear-index-render`. If the diff differs, adjust spacing in
 the script to match `expected-basic.md` exactly (whitespace is significant).
 
-- [ ] **Step 7: Add the pagination-coverage test**
+- [ ] **Step 7: Add the pagination-coverage test (fixture built in-test, not pasted)**
 
-Create `tests/fixtures/linear-index/paginated-60.json` with 60 issues
-(`RKT-1`..`RKT-60`, no milestone, no epic — generate with a one-off `jq`/loop and
-paste the result). Append to `tests/test-linear-index-render.sh` before the final
-echo:
+Do NOT hand-paste a 60-issue fixture. Generate it deterministically inside the
+test with `jq` so it is reviewable and regenerable. Append to
+`tests/test-linear-index-render.sh` before the final echo:
 ```bash
-# 3. all 60 issues render (guards truncation)
-count=$("$SCRIPT" < "$FIX/paginated-60.json" | grep -c '^| RKT-')
+# 3. all 60 issues render (guards truncation) — fixture generated in-test
+big="$(jq -n '{
+  project:{name:"Big",url:"https://linear.app/x/project/big"},
+  syncedAt:"2026-07-01T00:00:00Z", milestones:[],
+  issues:[range(1;61) as $i | {id:("RKT-"+($i|tostring)),title:("Issue "+($i|tostring)),
+          stateType:"unstarted",labels:["Bug"],milestoneId:null,parentId:null,isEpic:false,pr:null}]
+}')"
+count=$(printf '%s' "$big" | "$SCRIPT" | grep -c '^| RKT-')
 [ "$count" -eq 60 ] || fail "expected 60 issue rows, got $count"
 ```
 
@@ -269,24 +288,39 @@ shape (the normalizer is the testable unit; the skill prose orchestrates).
 
 **Files:**
 - Create: `plugins/rkt/skills/linear-sync/SKILL.md`
+- Create: `plugins/rkt/scripts/linear-index-pull.sh` (shared: paginated GraphQL pull → normalize → render `LINEAR.md`; NO commit)
 - Create: `plugins/rkt/scripts/linear-index-normalize.jq` (raw GraphQL → Task-1 shape)
 - Create: `tests/test-linear-index-normalize.sh`
 - Create: `tests/fixtures/linear-index/raw-graphql.json`
 
 **Interfaces:**
 - Consumes: Task 1 `render-linear-index.sh`.
-- Produces: the GraphQL query text (in SKILL.md) and `linear-index-normalize.jq`
-  transforming raw `data.project` GraphQL into `{project,syncedAt,milestones,issues}`.
-  The skill sets `syncedAt` by piping `--arg now "$(date -u +%FT%TZ)"`.
+- Produces:
+  - `linear-index-normalize.jq` transforming raw `data.project` GraphQL into
+    `{project,syncedAt,milestones,issues}` (`--arg now <iso>` sets `syncedAt`).
+  - `linear-index-pull.sh` — the **single shared implementation** of pull +
+    normalize + render, writing `LINEAR.md` in cwd and NOT committing. Consumed by
+    this skill (which adds the commit), by the Task 3 SessionStart hook, and by
+    Task 6 `/create-issue`. Defined HERE so no later task forward-references it.
+  - `linear-sync/SKILL.md` — orchestrates `require_linear` → `linear-index-pull.sh`
+    → dedicated commit.
 
-- [ ] **Step 1: Confirm the GraphQL shape against the CLI (task-0 verification)**
+- [ ] **Step 1: Confirm the GraphQL shape against the CLI (blocking task-0)**
 
-Run: `linear api <<< 'query{__type(name:"ProjectMilestone"){fields{name}}}'`
-and `linear api <<< 'query{__type(name:"Issue"){fields{name}}}'`
-Expected: field names exist for `milestone`, `parent`, `state{type}`,
-`labels{nodes{name}}`, `attachments`/`links` (for PR). Record the exact field
-names; if they differ from the query below, adjust the query in Step 3. Do NOT
-proceed on guessed names.
+Using the proven heredoc-stdin form (as in `bootstrap/SKILL.md` Step N6):
+```bash
+linear api <<'GRAPHQL'
+query { __type(name:"Issue") { fields { name } } }
+GRAPHQL
+linear api <<'GRAPHQL'
+query { __type(name:"ProjectMilestone") { fields { name } } }
+GRAPHQL
+```
+Expected: field names exist for `projectMilestone`/`milestone`, `parent`,
+`state{type}`, `labels{nodes{name}}`, `attachments`/`links` (for PR). **Record
+the exact names and reconcile them into the query (Step 6), the fixture (Step 2),
+AND the normalizer (Step 4) together** — all three hard-code these names, so a
+mismatch means editing three places. Do NOT proceed on guessed names.
 
 - [ ] **Step 2: Write the raw GraphQL fixture + failing normalizer test**
 
@@ -347,32 +381,78 @@ Create `plugins/rkt/scripts/linear-index-normalize.jq`:
 Run: `bash tests/test-linear-index-normalize.sh`
 Expected: PASS. Adjust field paths to match the Step-1 introspection if needed.
 
-- [ ] **Step 6: Write the skill file**
+- [ ] **Step 6: Create the shared `linear-index-pull.sh` (pull + normalize + render, no commit)**
+
+Create `plugins/rkt/scripts/linear-index-pull.sh`. It runs in a repo cwd, reads
+`rkt.json`, paginates the GraphQL query, normalizes, renders `LINEAR.md`, and
+exits non-zero on hard failure WITHOUT touching an existing `LINEAR.md`:
+```bash
+#!/usr/bin/env bash
+# Pull the project's Linear issues and (re)render ./LINEAR.md. No git actions.
+# Exit 0 = LINEAR.md written/current; non-zero = failure (caller decides).
+set -euo pipefail
+RKT_PLUGIN_ROOT="${RKT_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}"
+[ -n "$RKT_PLUGIN_ROOT" ] || { echo "RKT_PLUGIN_ROOT unset" >&2; exit 1; }
+[ -f rkt.json ] || { echo "no rkt.json" >&2; exit 1; }
+pid=$(jq -r '.linear.project_id // ""' rkt.json)
+[ -n "$pid" ] || { echo "no linear.project_id" >&2; exit 1; }
+
+tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+cursor="null"; : > "$tmp/nodes.jsonl"; meta=""
+while :; do
+  resp=$(linear api --variable pid="$pid" --variable after="$cursor" <<'GRAPHQL'
+query($pid: String!, $after: String) {
+  project(id: $pid) {
+    name url
+    projectMilestones { nodes { id name targetDate } }
+    issues(first: 250, after: $after) {
+      nodes { identifier title state { type } labels { nodes { name } }
+              projectMilestone { id } parent { identifier }
+              attachments { nodes { url } } }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+}
+GRAPHQL
+  ) || { echo "linear api failed" >&2; exit 1; }
+  [ -z "$meta" ] && meta=$(jq '{name:.data.project.name,url:.data.project.url,projectMilestones:.data.project.projectMilestones}' <<<"$resp")
+  jq -c '.data.project.issues.nodes[]' <<<"$resp" >> "$tmp/nodes.jsonl"
+  hasNext=$(jq -r '.data.project.issues.pageInfo.hasNextPage' <<<"$resp")
+  [ "$hasNext" = "true" ] || break
+  cursor=$(jq -r '.data.project.issues.pageInfo.endCursor' <<<"$resp")
+done
+# Reassemble a single {data:{project:{…}}} doc for the normalizer.
+jq -s --argjson meta "$meta" '{data:{project:($meta+{issues:{nodes:.}})}}' "$tmp/nodes.jsonl" > "$tmp/raw.json"
+jq --arg now "$(date -u +%FT%TZ)" -f "${RKT_PLUGIN_ROOT}/scripts/linear-index-normalize.jq" "$tmp/raw.json" > "$tmp/norm.json"
+"${RKT_PLUGIN_ROOT}/scripts/render-linear-index.sh" < "$tmp/norm.json" > LINEAR.md
+```
+`chmod +x`. (No dedicated test here — it needs a live `linear`; its pure pieces,
+`normalize.jq` and `render-linear-index.sh`, are tested in Task 1/this task. The
+pull glue is exercised end-to-end in the smoke test, Step 8.)
+
+- [ ] **Step 7: Write the `/rkt:linear-sync` skill file**
 
 Create `plugins/rkt/skills/linear-sync/SKILL.md` with frontmatter (name:
-`linear-sync`, description triggering on "sync linear", "refresh backlog index",
-"update LINEAR.md", "rebuild the linear index") and body covering:
-1. Resolve `RKT_PLUGIN_ROOT`; `source .../lib/common.sh; require_linear || exit 1`.
-2. Read `PROJECT_ID`/`PROJECT_NAME` from `rkt.json`.
-3. Run the paginated GraphQL query (loop on `pageInfo.hasNextPage`/`endCursor`,
-   accumulate `issues.nodes`) via `linear api`, writing raw JSON to a temp file.
-   Include the exact query (project by `id`, `issues(first:250,after:$cursor){nodes{identifier title state{type} labels{nodes{name}} projectMilestone{id} parent{identifier} attachments{nodes{url}}} pageInfo{hasNextPage endCursor}} projectMilestones{nodes{id name targetDate}} name url`).
-4. Normalize: `jq --arg now "$(date -u +%FT%TZ)" -f "${RKT_PLUGIN_ROOT}/scripts/linear-index-normalize.jq" raw.json > norm.json`.
-5. Render: `"${RKT_PLUGIN_ROOT}/scripts/render-linear-index.sh" < norm.json > LINEAR.md`.
-6. Commit ONLY `LINEAR.md` as its own atomic commit (`chore(linear): sync
-   backlog index`) if `git diff --quiet LINEAR.md` is false; otherwise report
-   "index already current" and commit nothing. Never `git add -A`.
-7. On any Linear failure: warn, leave existing `LINEAR.md` untouched, exit 0.
-Include a "Common Mistakes" table mirroring the other skills (no `--project-id`,
-must paginate, never hand-edit `LINEAR.md`, never stage unrelated files).
+`linear-sync`; description triggering on "sync linear", "refresh backlog index",
+"update LINEAR.md", "rebuild the linear index") and body:
+1. Resolve `RKT_PLUGIN_ROOT`; `source "${RKT_PLUGIN_ROOT}/scripts/lib/common.sh"; require_linear || exit 1`.
+2. Run `"${RKT_PLUGIN_ROOT}/scripts/linear-index-pull.sh"`; on non-zero, warn,
+   leave existing `LINEAR.md` untouched, stop (do not commit).
+3. Commit ONLY `LINEAR.md` as its own atomic commit (`chore(linear): sync backlog
+   index`) if `! git diff --quiet LINEAR.md`; else report "index already current"
+   and commit nothing. Never `git add -A`.
+Include a "Common Mistakes" table (no `--project-id`; the pull already paginates;
+never hand-edit `LINEAR.md`; never stage unrelated files).
 
-- [ ] **Step 7: Register the skill + commit**
+- [ ] **Step 8: Smoke-test end-to-end (live `linear`, if available) + commit**
 
-Verify the skill is discovered: `claude plugin validate plugins/rkt`
-Expected: no errors.
+If a configured rkt Linear repo is reachable, run `bash
+plugins/rkt/scripts/linear-index-pull.sh` in it and eyeball `LINEAR.md`. Then:
 ```bash
-git add plugins/rkt/skills/linear-sync/SKILL.md plugins/rkt/scripts/linear-index-normalize.jq tests/test-linear-index-normalize.sh tests/fixtures/linear-index/raw-graphql.json
-git commit -m "feat(linear-sync): add /rkt:linear-sync skill + GraphQL normalizer"
+chmod +x plugins/rkt/scripts/linear-index-pull.sh
+claude plugin validate plugins/rkt   # expect: no errors
+git add plugins/rkt/skills/linear-sync/SKILL.md plugins/rkt/scripts/linear-index-pull.sh plugins/rkt/scripts/linear-index-normalize.jq tests/test-linear-index-normalize.sh tests/fixtures/linear-index/raw-graphql.json
+git commit -m "feat(linear-sync): add /rkt:linear-sync skill, shared pull, GraphQL normalizer"
 ```
 
 ---
@@ -391,12 +471,22 @@ git commit -m "feat(linear-sync): add /rkt:linear-sync skill + GraphQL normalize
 - Produces: two self-gating hook scripts. Gate = `rkt.json` exists AND
   `.linear.project_id` non-empty AND `command -v linear` — else `exit 0` silently.
 
-- [ ] **Step 0: Verify Codex plugin-hook loading (blocking gate)**
+- [ ] **Step 0: Verify hook wiring for BOTH tools (blocking gate) — record concrete answers**
 
-Check official Codex plugin docs for whether a plugin-packaged `hooks/hooks.json`
-with `SessionStart`/`Stop` is auto-loaded. If unconfirmed, keep hooks
-**Claude-only**: do NOT add a hooks key to `.codex-plugin/plugin.json`; note the
-limitation in the skill/README. Record the finding in the commit message.
+Two questions, each needs a definite answer before writing code:
+1. **Claude Code:** does a plugin auto-discover `hooks/hooks.json` at the plugin
+   root, or must `plugin.json` reference it? Check current Claude Code plugin docs
+   (use the claude-code-guide agent or official docs). Record: the exact
+   `hooks.json` schema (event key names, `type`/`command` fields), whether
+   `${CLAUDE_PLUGIN_ROOT}` is interpolated in the `command`, and **how the hook
+   receives the project directory** (stdin JSON payload vs `$CLAUDE_PROJECT_DIR`
+   env — this determines the gate in Step 3; do NOT assume cwd is the repo root).
+   Write the confirmed answer into this step before proceeding, and make the
+   `plugin.json` edit (if any) explicit.
+2. **Codex:** does a plugin-packaged `hooks/hooks.json` load on Codex? If
+   unconfirmed, keep hooks **Claude-only**: do NOT add a hooks key to
+   `.codex-plugin/plugin.json`; note the limitation in skill/README.
+Record both findings in the commit message.
 
 - [ ] **Step 1: Write the gating test (failing)**
 
@@ -409,18 +499,32 @@ REFRESH="$HERE/../plugins/rkt/hooks/linear-index-refresh.sh"
 NUDGE="$HERE/../plugins/rkt/hooks/linear-index-nudge.sh"
 fail(){ echo "FAIL: $1"; exit 1; }
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
-stub="$tmp/bin"; mkdir -p "$stub"; printf '#!/usr/bin/env bash\nexit 0\n' > "$stub/linear"; chmod +x "$stub/linear"
+stub="$tmp/bin"; mkdir -p "$stub"
+# linear stub records if it was called (proves throttle skip / gate)
+printf '#!/usr/bin/env bash\ntouch "%s/linear-called"\nexit 0\n' "$tmp" > "$stub/linear"; chmod +x "$stub/linear"
+run() { CLAUDE_PROJECT_DIR="$tmp" PATH="$stub:$PATH" bash "$1" 2>&1; }  # hooks cd into CLAUDE_PROJECT_DIR
 
-# (a) non-rkt dir: silent exit 0, no output
-out=$(cd "$tmp" && PATH="$stub:$PATH" bash "$REFRESH" 2>&1) || fail "refresh non-zero in non-rkt dir"
-[ -z "$out" ] || fail "refresh emitted output in non-rkt dir: $out"
-out=$(cd "$tmp" && PATH="$stub:$PATH" bash "$NUDGE" 2>&1) || fail "nudge non-zero in non-rkt dir"
-[ -z "$out" ] || fail "nudge emitted output in non-rkt dir"
+# (a) non-rkt dir (no rkt.json): silent exit 0
+out=$(run "$REFRESH") || fail "refresh non-zero in non-rkt dir"; [ -z "$out" ] || fail "refresh output in non-rkt dir: $out"
+out=$(run "$NUDGE")   || fail "nudge non-zero in non-rkt dir";   [ -z "$out" ] || fail "nudge output in non-rkt dir"
 
-# (b) rkt dir with empty project_id: still silent exit 0
+# (b) rkt dir, empty project_id: still silent exit 0, linear never called
 echo '{"linear":{"project_id":""}}' > "$tmp/rkt.json"
-out=$(cd "$tmp" && PATH="$stub:$PATH" bash "$REFRESH" 2>&1) || fail "refresh non-zero with empty id"
-[ -z "$out" ] || fail "refresh acted with empty project_id"
+out=$(run "$REFRESH") || fail "refresh non-zero with empty id"; [ -z "$out" ] || fail "refresh acted with empty id"
+[ ! -e "$tmp/linear-called" ] || fail "refresh called linear with empty id"
+
+# (c) configured + FRESH LINEAR.md → throttle skips the network (linear NOT called)
+echo '{"linear":{"project_id":"abc","index_throttle_minutes":30}}' > "$tmp/rkt.json"
+now=$(date -u +%FT%TZ)
+printf '<!-- rkt:linear-index generated by /rkt:linear-sync — do not edit. synced: %s -->\n' "$now" > "$tmp/LINEAR.md"
+rm -f "$tmp/linear-called"
+run "$REFRESH" >/dev/null || fail "refresh non-zero on fresh index"
+[ ! -e "$tmp/linear-called" ] || fail "throttle failed: linear called despite fresh index"
+
+# (d) configured + MISSING LINEAR.md → nudge prints reminder
+rm -f "$tmp/LINEAR.md"
+out=$(run "$NUDGE") || fail "nudge non-zero when missing"
+echo "$out" | grep -q "LINEAR.md missing" || fail "nudge did not warn on missing index"
 echo "PASS test-hooks-gating"
 ```
 
@@ -431,11 +535,17 @@ Expected: FAIL (hook scripts do not exist).
 
 - [ ] **Step 3: Implement the shared gate + both hooks**
 
+Both hooks `cd` into the project dir first (per Step-0 finding: use
+`$CLAUDE_PROJECT_DIR` if that is how Claude passes it; the scripts below take it
+from `$CLAUDE_PROJECT_DIR` with a cwd fallback). `linear-index-pull.sh` already
+exists from Task 2 — the hook just calls it; nothing is extracted or rewritten.
+
 Create `plugins/rkt/hooks/linear-index-refresh.sh`:
 ```bash
 #!/usr/bin/env bash
 # SessionStart hook: throttled index refresh. Inert outside rkt Linear repos.
 set -euo pipefail
+cd "${CLAUDE_PROJECT_DIR:-.}" 2>/dev/null || exit 0
 [ -f rkt.json ] || exit 0
 command -v jq >/dev/null 2>&1 || exit 0
 pid=$(jq -r '.linear.project_id // ""' rkt.json 2>/dev/null || echo "")
@@ -446,29 +556,26 @@ throttle=$(jq -r '.linear.index_throttle_minutes // 30' rkt.json 2>/dev/null || 
 if [ -f LINEAR.md ]; then
   synced=$(sed -n 's/.*synced: \([0-9T:-]*Z\).*/\1/p' LINEAR.md | head -1)
   if [ -n "$synced" ]; then
-    last=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$synced" +%s 2>/dev/null || date -d "$synced" +%s 2>/dev/null || echo 0)
+    # TZ=UTC is REQUIRED: macOS `date -j -f` parses as LOCAL time otherwise,
+    # producing a timezone-sized age error vs the UTC `now` below.
+    last=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$synced" +%s 2>/dev/null || TZ=UTC date -d "$synced" +%s 2>/dev/null || echo 0)
     now=$(date -u +%s); age=$(( (now - last) / 60 ))
-    [ "$age" -lt "$throttle" ] && exit 0
+    [ "$age" -lt "$throttle" ] && exit 0   # fresh enough — skip network
   fi
 fi
-# Delegate to the sync skill's script path (render only; no commit from hook).
 RKT_PLUGIN_ROOT="${RKT_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}"
 [ -n "$RKT_PLUGIN_ROOT" ] || exit 0
-# best-effort; never fail the session
-( "${RKT_PLUGIN_ROOT}/scripts/linear-index-pull.sh" > /dev/null 2>&1 ) || exit 0
+export RKT_PLUGIN_ROOT
+( "${RKT_PLUGIN_ROOT}/scripts/linear-index-pull.sh" > /dev/null 2>&1 ) || exit 0  # best-effort; never fail the session
 exit 0
 ```
-
-> Note: extract the GraphQL-pull+normalize+render (Task 2 steps 3-5, WITHOUT the
-> commit) into `plugins/rkt/scripts/linear-index-pull.sh` so both the skill and
-> this hook share one implementation (DRY). The skill commits; the hook does not.
-> Add that extraction as part of this step and update Task 2's SKILL.md to call it.
 
 Create `plugins/rkt/hooks/linear-index-nudge.sh`:
 ```bash
 #!/usr/bin/env bash
-# Stop hook: no network. Nudge if LINEAR.md missing or stale. Inert outside rkt.
+# Stop hook: no network. Nudge if LINEAR.md missing. Inert outside rkt Linear repos.
 set -euo pipefail
+cd "${CLAUDE_PROJECT_DIR:-.}" 2>/dev/null || exit 0
 [ -f rkt.json ] || exit 0
 command -v jq >/dev/null 2>&1 || exit 0
 pid=$(jq -r '.linear.project_id // ""' rkt.json 2>/dev/null || echo "")
@@ -476,7 +583,6 @@ pid=$(jq -r '.linear.project_id // ""' rkt.json 2>/dev/null || echo "")
 command -v linear >/dev/null 2>&1 || exit 0
 if [ ! -f LINEAR.md ]; then
   echo "rkt: LINEAR.md missing — run /rkt:linear-sync to build the backlog index."
-  exit 0
 fi
 exit 0
 ```
@@ -508,7 +614,8 @@ Expected: `PASS test-hooks-gating`.
 Run: `claude plugin validate plugins/rkt`
 Expected: no errors (hooks.json recognized).
 ```bash
-git add plugins/rkt/hooks/ plugins/rkt/scripts/linear-index-pull.sh tests/test-hooks-gating.sh plugins/rkt/.claude-plugin/plugin.json plugins/rkt/skills/linear-sync/SKILL.md
+git add plugins/rkt/hooks/ tests/test-hooks-gating.sh plugins/rkt/.claude-plugin/plugin.json
+# (linear-index-pull.sh and the skill were created/committed in Task 2)
 git commit -m "feat(linear-index): Claude-only SessionStart/Stop refresh hooks (self-gated)"
 ```
 
@@ -528,9 +635,14 @@ git commit -m "feat(linear-index): Claude-only SessionStart/Stop refresh hooks (
 
 - [ ] **Step 1: Verify the milestone mutation shape**
 
-Run: `linear api <<< 'mutation{__type(name:"ProjectMilestoneCreateInput"){inputFields{name}}}'`
+Run (heredoc-stdin form, per Global Constraints):
+```bash
+linear api <<'GRAPHQL'
+query { __type(name:"ProjectMilestoneCreateInput") { inputFields { name } } }
+GRAPHQL
+```
 Expected: input fields incl. `name`, `projectId`, `targetDate`, `description`.
-Record exact names; if the mutation name differs, adjust below.
+Record exact names; if the mutation/input name differs, adjust below.
 
 - [ ] **Step 2: Add the hierarchy stage to `scan/SKILL.md`**
 
@@ -580,8 +692,13 @@ git commit -m "feat(scan): propose+create milestones and epics with cached-id id
 
 - [ ] **Step 1: Verify project mutation fields**
 
-Run: `linear api <<< 'mutation{__type(name:"ProjectCreateInput"){inputFields{name}}}'`
-and `... "ProjectUpdateInput" ...`.
+Run (heredoc-stdin form):
+```bash
+linear api <<'GRAPHQL'
+query { c: __type(name:"ProjectCreateInput") { inputFields { name } }
+        u: __type(name:"ProjectUpdateInput") { inputFields { name } } }
+GRAPHQL
+```
 Expected: confirm `description`, `content`/`summary`, `icon`, `color`, and the
 link mechanism (`ProjectUpdateInput` links vs a separate `attachmentCreate`).
 Record the real field names. Do NOT ship guessed names.
