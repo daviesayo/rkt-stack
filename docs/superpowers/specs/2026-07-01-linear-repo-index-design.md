@@ -88,12 +88,17 @@ the dedup passes in `create-issue`/`scan` that rely on the full issue list
 silently miss any issue past the 50th — a correctness bug, not just a broken
 flag. This design fixes it as prerequisite hygiene (it would be incoherent to
 ship a Linear-index feature on top of skills that mis-query Linear):
-- Replace every `--project-id "$PROJECT_ID"` with `--project "$PROJECT_NAME"`.
-- Add `--limit 0` (unlimited) to every `issue list` used for dedup/enumeration.
-- Robustness note: `--project` matches by name, so `rkt.json:project_name` must
-  equal the Linear project's display name (it is set from the same value at
-  bootstrap). The new sync path stays on GraphQL-by-UUID (strictly more robust);
-  the legacy skills move to name-based as the minimal CLI-correct fix.
+- **Dedup/enumeration** moves to a shared `linear-list-issues.sh`
+  (GraphQL-by-UUID, fully paginated) — NOT `issue list --project <name>`, because
+  `rkt.json:project_name` is the kebab slug while the Linear display name is the
+  Pascal form, so name-matching would silently return nothing. UUID keying is
+  robust and consistent with the sync path.
+- **Issue creation** keeps the `linear issue create` CLI but passes `--project`
+  with the project's real Linear display name, resolved once from the UUID and
+  cached in `rkt.json:linear.project_name` (persisted at bootstrap; backfilled
+  for existing repos).
+- No `--limit` mitigation is needed — enumeration `issue list` calls are removed,
+  not limit-capped.
 
 ## Component 1: The Index File — `LINEAR.md`
 
@@ -317,7 +322,8 @@ names.
   regenerable-cache model and (b) the net-new plugin hooks subsystem, per the
   project's append-only decisions-log convention.
 - **CHANGELOG + version bump:** minor bump (new skill + new capabilities). Update
-  `plugins/rkt/CHANGELOG.md` `[Unreleased]` and both manifest versions
+  `plugins/rkt/CHANGELOG.md` (a new dated `## 0.x.0 — YYYY-MM-DD` section — the
+  file does not use an `[Unreleased]` heading) and both manifest versions
   (`.claude-plugin/plugin.json` + `.codex-plugin/plugin.json`) in lockstep.
 - **Docs:** update `plugins/rkt/README.md` (user-facing) and `AGENTS.md` where
   the new skill/hooks are relevant, in the same commit as the code.
@@ -356,9 +362,10 @@ names.
 
 ## Prerequisite hygiene (in scope — see "Pre-existing `--project-id` bug" above)
 
-- Correct `--project-id` → `--project "$PROJECT_NAME"` and add `--limit 0` across
-  `/create-issue`, `/scan`, `/implement`. Landed as the first task of this work
-  (guarded by a grep lint test so the bad flag cannot reappear).
+- Replace `--project-id` across `/create-issue`, `/scan`, `/implement`: dedup via
+  the shared GraphQL-by-UUID `linear-list-issues.sh`, create via `--project
+  "<Linear display name>"`. Landed as the first task of this work (guarded by a
+  grep lint test so the bad flag cannot reappear).
 
 ## Requirement → Component Map
 

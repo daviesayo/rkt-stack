@@ -63,11 +63,12 @@ name resolved once and cached in `rkt.json`.
 
 **Files:**
 - Create: `plugins/rkt/scripts/linear-list-issues.sh` (project UUID → paginated `identifier\ttitle\tstateType` TSV; shared dedup lister)
-- Modify: `plugins/rkt/skills/create-issue/SKILL.md` (Step 0 config + Step 1 dedup + Step 4 create)
-- Modify: `plugins/rkt/skills/scan/SKILL.md` (all dedup `issue list` calls + `issue create` + Common Mistakes)
+- Modify: `plugins/rkt/skills/create-issue/SKILL.md` (Step 0 config + Step 4 create call ONLY — create-issue has no dedup/`issue list` step; its only `--project-id` is on `issue create`, verified)
+- Modify: `plugins/rkt/skills/scan/SKILL.md` (this is where dedup lives — replace its `issue list --project-id` dedup calls with `linear-list-issues.sh`; fix `issue create`; reword Common Mistakes)
 - Modify: `plugins/rkt/skills/implement/SKILL.md` (any `--project-id`)
-- Modify: `plugins/rkt/skills/bootstrap/SKILL.md` (persist `.linear.project_name` = Pascal display name at project create)
 - Create: `tests/test-no-project-id-flag.sh` (grep-lint guard)
+- (bootstrap N6 `.linear.project_name` persistence lives in Task 5 to avoid a
+  double-edit conflict on the same Step-N6 region.)
 
 **Interfaces:**
 - Consumes: `rkt.json .linear.project_id` (UUID). For create, `rkt.json
@@ -77,26 +78,23 @@ name resolved once and cached in `rkt.json`.
 
 - [ ] **Step 1: Write the failing lint test**
 
-Create `tests/test-no-project-id-flag.sh`. The lint bans the literal flag ANYWHERE
-(commands AND prose, so Common Mistakes rows must be reworded too — no lingering
-mentions), and bans unlimited enumeration:
+Create `tests/test-no-project-id-flag.sh`. ONE rule: ban the literal `--project-id`
+ANYWHERE in the skills (commands AND prose — every Common Mistakes row and inline
+mention must be reworded, so no lingering `--project-id` string survives). We do
+NOT lint `issue list --limit`: the new design routes dedup through
+`linear-list-issues.sh` (GraphQL-by-UUID), so enumeration `issue list` calls are
+removed entirely rather than limit-capped — a `--limit` rule would both false-fail
+on prose and encode the abandoned mitigation.
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SKILLS="$HERE/../plugins/rkt/skills"
-fail=0
-# 1. No `--project-id` anywhere (flag does not exist; prose mentions confuse agents).
 if grep -rn -- '--project-id' "$SKILLS"; then
-  echo "FAIL: --project-id is not a valid linear CLI flag (use --project / GraphQL)"; fail=1
+  echo "FAIL: --project-id is not a valid linear CLI flag; dedup via linear-list-issues.sh, create via --project"
+  exit 1
 fi
-# 2. Any `linear issue list` command line must carry an explicit --limit (0=unlimited).
-#    Match command lines only (leading '$LINEAR issue list' or 'linear issue list'),
-#    skip fenced prose by requiring the command token.
-if grep -rEn '(linear|\$LINEAR) issue list' "$SKILLS" | grep -v -- '--limit'; then
-  echo "FAIL: 'issue list' without --limit truncates at 50"; fail=1
-fi
-[ "$fail" -eq 0 ] && echo "PASS test-no-project-id-flag" || exit 1
+echo "PASS test-no-project-id-flag"
 ```
 
 - [ ] **Step 2: Run it, verify it fails**
@@ -138,25 +136,41 @@ done
 (`chmod +x`. Note the **first page omits `--variable after`** so `$after` is
 GraphQL null — do NOT pass the literal string `"null"`.)
 
-In each skill: replace `--project-id "$PROJECT_ID"` on `issue list`/dedup with a
-call to `"${RKT_PLUGIN_ROOT}/scripts/linear-list-issues.sh"` (dedup greps its TSV
-by title/`<!-- [scan:KEY] -->`). For `issue create`, replace `--project-id
-"$(jq -r .linear.project_id rkt.json)"` with `--project "$LINEAR_PROJECT_NAME"`
-where `LINEAR_PROJECT_NAME=$(jq -r '.linear.project_name // .project_name' rkt.json)`.
-Reword EVERY `--project-id` prose/Common-Mistakes mention (scan + create-issue) to
-the new guidance ("dedup via GraphQL-by-UUID; never name-match on the kebab slug").
+> DRY note: this lister and Task 2's `linear-index-pull.sh` share the same
+> paginated-GraphQL skeleton (first-page-omits-`after`, null-project guard). They
+> differ only in projection (TSV vs rich nodes). Acceptable duplication for v1
+> given the different outputs, but if a third consumer appears, extract a shared
+> `linear-paginate.sh <query-fragment>` helper rather than a fourth copy. The
+> GraphQL field names here (`identifier`, `state.type`) must stay in sync with the
+> normalizer's assumptions (Task 2).
 
-Persist the display name for future repos — in `bootstrap/SKILL.md` Step N6 after
-`projectCreate`, extend the rkt.json patch to also set `.linear.project_name` from
-the created project's `.name`:
+**scan dedup** — replace its `issue list --project-id "$PROJECT_ID"` dedup calls
+with `"${RKT_PLUGIN_ROOT}/scripts/linear-list-issues.sh"` (dedup greps the TSV by
+title / `<!-- [scan:KEY] -->`). Reword every `--project-id` prose/Common-Mistakes
+mention (in scan; and the one in create-issue) to the new guidance ("dedup via
+GraphQL-by-UUID; never name-match on the kebab slug").
+
+**create-issue / scan / implement `issue create`** — resolve the Linear display
+name safely (NEVER fall back to the kebab slug, which matches no project):
 ```bash
-LINEAR_PROJECT_NAME=$(echo "$LINEAR_RESP" | jq -r '.data.projectCreate.project.name')
-jq --arg n "$LINEAR_PROJECT_NAME" '.linear.project_name = $n' rkt.json > rkt.json.new && mv rkt.json.new rkt.json
+LINEAR_PROJECT_NAME=$(jq -r '.linear.project_name // ""' rkt.json)
+if [ -z "$LINEAR_PROJECT_NAME" ]; then
+  # one-time backfill for repos bootstrapped before .linear.project_name existed
+  pid=$(jq -r '.linear.project_id' rkt.json)
+  LINEAR_PROJECT_NAME=$(linear api --variable pid="$pid" <<'GRAPHQL' | jq -r '.data.project.name'
+query($pid:String!){project(id:$pid){name}}
+GRAPHQL
+)
+  jq --arg n "$LINEAR_PROJECT_NAME" '.linear.project_name = $n' rkt.json > rkt.json.new && mv rkt.json.new rkt.json
+fi
+# then: linear issue create ... --project "$LINEAR_PROJECT_NAME" ...
 ```
-For already-bootstrapped repos lacking `.linear.project_name`, the create fallback
-`// .project_name` is wrong (kebab); so Step 3 also adds a one-time backfill note:
-if `.linear.project_name` is absent, resolve it via
-`linear api` `query($pid){project(id:$pid){name}}` and write it once.
+There is NO `// .project_name` kebab fallback — resolve-by-UUID-and-cache is the
+only path when the display name is missing.
+
+Persisting the display name at bootstrap for future repos is done in Task 5's N6
+edit (see the ordering note there), NOT here, to keep both N6 edits in one task's
+hands and avoid the overlapping-edit conflict.
 
 - [ ] **Step 4: Run the lint test until it passes**
 
@@ -167,7 +181,7 @@ Expected: `PASS test-no-project-id-flag`.
 
 ```bash
 chmod +x plugins/rkt/scripts/linear-list-issues.sh
-git add plugins/rkt/scripts/linear-list-issues.sh plugins/rkt/skills/create-issue/SKILL.md plugins/rkt/skills/scan/SKILL.md plugins/rkt/skills/implement/SKILL.md plugins/rkt/skills/bootstrap/SKILL.md tests/test-no-project-id-flag.sh
+git add plugins/rkt/scripts/linear-list-issues.sh plugins/rkt/skills/create-issue/SKILL.md plugins/rkt/skills/scan/SKILL.md plugins/rkt/skills/implement/SKILL.md tests/test-no-project-id-flag.sh
 git commit -m "fix(linear): replace non-existent --project-id with GraphQL-by-UUID dedup + display-name create"
 ```
 
@@ -331,10 +345,10 @@ render_children() { # $1 = a valid jq boolean fragment, e.g. '.milestoneId=="m1"
   # passed via --argjson (which would treat the expression as JSON and abort).
   # epic parents in this milestone, by issue number
   local epics
-  epics=$(jq -r '[.issues[]|select(.isEpic==true)|select('"$mfilter"')]|sort_by(.id|'"$num"')|.[].id' <<<"$payload")
+  epics=$(jq -r '[.issues[]|select(.isEpic==true)|select('"$mfilter"')]|sort_by([(.id|'"$num"'), .id])|.[].id' <<<"$payload")
   # direct (non-epic, no parent) issues first
   local directs
-  directs=$(jq -r '[.issues[]|select(.isEpic==false and .parentId==null)|select('"$mfilter"')]|sort_by(.id|'"$num"')|.[].id' <<<"$payload")
+  directs=$(jq -r '[.issues[]|select(.isEpic==false and .parentId==null)|select('"$mfilter"')]|sort_by([(.id|'"$num"'), .id])|.[].id' <<<"$payload")
   if [ -n "$directs" ]; then
     printf '\n'; tablehdr
     while IFS= read -r id; do [ -z "$id" ] && continue
@@ -349,7 +363,7 @@ render_children() { # $1 = a valid jq boolean fragment, e.g. '.milestoneId=="m1"
     es=$(jq -r --arg i "$eid" '.issues[]|select(.id==$i)|.stateType' <<<"$payload")
     printf '\n### Epic %s — %s  (%s)\n' "$eid" "$et" "$(glyph "$es")"
     tablehdr
-    local kids; kids=$(jq -r --arg e "$eid" '[.issues[]|select(.parentId==$e)]|sort_by(.id|'"$num"')|.[].id' <<<"$payload")
+    local kids; kids=$(jq -r --arg e "$eid" '[.issues[]|select(.parentId==$e)]|sort_by([(.id|'"$num"'), .id])|.[].id' <<<"$payload")
     while IFS= read -r kid; do [ -z "$kid" ] && continue
       local kt ks kp; kt=$(jq -r --arg i "$kid" '.issues[]|select(.id==$i)|.title' <<<"$payload")
       ks=$(jq -r --arg i "$kid" '.issues[]|select(.id==$i)|.stateType' <<<"$payload")
@@ -571,10 +585,16 @@ while :; do
   else
     resp=$(printf '%s' "$QUERY" | linear api --variable pid="$pid" --variable after="$cursor") || { echo "linear api failed" >&2; exit 1; }
   fi
-  # Guard: a bad UUID returns {"data":{"project":null}} with exit 0. Do NOT proceed
-  # (else we would write a garbage index over a good one).
-  jq -e '.data.project != null' <<<"$resp" >/dev/null || { echo "project not found for id $pid" >&2; exit 1; }
-  [ -z "$meta" ] && meta=$(jq '{name:.data.project.name,url:.data.project.url,projectMilestones:.data.project.projectMilestones}' <<<"$resp")
+  # Guard: `linear api` exits non-zero on a bad UUID (caught by the `||` above),
+  # but a valid response can still carry a null project (e.g. permissions) as
+  # {"data":{"project":null}}. Do NOT proceed on null — we would write a garbage
+  # index over a good one. (Defense in depth; verify exit-code behavior at impl.)
+  jq -e '.data.project != null' <<<"$resp" >/dev/null || { echo "project null/not found for id $pid" >&2; exit 1; }
+  # if-form, NOT `[ -z "$meta" ] && meta=…`: keep intent explicit (the && idiom is
+  # actually set -e-safe, but the if reads unambiguously).
+  if [ -z "$meta" ]; then
+    meta=$(jq '{name:.data.project.name,url:.data.project.url,projectMilestones:.data.project.projectMilestones}' <<<"$resp")
+  fi
   jq -c '.data.project.issues.nodes[]' <<<"$resp" >> "$tmp/nodes.jsonl"
   [ "$(jq -r '.data.project.issues.pageInfo.hasNextPage' <<<"$resp")" = "true" ] || break
   cursor=$(jq -r '.data.project.issues.pageInfo.endCursor' <<<"$resp")
@@ -582,6 +602,8 @@ done
 # Reassemble a single {data:{project:{…}}} doc; render to a TEMP file, then
 # atomically move over LINEAR.md ONLY on success — never truncate the committed
 # index before a good render exists.
+# Guard: `--argjson meta ""` aborts jq; only reassemble with a non-empty meta.
+[ -n "$meta" ] || { echo "no project metadata captured" >&2; exit 1; }
 jq -s --argjson meta "$meta" '{data:{project:($meta+{issues:{nodes:.}})}}' "$tmp/nodes.jsonl" > "$tmp/raw.json"
 jq --arg now "$(date -u +%FT%TZ)" -f "${RKT_PLUGIN_ROOT}/scripts/linear-index-normalize.jq" "$tmp/raw.json" > "$tmp/norm.json"
 "${RKT_PLUGIN_ROOT}/scripts/render-linear-index.sh" < "$tmp/norm.json" > "$tmp/LINEAR.md"
@@ -649,6 +671,14 @@ Two questions, each needs a definite answer before writing code:
    unconfirmed, keep hooks **Claude-only**: do NOT add a hooks key to
    `.codex-plugin/plugin.json`; note the limitation in skill/README.
 Record both findings in the commit message.
+
+**Blocking on the project-dir channel:** if Step 0 finds Claude passes the
+project directory via stdin JSON (not `$CLAUDE_PROJECT_DIR`), you MUST rewrite the
+Step-3 hook gates AND the Step-1 test harness to read that channel BEFORE writing
+the test — otherwise the test (which hard-codes `CLAUDE_PROJECT_DIR="$tmp"`) can
+pass green while the hook silently no-ops in production (falls back to `.` = the
+plugin dir). A green gating test does not prove the hook is wired correctly until
+Step 0's channel finding is folded into both the scripts and the harness.
 
 - [ ] **Step 1: Write the gating test (failing)**
 
@@ -864,10 +894,16 @@ git commit -m "feat(scan): propose+create milestones and epics with cached-id id
 **Files:**
 - Modify: `plugins/rkt/skills/bootstrap/SKILL.md` (Step N6 create + repo-link follow-up; A6 for adopt)
 
+**Ordering:** this task is the SOLE editor of `bootstrap/SKILL.md` Step N6.
+Task 0 deliberately does not touch bootstrap; the `.linear.project_name`
+persistence (needed by Task 0's create path for *future* repos) is added HERE so
+both N6 changes land in one task and never conflict-merge.
+
 **Interfaces:**
 - Consumes: verified `projectCreate`/`projectUpdate` field names.
 - Produces: enriched Linear project (description, summary, links, icon/color) +
-  optional seeded milestones from `INDEX.md`.
+  optional seeded milestones from `INDEX.md`; `rkt.json:linear.project_name` set
+  to the created project's display name.
 
 - [ ] **Step 1: Verify project mutation fields**
 
@@ -888,6 +924,14 @@ In `bootstrap/SKILL.md` Step N6, extend the `projectCreate` input to pass
 `description` (overview markdown: what/preset/stack/phase list built from
 `INDEX.md`) and the one-line summary field (per Step-1 finding). Keep the
 existing failure-tolerant wrapper (warn, set empty, continue).
+
+Also persist the display name for Task 0's create path — after the existing
+`rkt.json` patch that writes `project_id`/`project_url`, extend it to set
+`.linear.project_name` from the created project's `.name`:
+```bash
+LINEAR_PROJECT_NAME=$(echo "$LINEAR_RESP" | jq -r '.data.projectCreate.project.name')
+jq --arg n "$LINEAR_PROJECT_NAME" '.linear.project_name = $n' rkt.json > rkt.json.new && mv rkt.json.new rkt.json
+```
 
 - [ ] **Step 3: Add repo-link + icon/color + milestone seeding**
 
@@ -918,7 +962,7 @@ git commit -m "feat(bootstrap): enrich Linear project (overview, repo link, mile
 - Modify: `plugins/rkt/skills/create-issue/SKILL.md` (Step 6: refresh index)
 
 **Interfaces:**
-- Consumes: `plugins/rkt/scripts/linear-index-pull.sh` (Task 3) or `/rkt:linear-sync`.
+- Consumes: `plugins/rkt/scripts/linear-index-pull.sh` (created in Task 2) or `/rkt:linear-sync`.
 - Produces: fresh `LINEAR.md` after single-issue creation (best-effort).
 
 - [ ] **Step 1: Add the refresh step**
