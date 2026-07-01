@@ -79,11 +79,21 @@ Consequences for this design:
 - Project mutations (create, description/summary/links, milestone create/update)
   use `linear api` GraphQL — the CLI does not expose them.
 
-**Pre-existing `--project-id` usage (out of scope, noted):** existing skills
-(`create-issue`, `scan`, `implement`) already invoke `linear issue list
---project-id`, which does not exist on CLI v2.0.0. That is a pre-existing bug
-this design does not fix, but the new sync path must NOT propagate it. Filing a
-separate issue to correct the existing skills is recommended (see QoL / follow-up).
+**Pre-existing `--project-id` bug (now IN scope):** existing skills
+(`create-issue`, `scan`, `implement`) invoke `linear issue list --project-id` and
+`linear issue create ... --project-id`, but `--project-id` does not exist on CLI
+v2.0.0 — the flag is `--project` (list: "Filter by project name"; create: "Name
+or slug ID of the project"). Worse, `issue list` defaults to `--limit 50`, so
+the dedup passes in `create-issue`/`scan` that rely on the full issue list
+silently miss any issue past the 50th — a correctness bug, not just a broken
+flag. This design fixes it as prerequisite hygiene (it would be incoherent to
+ship a Linear-index feature on top of skills that mis-query Linear):
+- Replace every `--project-id "$PROJECT_ID"` with `--project "$PROJECT_NAME"`.
+- Add `--limit 0` (unlimited) to every `issue list` used for dedup/enumeration.
+- Robustness note: `--project` matches by name, so `rkt.json:project_name` must
+  equal the Linear project's display name (it is set from the same value at
+  bootstrap). The new sync path stays on GraphQL-by-UUID (strictly more robust);
+  the legacy skills move to name-based as the minimal CLI-correct fix.
 
 ## Component 1: The Index File — `LINEAR.md`
 
@@ -344,11 +354,11 @@ names.
 - **Codex hook loading (`[unverified]`):** see C2 — resolve before building the
   hooks slice.
 
-## Follow-up (separate issue, out of scope here)
+## Prerequisite hygiene (in scope — see "Pre-existing `--project-id` bug" above)
 
-- Fix the pre-existing `linear issue list --project-id` usage in
-  `/create-issue`, `/scan`, `/implement` — the flag does not exist on CLI v2.0.0.
-  File as its own issue; do not bundle into this work.
+- Correct `--project-id` → `--project "$PROJECT_NAME"` and add `--limit 0` across
+  `/create-issue`, `/scan`, `/implement`. Landed as the first task of this work
+  (guarded by a grep lint test so the bad flag cannot reappear).
 
 ## Requirement → Component Map
 

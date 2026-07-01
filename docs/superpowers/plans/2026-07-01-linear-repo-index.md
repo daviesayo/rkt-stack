@@ -42,6 +42,74 @@ hierarchy, enrichment, and index-refresh behavior respectively.
 
 ---
 
+## Task 0: Fix pre-existing `--project-id` bug across skills (prerequisite hygiene)
+
+`linear issue list --project-id` / `issue create ... --project-id` do NOT exist on
+CLI v2.0.0 (flag is `--project`), and `issue list` truncates at 50 by default —
+silently breaking dedup in `create-issue`/`scan`. Fix before building on top.
+
+**Files:**
+- Modify: `plugins/rkt/skills/create-issue/SKILL.md` (Step 0 dedup list + Step 4 create)
+- Modify: `plugins/rkt/skills/scan/SKILL.md` (all `issue list` dedup calls + `issue create`)
+- Modify: `plugins/rkt/skills/implement/SKILL.md` (any `--project-id` usage)
+- Create: `tests/test-no-project-id-flag.sh` (grep-lint guard)
+
+**Interfaces:**
+- Consumes: `rkt.json` `.project_name` (already read as `$PROJECT_NAME` in these skills).
+- Produces: skills that query Linear correctly; a lint test preventing regression.
+
+- [ ] **Step 1: Write the failing lint test**
+
+Create `tests/test-no-project-id-flag.sh`:
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+HERE="$(cd "$(dirname "$0")" && pwd)"
+SKILLS="$HERE/../plugins/rkt/skills"
+# The CLI has no --project-id flag; any occurrence is a bug.
+if grep -rn -- '--project-id' "$SKILLS" ; then
+  echo "FAIL: --project-id is not a valid linear CLI flag (use --project)"; exit 1
+fi
+# Every issue-list used for enumeration must set an explicit --limit (0 = unlimited),
+# else it silently truncates at 50. Flag list calls that lack --limit on the same line.
+if grep -rn 'linear issue list' "$SKILLS" | grep -v -- '--limit'; then
+  echo "FAIL: 'linear issue list' without --limit truncates at 50"; exit 1
+fi
+echo "PASS test-no-project-id-flag"
+```
+
+- [ ] **Step 2: Run it, verify it fails**
+
+Run: `bash tests/test-no-project-id-flag.sh`
+Expected: FAIL, listing the current `--project-id` lines and any unlimited
+`issue list` calls.
+
+- [ ] **Step 3: Fix the skills**
+
+In each skill, replace `--project-id "$PROJECT_ID"` (and the inline
+`--project-id "$(jq -r .linear.project_id rkt.json)"` form) with
+`--project "$PROJECT_NAME"`. On every `linear issue list` used for
+dedup/enumeration, append `--limit 0`. Where a skill only had `PROJECT_ID`
+available, add `PROJECT_NAME=$(jq -r .project_name rkt.json)` to its Step 0 config
+block (matches the existing pattern already present in `scan`/`create-issue`).
+Update the "Common Mistakes" tables that reference `--project-id` (e.g. scan's
+"Using `--project 'Name'` instead of `--project-id`" row is BACKWARDS vs the real
+CLI — correct it to recommend `--project "$PROJECT_NAME" --limit 0`).
+
+- [ ] **Step 4: Run the lint test until it passes**
+
+Run: `bash tests/test-no-project-id-flag.sh`
+Expected: `PASS test-no-project-id-flag`.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add plugins/rkt/skills/create-issue/SKILL.md plugins/rkt/skills/scan/SKILL.md plugins/rkt/skills/implement/SKILL.md tests/test-no-project-id-flag.sh
+git commit -m "fix(linear): correct non-existent --project-id flag to --project, add --limit 0"
+```
+
+---
+
 ## Task 1: Deterministic render script `render-linear-index.sh`
 
 Pure function: reads a Linear GraphQL JSON payload (issues + milestones +
@@ -825,4 +893,4 @@ git commit -m "docs+release: Linear repo-index feature, minor version bump"
 | Epic = Linear label, not GitHub manifest | Task 4 |
 | rkt.json additive fields (throttle, milestones, epics) | Tasks 2/3/4/5 |
 | Labels/decisions/AGENTS/README/CHANGELOG/version lockstep | Task 7 |
-| Follow-up: fix pre-existing `--project-id` in other skills | out of scope (separate issue) |
+| Fix pre-existing `--project-id` bug + `--limit 0` (now in scope) | Task 0 |
