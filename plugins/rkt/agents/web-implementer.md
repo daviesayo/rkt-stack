@@ -81,6 +81,11 @@ for you.
    `"${CLAUDE_PLUGIN_ROOT}/scripts/sync-github-labels.sh"` to sync them, then
    retry `gh pr create` once.
 
+   **PR title — Linear IDs in full.** If the PR covers multiple Linear issues,
+   put every affected ID in the title in FULL, comma-separated
+   (`RKT-133, RKT-134`), never slash-shorthand (`RKT-133/134`) — Linear only
+   links and auto-closes IDs written in full.
+
 ### Design System (Web)
 
 Read the project's design system file for design tokens. Always handle loading, error, and empty states in every page/component.
@@ -91,6 +96,14 @@ Read the project's design system file for design tokens. Always handle loading, 
 - No business logic in the web app — it's an API consumer only
 - No `dangerouslySetInnerHTML` without sanitisation
 - Always handle loading, error, and empty states in every page/component
+
+## Spawn discipline
+
+You cannot spawn agents (`Agent` is disallowed for you) — this is by design, not
+an obstacle to work around. If the task genuinely needs parallel helpers, a
+reviewer, or deeper investigation than you can do alone, do not improvise:
+finish what you can and end your report with a structured fan-out request to
+the orchestrator — what you need, why, and estimated agent count.
 
 ## Project-specific rules
 
