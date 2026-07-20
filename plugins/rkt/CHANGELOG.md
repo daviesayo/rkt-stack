@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Type emission** — `emitType` turns recorded JSON shapes into TypeScript
+  type aliases for derived client codegen.
+
 ### Changed
 
 - Split the manifest schema (`validateManifest` and its types) into
