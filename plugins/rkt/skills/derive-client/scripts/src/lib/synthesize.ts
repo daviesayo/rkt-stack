@@ -109,3 +109,71 @@ export function groupEndpoints(entries: HarEntry[]): EndpointGroup[] {
 
   return groups;
 }
+
+export type JsonShape =
+  | { type: "object"; properties: Record<string, JsonShape>; required: string[] }
+  | { type: "array"; items: JsonShape }
+  | { type: "string" | "number" | "boolean" | "null" | "unknown" };
+
+function shapeOf(value: unknown): JsonShape {
+  if (value === null) return { type: "null" };
+  if (Array.isArray(value)) {
+    return { type: "array", items: value.length ? shapeOf(value[0]) : { type: "unknown" } };
+  }
+  switch (typeof value) {
+    case "string":
+      return { type: "string" };
+    case "number":
+      return { type: "number" };
+    case "boolean":
+      return { type: "boolean" };
+    case "object": {
+      const properties: Record<string, JsonShape> = {};
+      for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+        properties[k] = shapeOf(v);
+      }
+      return { type: "object", properties, required: Object.keys(properties) };
+    }
+    default:
+      return { type: "unknown" };
+  }
+}
+
+/**
+ * Merge shapes across samples. A key absent from any sample is optional,
+ * which is why required is an intersection rather than a union.
+ */
+function mergeShapes(a: JsonShape, b: JsonShape): JsonShape {
+  if (a.type === "unknown") return b;
+  if (b.type === "unknown") return a;
+  if (a.type === "object" && b.type === "object") {
+    const properties: Record<string, JsonShape> = { ...a.properties };
+    for (const [k, v] of Object.entries(b.properties)) {
+      properties[k] = k in properties ? mergeShapes(properties[k], v) : v;
+    }
+    return {
+      type: "object",
+      properties,
+      required: a.required.filter((k) => b.required.includes(k)),
+    };
+  }
+  if (a.type === "array" && b.type === "array") {
+    return { type: "array", items: mergeShapes(a.items, b.items) };
+  }
+  return a.type === b.type ? a : { type: "unknown" };
+}
+
+export function inferShape(bodies: string[]): JsonShape {
+  let merged: JsonShape | null = null;
+  for (const body of bodies) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      return { type: "unknown" };
+    }
+    const shape = shapeOf(parsed);
+    merged = merged === null ? shape : mergeShapes(merged, shape);
+  }
+  return merged ?? { type: "unknown" };
+}
