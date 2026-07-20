@@ -34,6 +34,11 @@ fix below is a defect that run exposed.
   the documented "map the site" step impossible and forced the user to paste
   URLs manually. It now returns page headings and deduplicated links.
 
+- **Required query parameters are no longer dropped.** Params present on every
+  recorded sample are marked required and carry an observed example, which the
+  client sends when the caller omits them. Without this, endpoints that take
+  mandatory arguments returned 400s that read like client bugs.
+
 ### Added
 
 - **Credential renewal.** Access tokens on real SPAs live minutes and

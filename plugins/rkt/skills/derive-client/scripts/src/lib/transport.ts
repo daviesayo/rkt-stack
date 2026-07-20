@@ -84,14 +84,17 @@ export function buildRequest(
 
   let path = endpoint.pathTemplate;
   for (const p of endpoint.params.filter((x) => x.in === "path")) {
-    const value = params[p.name];
+    const value = params[p.name] ?? p.example;
     if (value === undefined) throw new Error(`missing required path param: ${p.name}`);
     path = path.replace(`{${p.name}}`, encodeURIComponent(value));
   }
 
   const query = new URLSearchParams();
   for (const p of endpoint.params.filter((x) => x.in === "query")) {
-    const value = params[p.name];
+    // Fall back to the recorded value for params the API requires. Omitting
+    // them yields a 400 that reads like a client bug, when the caller simply
+    // had no way to know the argument was mandatory.
+    const value = params[p.name] ?? (p.required ? p.example : undefined);
     if (value !== undefined) query.set(p.name, value);
   }
 

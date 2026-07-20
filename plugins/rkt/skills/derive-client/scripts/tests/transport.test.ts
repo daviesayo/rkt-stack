@@ -148,3 +148,28 @@ test("issue refuses non-GET/HEAD before calling fetch", async () => {
     globalThis.fetch = originalFetch;
   }
 });
+
+test("supplies recorded values for params the API requires", () => {
+  // A param present on every recorded sample is mandatory. Dropping it because
+  // the caller did not repeat it yields a 400 that reads like a client bug.
+  const ep: ManifestEndpoint = {
+    ...endpoint,
+    pathTemplate: "/api/v2/settings",
+    params: [
+      { name: "keys", in: "query", type: "string", required: true, example: "modals_v2" },
+      { name: "page", in: "query", type: "number", required: false, example: "1" },
+    ],
+  };
+  const built = buildRequest(manifest(null), ep, {}, null);
+  expect(built.url).toBe("https://x.test/api/v2/settings?keys=modals_v2");
+});
+
+test("an explicit param overrides the recorded example", () => {
+  const ep: ManifestEndpoint = {
+    ...endpoint,
+    pathTemplate: "/api/v2/settings",
+    params: [{ name: "keys", in: "query", type: "string", required: true, example: "modals_v2" }],
+  };
+  const built = buildRequest(manifest(null), ep, { keys: "other" }, null);
+  expect(built.url).toBe("https://x.test/api/v2/settings?keys=other");
+});
