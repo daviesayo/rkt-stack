@@ -60,3 +60,35 @@ test("drops entries with no response body", () => {
   const { kept } = filterEntries([entry({ responseBody: null })]);
   expect(kept).toHaveLength(0);
 });
+
+test("read mode drops write methods", () => {
+  const { kept, dropped } = filterEntries([
+    entry({ method: "GET" }),
+    entry({ method: "POST" }),
+    entry({ method: "PUT" }),
+    entry({ method: "PATCH" }),
+    entry({ method: "DELETE" }),
+  ]);
+  expect(kept).toHaveLength(1);
+  expect(kept[0].method).toBe("GET");
+  expect(dropped).toHaveLength(4);
+  expect(dropped[0].reason).toMatch(/write method/i);
+});
+
+test("read mode keeps HEAD", () => {
+  const { kept } = filterEntries([entry({ method: "HEAD" })]);
+  expect(kept).toHaveLength(1);
+});
+
+test("method matching is case-insensitive", () => {
+  const { kept } = filterEntries([entry({ method: "get" })]);
+  expect(kept).toHaveLength(1);
+});
+
+test("allowWrites keeps write methods for full mode", () => {
+  const { kept } = filterEntries(
+    [entry({ method: "GET" }), entry({ method: "DELETE" })],
+    { allowWrites: true },
+  );
+  expect(kept).toHaveLength(2);
+});

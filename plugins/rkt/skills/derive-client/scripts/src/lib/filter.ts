@@ -31,11 +31,28 @@ const ANALYTICS_HOSTS = [
 
 const DATA_MIME = /json|text\/html|xml/i;
 
-export function filterEntries(entries: HarEntry[]): FilterResult {
+const READ_METHODS = new Set(["GET", "HEAD"]);
+
+export interface FilterOptions {
+  /** Full mode only. Read mode never derives endpoints that mutate state. */
+  allowWrites?: boolean;
+}
+
+export function filterEntries(
+  entries: HarEntry[],
+  options: FilterOptions = {},
+): FilterResult {
   const kept: HarEntry[] = [];
   const dropped: DropRecord[] = [];
 
   for (const e of entries) {
+    if (!options.allowWrites && !READ_METHODS.has(e.method.toUpperCase())) {
+      dropped.push({
+        url: e.url,
+        reason: `write method (${e.method}); read mode derives GET and HEAD only`,
+      });
+      continue;
+    }
     let host = "";
     try {
       host = new URL(e.url).hostname;
