@@ -22,3 +22,6 @@ venv/
 # Plugin build artifacts (if any)
 dist/
 build/
+
+# Agent worktrees
+.worktrees/

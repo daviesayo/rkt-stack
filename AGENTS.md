@@ -64,25 +64,35 @@ Tests should resolve the plugin package via `tests/../plugins/rkt`.
 
 1. Edit files under `plugins/rkt/` unless the work is explicitly repo-level
    scaffolding, tests, or marketplace metadata.
-2. For plugin changes, bump both manifest versions in lockstep.
-3. Prepend a concise entry to `plugins/rkt/CHANGELOG.md`.
-4. Run tests: `for t in tests/test-*.sh; do bash "$t"; done`.
-5. Validate the Claude package: `claude plugin validate plugins/rkt`.
-6. Review `git status --short` and do not stage unrelated user files.
+2. Prepend a concise entry under `## [Unreleased]` in
+   `plugins/rkt/CHANGELOG.md`. Do not bump the manifest versions here; that
+   happens once at release time (see Release Flow).
+3. Run tests: `for t in tests/test-*.sh; do bash "$t"; done`.
+4. Validate the Claude package: `claude plugin validate plugins/rkt`.
+5. Review `git status --short` and do not stage unrelated user files.
 
 ## Release Flow
 
 After work is done and verified:
 
+**Bump versions at release time, not per change.** A version number tells whoever
+installs the plugin what they received, so it changes when a usable capability
+ships, not every time a branch merges. Multi-part work (a feature delivered
+across several plans or PRs) accumulates under `## [Unreleased]` in
+`plugins/rkt/CHANGELOG.md` and spends a single version when the capability is
+actually usable end to end. A bump that never gets tagged was not a release.
+
 1. Choose the version bump by impact:
    - Patch: packaging fixes, docs, small behavior fixes.
    - Minor: new skills, new presets, new user-visible capabilities.
    - Major: breaking changes to bootstrapped project expectations.
-2. Commit with an imperative message.
-3. Create an annotated tag matching the plugin version, for example:
+2. Rename the `## [Unreleased]` heading to the chosen version with today's
+   date, consolidating its entries. Bump both plugin manifests in lockstep.
+3. Commit with an imperative message.
+4. Create an annotated tag matching the plugin version, for example:
    `git tag -a v0.3.4 -m "v0.3.4"`.
-4. Seek explicit approval before pushing to `main` or pushing tags.
-5. After approval, push both branch and tag: `git push origin main vX.Y.Z`.
+5. Seek explicit approval before pushing to `main` or pushing tags.
+6. After approval, push both branch and tag: `git push origin main vX.Y.Z`.
 
 Do not push unverified work. Do not push without approval unless the user has
 explicitly asked for that push in the current task.

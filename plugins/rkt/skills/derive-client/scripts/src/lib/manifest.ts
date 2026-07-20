@@ -1,51 +1,10 @@
-import type { AuthBundle } from "./auth";
-import type { RefreshSpec } from "./refresh";
-import type { EndpointGroup, JsonShape, ParamSpec } from "./synthesize";
+import type { AuthBundle, AuthSpec, ClientManifest, ManifestEndpoint, RefreshSpec } from "./manifest-schema";
+import type { EndpointGroup } from "./synthesize";
 import { inferShape } from "./synthesize";
+import { SCHEMA_VERSION, validateManifest } from "./manifest-schema";
 
-/**
- * 2: auth became a bundle (sites need several credentials at once) and gained
- *    a refresh spec. Version 1 manifests are rejected: their single static
- *    credential produces a client that 401s on any site with short-lived
- *    tokens, so failing loudly beats replaying a dead credential.
- */
-export const SCHEMA_VERSION = 2;
-
-export interface AuthSpec {
-  kind: "cookie" | "bearer" | "csrf";
-  location: string;
-  mintedBy: string | null;
-  expiry: string | null;
-}
-
-export interface ManifestEndpoint {
-  id: string;
-  method: string;
-  pathTemplate: string;
-  params: ParamSpec[];
-  responseShape: JsonShape;
-  source: "xhr" | "scrape";
-  fragile: boolean;
-  selectors: Record<string, string> | null;
-  writeSemantics: null;
-  stale?: boolean;
-}
-
-export interface ClientManifest {
-  schemaVersion: number;
-  site: string;
-  baseUrl: string;
-  recordedAt: string;
-  harSha256: string;
-  userAgent: string;
-  clientHints: Record<string, string>;
-  auth: AuthSpec | null;
-  /** Every credential the API requires. Preferred over `auth`. */
-  authBundle: AuthBundle | null;
-  /** How to renew credentials when they go stale. */
-  refresh: RefreshSpec | null;
-  endpoints: ManifestEndpoint[];
-}
+export type { AuthSpec, AuthBundle, ClientManifest, ManifestEndpoint, RefreshSpec } from "./manifest-schema";
+export { SCHEMA_VERSION, validateManifest } from "./manifest-schema";
 
 export interface BuildManifestInput {
   site: string;
@@ -117,23 +76,4 @@ export function buildManifest(input: BuildManifestInput): ClientManifest {
     refresh: input.refresh ?? null,
     endpoints,
   };
-}
-
-export function validateManifest(value: unknown): ClientManifest {
-  const m = value as Partial<ClientManifest>;
-  if (typeof m !== "object" || m === null) {
-    throw new Error("manifest must be an object");
-  }
-  if (m.schemaVersion !== SCHEMA_VERSION) {
-    throw new Error(
-      `unsupported manifest schema version ${String(m.schemaVersion)}; expected ${SCHEMA_VERSION}`,
-    );
-  }
-  if (!Array.isArray(m.endpoints)) {
-    throw new Error("manifest must have an endpoints array");
-  }
-  if (typeof m.site !== "string" || m.site.length === 0) {
-    throw new Error("manifest must have a site");
-  }
-  return m as ClientManifest;
 }

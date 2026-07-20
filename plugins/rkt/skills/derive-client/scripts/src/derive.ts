@@ -11,9 +11,10 @@ import { filterEntries, type DropRecord } from "./lib/filter";
 import { readHar } from "./lib/har";
 import { buildManifest, type ClientManifest } from "./lib/manifest";
 import { assertUnderRktRoot } from "./lib/paths";
-import { writeSecret } from "./lib/secrets";
+import { REFRESH_TOKEN_KEY, writeSecret } from "./lib/secrets";
 import { pickPrimaryOrigin, type OriginPick } from "./lib/origin";
-import { detectRefresh, type RefreshSpec } from "./lib/refresh";
+import { detectRefresh } from "./lib/refresh-detect";
+import type { RefreshSpec } from "./lib/manifest-schema";
 import { groupEndpoints } from "./lib/synthesize";
 
 export interface DeriveResult {
@@ -25,9 +26,6 @@ export interface DeriveResult {
   refresh: RefreshSpec | null;
   notes: string[];
 }
-
-/** Reserved secrets key for the OAuth refresh token. */
-export const REFRESH_TOKEN_KEY = "@refresh_token";
 
 export async function deriveManifest(harPath: string, site: string): Promise<DeriveResult> {
   const absHar = assertUnderRktRoot(resolve(harPath));

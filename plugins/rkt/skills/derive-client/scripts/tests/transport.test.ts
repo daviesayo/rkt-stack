@@ -22,7 +22,7 @@ function manifest(
   baseUrl = "https://x.test",
 ): ClientManifest {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     site: "example",
     baseUrl,
     recordedAt: "2026-07-20T12:00:00.000Z",

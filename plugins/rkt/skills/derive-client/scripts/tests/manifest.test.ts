@@ -3,6 +3,10 @@ import { analyzeAuth } from "../src/lib/auth";
 import type { HarEntry } from "../src/lib/har";
 import { groupEndpoints } from "../src/lib/synthesize";
 import { buildManifest, SCHEMA_VERSION, validateManifest } from "../src/lib/manifest";
+import {
+  SCHEMA_VERSION as SCHEMA_VERSION_FROM_SCHEMA,
+  validateManifest as validateFromSchema,
+} from "../src/lib/manifest-schema";
 
 function entry(url: string, body: string): HarEntry {
   return {
@@ -59,6 +63,8 @@ test("emits auth as null, to be filled by the auth pass", () => {
     recordedAt: "2026-07-20T12:00:00.000Z",
   });
   expect(m.auth).toBeNull();
+  expect(m.authBundle).toBeNull();
+  expect(m.refresh).toBeNull();
 });
 
 test("derives stable endpoint ids from method and template", () => {
@@ -173,4 +179,36 @@ test("auth remains null when the analysis found nothing", () => {
     recordedAt: "2026-07-20T12:00:00.000Z",
   });
   expect(m.auth).toBeNull();
+});
+
+test("manifest-schema exports the schema half independently", () => {
+  expect(SCHEMA_VERSION_FROM_SCHEMA).toBe(2);
+  expect(() => validateFromSchema({ schemaVersion: 99, site: "x", endpoints: [] })).toThrow(
+    /schema version/i,
+  );
+});
+
+test("manifest re-exports the schema half, so existing imports keep working", async () => {
+  const fromManifest = await import("../src/lib/manifest");
+  expect(fromManifest.SCHEMA_VERSION).toBe(SCHEMA_VERSION_FROM_SCHEMA);
+  expect(typeof fromManifest.validateManifest).toBe("function");
+});
+
+test("manifest-schema has no runtime import outside the copyable set", async () => {
+  const src = await Bun.file(`${import.meta.dir}/../src/lib/manifest-schema.ts`).text();
+  // Self-contained: no imports. If imports are added, every runtime import must
+  // resolve to a file in the copied set.
+  const imports = [...src.matchAll(/^import\s+(type\s+)?.*?from\s+"([^"]+)";$/gm)];
+  for (const [, typeOnly, from] of imports) {
+    if (typeOnly) continue;
+    expect(["./paths", "./secrets", "./ratelimit"]).toContain(from);
+  }
+});
+
+test("validateManifest rejects a site with path separators or ..", () => {
+  for (const site of ["../evil", "foo/bar", "foo\\bar", ".."]) {
+    expect(() =>
+      validateManifest({ schemaVersion: 2, site, endpoints: [] }),
+    ).toThrow(/single path segment/i);
+  }
 });

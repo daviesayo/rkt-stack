@@ -1,14 +1,7 @@
 import type { HarEntry } from "./har";
+import type { JsonShape, ParamSpec } from "./manifest-schema";
 
-export interface ParamSpec {
-  name: string;
-  in: "path" | "query";
-  type: "string" | "number";
-  /** Present on every recorded sample, so the API almost certainly demands it. */
-  required?: boolean;
-  /** A value observed during recording, used as a default so calls work as-is. */
-  example?: string;
-}
+export type { JsonShape, ParamSpec } from "./manifest-schema";
 
 export interface EndpointGroup {
   method: string;
@@ -124,11 +117,6 @@ export function groupEndpoints(entries: HarEntry[]): EndpointGroup[] {
 
   return groups;
 }
-
-export type JsonShape =
-  | { type: "object"; properties: Record<string, JsonShape>; required: string[] }
-  | { type: "array"; items: JsonShape }
-  | { type: "string" | "number" | "boolean" | "null" | "unknown" };
 
 function shapeOf(value: unknown): JsonShape {
   if (value === null) return { type: "null" };

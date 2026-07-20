@@ -1,8 +1,43 @@
-import { profileDir } from "./paths";
+import { access } from "node:fs/promises";
+import { profileDir, storageStateFile } from "./paths";
 
 export interface HarvestedSession {
   /** location -> value, in the same keying the secrets file uses. */
   values: Record<string, string>;
+}
+
+interface ReauthPage {
+  goto(url: string, options?: Record<string, unknown>): Promise<unknown>;
+  waitForLoadState(state: string, options?: Record<string, unknown>): Promise<unknown>;
+}
+
+interface ReauthContext {
+  pages(): ReauthPage[];
+  newPage(): Promise<ReauthPage>;
+  cookies(): Promise<Array<{ name: string; value: string }>>;
+  storageState(options?: { path?: string }): Promise<unknown>;
+  close(): Promise<void>;
+}
+
+interface ReauthBrowser {
+  newContext(options?: Record<string, unknown>): Promise<ReauthContext>;
+  close(): Promise<void>;
+}
+
+interface PlaywrightChromium {
+  launchPersistentContext(userDataDir: string, options?: Record<string, unknown>): Promise<ReauthContext>;
+  launch(options?: Record<string, unknown>): Promise<ReauthBrowser>;
+}
+
+async function loadChromium(): Promise<PlaywrightChromium | null> {
+  try {
+    // Non-literal module spec keeps tsc from requiring playwright in generated clients.
+    const moduleSpec = "playwright";
+    const mod = (await import(moduleSpec)) as { chromium: PlaywrightChromium };
+    return mod.chromium;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -23,29 +58,41 @@ export async function reauthViaProfile(
   wanted: string[],
   timeoutMs = 45_000,
 ): Promise<HarvestedSession | null> {
-  let chromium: typeof import("playwright").chromium;
-  try {
-    ({ chromium } = await import("playwright"));
-  } catch {
-    return null;
-  }
+  const chromium = await loadChromium();
+  if (!chromium) return null;
 
-  let context: Awaited<ReturnType<typeof chromium.launchPersistentContext>> | null = null;
+  let context: ReauthContext | null = null;
+  let browser: ReauthBrowser | null = null;
   try {
-    context = await chromium.launchPersistentContext(profileDir(site), {
-      channel: "chrome",
-      headless: true,
-      serviceWorkers: "block",
-    });
+    // Prefer the saved storage state: it carries session-scoped cookies that a
+    // profile directory drops on close, which is usually the difference
+    // between a live SSO session and a redirect to the login page.
+    const statePath = storageStateFile(site);
+    const haveState = await access(statePath).then(() => true).catch(() => false);
 
-    const page = context.pages()[0] ?? (await context.newPage());
+    if (haveState) {
+      browser = await chromium.launch({ channel: "chrome", headless: true });
+      context = await browser.newContext({ storageState: statePath, serviceWorkers: "block" });
+    } else {
+      context = await chromium.launchPersistentContext(profileDir(site), {
+        channel: "chrome",
+        headless: true,
+        serviceWorkers: "block",
+      });
+    }
+
+    const ctx = context;
+    const page = ctx.pages()[0] ?? (await ctx.newPage());
     await page.goto(entryUrl, { waitUntil: "domcontentloaded", timeout: timeoutMs });
 
     // The token exchange happens after load, so wait for the network to settle
     // rather than assuming the credential exists the moment the DOM is ready.
     await page.waitForLoadState("networkidle", { timeout: timeoutMs }).catch(() => {});
 
-    const cookies = await context.cookies();
+    // Re-save the refreshed session so the next run starts from current state.
+    await ctx.storageState({ path: storageStateFile(site) }).catch(() => {});
+
+    const cookies = await ctx.cookies();
     const values: Record<string, string> = {};
     for (const c of cookies) {
       const key = `cookie:${c.name}`;
@@ -64,5 +111,6 @@ export async function reauthViaProfile(
     return null;
   } finally {
     await context?.close().catch(() => {});
+    await browser?.close().catch(() => {});
   }
 }

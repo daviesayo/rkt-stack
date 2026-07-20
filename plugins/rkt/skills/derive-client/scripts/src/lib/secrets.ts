@@ -1,6 +1,9 @@
 import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { secretsDir, secretsFile } from "./paths";
 
+/** Reserved secrets key for the OAuth refresh token. */
+export const REFRESH_TOKEN_KEY = "@refresh_token";
+
 interface SecretBody {
   /** location -> value, e.g. {"cookie:PHPSESSID": "...", "x-csrf-token": "..."} */
   values: Record<string, string>;

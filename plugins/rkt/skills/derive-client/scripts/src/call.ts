@@ -9,10 +9,9 @@ import { resolve } from "node:path";
 import { validateManifest } from "./lib/manifest";
 import { assertUnderRktRoot } from "./lib/paths";
 import { createLimiter } from "./lib/ratelimit";
-import { maskHeaders, readSecrets, redactAll, writeSecret } from "./lib/secrets";
+import { maskHeaders, readSecrets, redactAll, REFRESH_TOKEN_KEY, writeSecret } from "./lib/secrets";
 import { refreshViaOidc } from "./lib/refresh";
 import { reauthViaProfile } from "./lib/reauth";
-import { REFRESH_TOKEN_KEY } from "./derive";
 import { buildRequest, issue, type BuiltRequest } from "./lib/transport";
 
 export function parseParams(argv: string[]): Record<string, string> {

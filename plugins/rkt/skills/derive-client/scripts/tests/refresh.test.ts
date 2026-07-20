@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import type { HarEntry } from "../src/lib/har";
 import type { ClientManifest } from "../src/lib/manifest";
-import { detectRefresh } from "../src/lib/refresh";
+import { detectRefresh } from "../src/lib/refresh-detect";
 import { applyCredentials } from "../src/lib/transport";
 
 function post(url: string, responseBody: string, postData: string | null): HarEntry {

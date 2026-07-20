@@ -1,5 +1,7 @@
 import type { HarEntry } from "./har";
-import type { AuthSpec } from "./manifest";
+import type { AuthBundle, AuthSpec } from "./manifest-schema";
+
+export type { AuthBundle } from "./manifest-schema";
 
 export interface CredentialCandidate {
   kind: "cookie" | "bearer" | "csrf";
@@ -241,11 +243,6 @@ export function analyzeAuth(
  */
 export const BUNDLE_COVERAGE_THRESHOLD = 0.1;
 
-export interface AuthBundle {
-  credentials: AuthSpec[];
-  /** Highest observed expiry across the bundle, or null if none is known. */
-  earliestExpiry: string | null;
-}
 
 export interface BundleAnalysis {
   bundle: AuthBundle | null;

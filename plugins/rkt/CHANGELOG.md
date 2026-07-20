@@ -41,6 +41,13 @@ fix below is a defect that run exposed.
 
 ### Added
 
+- **Browser sessions are serialized, not left to the profile directory.** The
+  cookie that proves an SSO session is typically session-scoped, and browsers
+  discard those on close, so a persistent profile could look authenticated
+  while being unable to authenticate. The recorder now saves Playwright
+  `storageState` (0600, beside the credentials, since it is credential
+  material) and re-auth restores it in preference to the profile directory.
+  This is what makes the browser renewal tier actually work across processes.
 - **Credential renewal.** Access tokens on real SPAs live minutes and
   can be as short as five minutes, so a statically captured credential is dead
   long before a scheduled job fires. Recordings are scanned for an OAuth token exchange (detected by
@@ -52,6 +59,42 @@ fix below is a defect that run exposed.
   keeps a scheduled job signed in once the refresh window has also lapsed.
 - Manifests record `authBundle` and `refresh`; **`schemaVersion` is now 2**, and
   version 1 manifests are rejected rather than replayed with a dead credential.
+- **SKILL.md generate step** — Step 9 documents how to run `generate.ts`,
+  use the emitted CLI, and verify generated clients without writing credentials
+  into `rkt-clients`.
+- **Generated client no-secrets test** — `nosecrets.test.ts` structurally
+  asserts that generated client output never contains stored credential values
+  and that emitted repos gitignore secrets, recordings, and HAR files.
+- **Generated client integration test** — `generated-runs.test.ts` generates a
+  client into a temp directory, runs its CLI as a subprocess, verifies
+  `--dry-run` JSON output, and typechecks the emitted repo with `tsc --noEmit`.
+- **Client generator CLI** — `generateClient` scaffolds `rkt-clients/` with
+  repo files, copies the closed runtime set into `lib/`, and writes per-site
+  `client.json`, `types.ts`, and `cli.ts`. Runnable as
+  `bun src/generate.ts --manifest <path> --out <root>`.
+- **CLI source emission** — `emitTypes` and `emitCli` generate `types.ts` and
+  `cli.ts` from a manifest, with a data-driven command table, dry-run via
+  `maskHeaders`, credential renewal on 401, and no credential values in output.
+- **Readable command names** — `commandNames` and `typeName` derive CLI
+  subcommand and response type names from path templates instead of raw
+  endpoint ids, with deterministic collision suffixes.
+- **Type emission** — `emitType` turns recorded JSON shapes into TypeScript
+  type aliases for derived client codegen.
+
+### Changed
+
+- **Copied manifest schema** — `ParamSpec` and `JsonShape` now live in
+  `manifest-schema.ts` so the generated client's copied runtime set typechecks
+  under `tsc --noEmit` without `synthesize.ts`.
+- Split the manifest schema (`validateManifest` and its types) into
+  `lib/manifest-schema.ts` so it can be copied into a generated client without
+  dragging the derivation pipeline along. `lib/manifest.ts` re-exports it, so
+  no existing import changes.
+- **Generated runtime set** — `refresh.ts` and `reauth.ts` are now copied into
+  generated clients so emitted CLIs can renew credentials without importing
+  the derivation pipeline.
+
+
 
 ## 0.5.0 — 2026-07-20
 
