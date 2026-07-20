@@ -150,13 +150,55 @@ Report the derived endpoints to the user. If zero endpoints were derived but the
 site clearly worked, say so plainly: the likely cause is API traffic routed
 through a Service Worker, which HAR recording cannot see.
 
+## Step 7: Confirm the detected credential
+
+`derive.ts` reports what it found, for example:
+
+```
+Stored cookie credential for "alayacare" at 0600 (location: cookie:sessionid).
+Credential expires: 2026-08-01T00:00:00.000Z
+```
+
+Confirm with the user via `AskUserQuestion`:
+
+> I detected a **cookie** credential at `cookie:sessionid`. Does that look like
+> the session credential for this site?
+
+Options: `Yes, that's the session credential` / `No, pick a different one` / `Not sure, show me the candidates`.
+
+Never print the credential's value. Report only its kind, location, and expiry.
+
+## Step 8: Verify with a real call
+
+```bash
+RKT_PLUGIN_ROOT="${RKT_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-<installed-rkt-plugin-root>}}"
+SCRIPTS="${RKT_PLUGIN_ROOT}/skills/derive-client/scripts"
+MANIFEST="<recordingDir>/client.json"
+(cd "$SCRIPTS" && bun src/call.ts --manifest "$MANIFEST" --endpoint <endpoint-id> --dry-run)
+```
+
+Inspect the dry-run output with the user, then drop `--dry-run` to run it for
+real. Compare the result against what the browser showed during recording by
+**shape** (fields present, types, structure), not by exact values: live data
+changes between recording and replay.
+
+A 401 or 403 means the credential is wrong, expired, or bound to something the
+transport does not replay. Re-record rather than guessing.
+
+Only GET and HEAD endpoints can be called. Recorded writes are excluded from
+the manifest in read mode, and `call` refuses them even if one appears.
+
 ## Artifacts
 
-All under `~/.rkt-clients/`, never in the repo:
+All paths below resolve under `~/.rkt-clients/`. (`RKT_CLIENTS_ROOT` relocates
+this root during automated tests only; it is ignored outside `NODE_ENV=test`.)
 
 - `profiles/<site>/` — persistent Chrome profile (holds the login)
 - `recordings/<site>/<timestamp>/session.har.zip` — the recording
 - `recordings/<site>/<timestamp>/flows.jsonl` — replayable steps
 - `recordings/<site>/<timestamp>/client.json` — the derived manifest
+- `secrets/<site>.json` — the session credential, mode `0600`. Never commit,
+  never print, never paste into a chat or an issue. Delete this file to revoke
+  the derived client's access.
 
 Never commit these. They contain session credentials.

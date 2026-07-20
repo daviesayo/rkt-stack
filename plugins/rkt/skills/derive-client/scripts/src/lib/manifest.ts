@@ -40,6 +40,7 @@ export interface BuildManifestInput {
   groups: EndpointGroup[];
   harSha256: string;
   recordedAt: string;
+  auth?: AuthSpec | null;
 }
 
 function endpointId(method: string, pathTemplate: string): string {
@@ -93,7 +94,7 @@ export function buildManifest(input: BuildManifestInput): ClientManifest {
     harSha256,
     userAgent: first?.requestHeaders["user-agent"] ?? "",
     clientHints,
-    auth: null,
+    auth: input.auth ?? null,
     endpoints,
   };
 }

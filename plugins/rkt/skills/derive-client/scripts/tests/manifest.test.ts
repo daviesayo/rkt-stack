@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { analyzeAuth } from "../src/lib/auth";
 import type { HarEntry } from "../src/lib/har";
 import { groupEndpoints } from "../src/lib/synthesize";
 import { buildManifest, SCHEMA_VERSION, validateManifest } from "../src/lib/manifest";
@@ -117,4 +118,57 @@ test("rejects endpoint groups spanning multiple origins", () => {
       recordedAt: "2026-07-20T12:00:00.000Z",
     }),
   ).toThrow(/multiple origins/i);
+});
+
+const authedEntries: HarEntry[] = [
+  {
+    method: "GET",
+    url: "https://x.test/api/roster/4821",
+    status: 200,
+    requestHeaders: {
+      authorization: "Bearer abc.def.ghijkl",
+      "user-agent": "Mozilla/5.0 Chrome/141.0.0.0",
+    },
+    responseHeaders: {},
+    mimeType: "application/json",
+    responseBody: '{"shifts":[]}',
+    startedDateTime: "2026-07-20T12:00:00.000Z",
+  },
+];
+
+test("analyzeAuth returns a spec and the value separately", () => {
+  const { spec, value } = analyzeAuth(authedEntries);
+  expect(spec).toMatchObject({ kind: "bearer", location: "authorization" });
+  expect(value).toBe("Bearer abc.def.ghijkl");
+});
+
+test("analyzeAuth returns nulls when no credential is present", () => {
+  const { spec, value } = analyzeAuth([]);
+  expect(spec).toBeNull();
+  expect(value).toBeNull();
+});
+
+test("a manifest built from real analysis never contains the secret", () => {
+  const { spec, value } = analyzeAuth(authedEntries);
+  const m = buildManifest({
+    site: "example",
+    groups: groups(),
+    harSha256: "abc",
+    recordedAt: "2026-07-20T12:00:00.000Z",
+    auth: spec,
+  });
+  expect(m.auth).toMatchObject({ kind: "bearer", location: "authorization" });
+  expect(value).not.toBeNull();
+  expect(JSON.stringify(m)).not.toContain(value!);
+  expect(JSON.stringify(m)).not.toContain("abc.def.ghijkl");
+});
+
+test("auth remains null when the analysis found nothing", () => {
+  const m = buildManifest({
+    site: "example",
+    groups: groups(),
+    harSha256: "abc",
+    recordedAt: "2026-07-20T12:00:00.000Z",
+  });
+  expect(m.auth).toBeNull();
 });
