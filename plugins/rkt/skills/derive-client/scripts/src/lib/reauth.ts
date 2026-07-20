@@ -89,19 +89,33 @@ export async function reauthViaProfile(
     // rather than assuming the credential exists the moment the DOM is ready.
     await page.waitForLoadState("networkidle", { timeout: timeoutMs }).catch(() => {});
 
-    const cookies = await ctx.cookies();
-    const values: Record<string, string> = {};
-    for (const c of cookies) {
-      const key = `cookie:${c.name}`;
-      if (wanted.length === 0 || wanted.includes(key)) values[key] = c.value;
+    // Signing in is a redirect dance: the identity provider authenticates,
+    // hands back a code, and only then does the app exchange it for its own
+    // session cookies. Page-load events fire before that finishes, so harvest
+    // by polling for the cookies the manifest actually needs rather than
+    // trusting a single wait.
+    const wantedCookieNames = wanted.filter((w) => w.startsWith("cookie:"));
+    const deadline = Date.now() + timeoutMs;
+    let values: Record<string, string> = {};
+
+    for (;;) {
+      const cookies = await ctx.cookies();
+      values = {};
+      for (const c of cookies) {
+        const key = `cookie:${c.name}`;
+        if (wanted.length === 0 || wanted.includes(key)) values[key] = c.value;
+      }
+      const have = wantedCookieNames.filter((w) => values[w]).length;
+      if (wantedCookieNames.length === 0 || have === wantedCookieNames.length) break;
+      if (Date.now() >= deadline) break;
+      await new Promise((r) => setTimeout(r, 500));
     }
 
     // A session that has lapsed lands on a login page and yields none of the
     // cookies the manifest expects. Report that rather than returning a
     // half-populated session that will 401 confusingly.
-    const wantedCookies = wanted.filter((w) => w.startsWith("cookie:"));
-    const got = wantedCookies.filter((w) => values[w]);
-    if (wantedCookies.length > 0 && got.length === 0) return null;
+    const got = wantedCookieNames.filter((w) => values[w]);
+    if (wantedCookieNames.length > 0 && got.length === 0) return null;
 
     // Save ONLY after confirming the session authenticated. Saving before this
     // check overwrites a good stored session with a logged-out one whenever
