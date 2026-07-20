@@ -4,6 +4,9 @@
 
 ### Added
 
+- **Readable command names** — `commandNames` and `typeName` derive CLI
+  subcommand and response type names from path templates instead of raw
+  endpoint ids, with deterministic collision suffixes.
 - **Type emission** — `emitType` turns recorded JSON shapes into TypeScript
   type aliases for derived client codegen.
 

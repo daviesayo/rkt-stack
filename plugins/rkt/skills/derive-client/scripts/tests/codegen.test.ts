@@ -1,5 +1,21 @@
 import { expect, test } from "bun:test";
-import { emitType } from "../src/lib/codegen";
+import { commandNames, emitType, typeName } from "../src/lib/codegen";
+import type { ManifestEndpoint } from "../src/lib/manifest";
+
+function ep(over: Partial<ManifestEndpoint>): ManifestEndpoint {
+  return {
+    id: "get.api.roster.id",
+    method: "GET",
+    pathTemplate: "/api/roster/{id}",
+    params: [],
+    responseShape: { type: "unknown" },
+    source: "xhr",
+    fragile: false,
+    selectors: null,
+    writeSemantics: null,
+    ...over,
+  };
+}
 
 test("emits an interface for a flat object", () => {
   const src = emitType(
@@ -80,4 +96,35 @@ test("a top-level array emits an array type", () => {
     "Items",
   );
   expect(src.startsWith("export type Items = Array<{")).toBe(true);
+});
+
+test("names a GET command from its path, dropping param segments", () => {
+  const names = commandNames([ep({})]);
+  expect(names.get("get.api.roster.id")).toBe("api-roster");
+});
+
+test("includes the method for non-GET endpoints", () => {
+  const names = commandNames([
+    ep({ id: "head.api.roster.id", method: "HEAD" }),
+  ]);
+  expect(names.get("head.api.roster.id")).toBe("head-api-roster");
+});
+
+test("disambiguates colliding names deterministically", () => {
+  const names = commandNames([
+    ep({ id: "get.api.roster.id", pathTemplate: "/api/roster/{id}" }),
+    ep({ id: "get.api.roster.week", pathTemplate: "/api/roster/{week}" }),
+  ]);
+  expect(names.get("get.api.roster.id")).toBe("api-roster");
+  expect(names.get("get.api.roster.week")).toBe("api-roster-2");
+});
+
+test("a path of only params falls back to the method", () => {
+  const names = commandNames([ep({ id: "get.id", pathTemplate: "/{id}" })]);
+  expect(names.get("get.id")).toBe("get");
+});
+
+test("typeName converts a command to PascalCase with a Response suffix", () => {
+  expect(typeName("api-roster")).toBe("ApiRosterResponse");
+  expect(typeName("api-roster-2")).toBe("ApiRoster2Response");
 });
