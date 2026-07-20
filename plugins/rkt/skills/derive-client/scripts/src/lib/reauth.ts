@@ -89,9 +89,6 @@ export async function reauthViaProfile(
     // rather than assuming the credential exists the moment the DOM is ready.
     await page.waitForLoadState("networkidle", { timeout: timeoutMs }).catch(() => {});
 
-    // Re-save the refreshed session so the next run starts from current state.
-    await ctx.storageState({ path: storageStateFile(site) }).catch(() => {});
-
     const cookies = await ctx.cookies();
     const values: Record<string, string> = {};
     for (const c of cookies) {
@@ -99,12 +96,18 @@ export async function reauthViaProfile(
       if (wanted.length === 0 || wanted.includes(key)) values[key] = c.value;
     }
 
-    // A profile whose SSO session has lapsed lands on a login page and yields
-    // none of the cookies the manifest expects. Report that rather than
-    // returning a half-populated session that will 401 confusingly.
+    // A session that has lapsed lands on a login page and yields none of the
+    // cookies the manifest expects. Report that rather than returning a
+    // half-populated session that will 401 confusingly.
     const wantedCookies = wanted.filter((w) => w.startsWith("cookie:"));
     const got = wantedCookies.filter((w) => values[w]);
     if (wantedCookies.length > 0 && got.length === 0) return null;
+
+    // Save ONLY after confirming the session authenticated. Saving before this
+    // check overwrites a good stored session with a logged-out one whenever
+    // re-auth fails, so a single transient failure would destroy the saved
+    // session permanently and no later attempt could recover.
+    await ctx.storageState({ path: storageStateFile(site) }).catch(() => {});
 
     return { values };
   } catch {

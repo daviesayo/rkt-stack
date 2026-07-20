@@ -52,6 +52,9 @@ fix below is a defect that run exposed.
   while being unable to authenticate. The recorder now saves Playwright
   `storageState` (0600, beside the credentials, since it is credential
   material) and re-auth restores it in preference to the profile directory.
+  The session is saved only after re-auth is confirmed to have authenticated,
+  so a failed attempt cannot overwrite a good stored session with a
+  logged-out one.
   This is what makes the browser renewal tier actually work across processes.
 - **Credential renewal.** Access tokens on real SPAs live minutes and
   can be as short as five minutes, so a statically captured credential is dead
