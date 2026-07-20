@@ -51,13 +51,41 @@ export async function readSecret(site: string): Promise<string | null> {
  * Callers must redact BEFORE truncating: redacting after a slice can emit a
  * partial secret that no longer matches.
  */
+const REDACTED = "[REDACTED]";
+
 export function redact(text: string, secret: string | null): string {
   if (!secret || secret.length === 0) return text;
 
   const bare = secret.replace(/^bearer\s+/i, "");
-  let out = text.split(secret).join("[REDACTED]");
+  let out = text.split(secret).join(REDACTED);
   if (bare !== secret && bare.length > 0) {
-    out = out.split(bare).join("[REDACTED]");
+    out = out.split(bare).join(REDACTED);
+  }
+  return out;
+}
+
+/**
+ * Return a copy of headers with credential values replaced before serialization.
+ * Masks at the value level so JSON.stringify escaping cannot hide the secret.
+ */
+export function maskHeaders(
+  headers: Record<string, string>,
+  secret: string | null,
+): Record<string, string> {
+  if (!secret || secret.length === 0) return { ...headers };
+
+  const bare = secret.replace(/^bearer\s+/i, "");
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(headers)) {
+    if (value === secret) {
+      out[key] = REDACTED;
+    } else if (value.includes(secret)) {
+      out[key] = value.split(secret).join(REDACTED);
+    } else if (bare !== secret && bare.length > 0 && value.includes(bare)) {
+      out[key] = value.split(bare).join(REDACTED);
+    } else {
+      out[key] = value;
+    }
   }
   return out;
 }

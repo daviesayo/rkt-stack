@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { chmod, mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readSecret, redact, writeSecret } from "../src/lib/secrets";
+import { readSecret, redact, maskHeaders, writeSecret } from "../src/lib/secrets";
 
 let testRoot: string;
 const ORIGINAL_ROOT = process.env.RKT_CLIENTS_ROOT;
@@ -73,4 +73,13 @@ test("redact also masks the bare token inside a scheme-prefixed value", () => {
     "Authorization: [REDACTED]",
   );
   expect(redact("raw abc.def leaked", "Bearer abc.def")).toBe("raw [REDACTED] leaked");
+});
+
+test("maskHeaders redacts cookie values before JSON escaping can hide them", () => {
+  const secret = 'va"lue\\tail';
+  const masked = maskHeaders({ cookie: `sessionid=${secret}` }, secret);
+  expect(masked.cookie).toBe("sessionid=[REDACTED]");
+  const serialized = JSON.stringify(masked, null, 2);
+  expect(serialized).not.toContain(secret);
+  expect(serialized).toContain("[REDACTED]");
 });

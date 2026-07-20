@@ -8,6 +8,25 @@ export interface BuiltRequest {
 
 const READ_METHODS = new Set(["GET", "HEAD"]);
 
+function assertSecureTransport(baseUrl: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(baseUrl);
+  } catch {
+    throw new Error(`invalid baseUrl: ${JSON.stringify(baseUrl)}`);
+  }
+  const loopback =
+    parsed.hostname === "localhost" ||
+    parsed.hostname === "127.0.0.1" ||
+    parsed.hostname === "[::1]";
+  if (parsed.protocol !== "https:" && !loopback) {
+    throw new Error(
+      `refusing to send credentials over ${parsed.protocol}//${parsed.hostname}: ` +
+        `use https or a loopback http origin`,
+    );
+  }
+}
+
 export function buildRequest(
   manifest: ClientManifest,
   endpoint: ManifestEndpoint,
@@ -46,6 +65,7 @@ export function buildRequest(
 
   const auth = manifest.auth;
   if (auth && secret) {
+    assertSecureTransport(manifest.baseUrl);
     if (auth.kind === "cookie") {
       const name = auth.location.startsWith("cookie:")
         ? auth.location.slice("cookie:".length)

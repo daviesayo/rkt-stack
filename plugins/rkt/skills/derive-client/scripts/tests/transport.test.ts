@@ -17,11 +17,14 @@ const endpoint: ManifestEndpoint = {
   writeSemantics: null,
 };
 
-function manifest(auth: ClientManifest["auth"]): ClientManifest {
+function manifest(
+  auth: ClientManifest["auth"],
+  baseUrl = "https://x.test",
+): ClientManifest {
   return {
     schemaVersion: 1,
     site: "example",
-    baseUrl: "https://x.test",
+    baseUrl,
     recordedAt: "2026-07-20T12:00:00.000Z",
     harSha256: "abc",
     userAgent: "Mozilla/5.0 Chrome/141.0.0.0",
@@ -94,6 +97,33 @@ test("refuses to build a request for a non-read method", () => {
   expect(() => buildRequest(manifest(null), writeEndpoint, { id: "1" }, null)).toThrow(
     /GET and HEAD only/i,
   );
+});
+
+test("refuses http baseUrl when credentials are attached", () => {
+  expect(() =>
+    buildRequest(
+      manifest(
+        { kind: "bearer", location: "authorization", mintedBy: null, expiry: null },
+        "http://api.example.test",
+      ),
+      endpoint,
+      { id: "1" },
+      "Bearer s3cr3tvalue",
+    ),
+  ).toThrow(/refusing to send credentials over http/i);
+});
+
+test("allows http loopback when credentials are attached", () => {
+  const built = buildRequest(
+    manifest(
+      { kind: "bearer", location: "authorization", mintedBy: null, expiry: null },
+      "http://localhost:3000",
+    ),
+    endpoint,
+    { id: "1" },
+    "Bearer s3cr3tvalue",
+  );
+  expect(built.url).toBe("http://localhost:3000/api/roster/1");
 });
 
 test("issue refuses non-GET/HEAD before calling fetch", async () => {

@@ -9,8 +9,8 @@ import { resolve } from "node:path";
 import { validateManifest } from "./lib/manifest";
 import { assertUnderRktRoot } from "./lib/paths";
 import { createLimiter } from "./lib/ratelimit";
-import { readSecret, redact } from "./lib/secrets";
-import { buildRequest, issue } from "./lib/transport";
+import { maskHeaders, readSecret, redact } from "./lib/secrets";
+import { buildRequest, issue, type BuiltRequest } from "./lib/transport";
 
 export function parseParams(argv: string[]): Record<string, string> {
   const out: Record<string, string> = {};
@@ -22,6 +22,15 @@ export function parseParams(argv: string[]): Record<string, string> {
     out[pair.slice(0, eq)] = pair.slice(eq + 1);
   }
   return out;
+}
+
+export function formatDryRunPreview(built: BuiltRequest, secret: string | null): string {
+  const preview = {
+    method: built.method,
+    url: built.url,
+    headers: maskHeaders(built.headers, secret),
+  };
+  return JSON.stringify(preview, null, 2);
 }
 
 function arg(name: string): string | undefined {
@@ -77,8 +86,7 @@ async function main() {
   const built = buildRequest(manifest, endpoint, parseParams(process.argv), secret);
 
   if (process.argv.includes("--dry-run")) {
-    const preview = { method: built.method, url: built.url, headers: built.headers };
-    console.log(redact(JSON.stringify(preview, null, 2), secret));
+    console.log(formatDryRunPreview(built, secret));
     return;
   }
 
@@ -90,7 +98,7 @@ async function main() {
     console.error(redact(body, secret).slice(0, 2000));
     process.exit(1);
   }
-  console.log(body);
+  console.log(redact(body, secret));
 }
 
 if (import.meta.main) {
