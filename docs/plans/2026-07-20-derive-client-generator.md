@@ -1099,12 +1099,47 @@ if [[ ! -f "$SCRIPTS/tests/nosecrets.test.ts" ]]; then
 fi
 ```
 
-- [ ] **Step 4: Verify the wrapper passes**
+- [ ] **Step 4: Fix the fresh-clone failure**
+
+Plan 2 added `bunx tsc --noEmit` to this wrapper, which needs `@types/bun` from
+`node_modules`. The wrapper skips cleanly when `bun` is absent but not when
+dependencies are merely uninstalled, so on a fresh clone the suite **fails**
+with `TS2688: Cannot find type definition file for 'bun'` rather than skipping
+or self-healing. Verified on this repo: a checkout without
+`scripts/node_modules` fails, and `bun install` fixes it.
+
+Install dependencies before the typecheck, replacing the bare
+`( cd "$SCRIPTS" && bunx tsc --noEmit )` line:
+
+```bash
+# The typecheck needs @types/bun; a fresh checkout has no node_modules yet.
+( cd "$SCRIPTS" && bun install --silent ) || {
+  echo "derive-client: bun install failed, skipping typecheck and unit tests" >&2
+  echo "OK (skipped: dependencies unavailable)"
+  exit 0
+}
+
+( cd "$SCRIPTS" && bunx tsc --noEmit )
+```
+
+Verify the fix actually addresses the reported case:
+
+```bash
+mv plugins/rkt/skills/derive-client/scripts/node_modules /tmp/rkt-nm-backup
+bash tests/test-derive-client.sh
+```
+
+Expected: PASS. The wrapper reinstalls dependencies and proceeds, rather than
+failing on the missing type definitions. (If the machine is offline, it prints
+the skip message and exits 0.) Restore afterwards if the reinstall did not
+already recreate it: `mv /tmp/rkt-nm-backup plugins/rkt/skills/derive-client/scripts/node_modules 2>/dev/null || true`
+
+- [ ] **Step 5: Verify the wrapper passes**
 
 Run: `bash tests/test-derive-client.sh`
 Expected: PASS, ending `OK`.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add plugins/rkt/skills/derive-client/scripts/tests/nosecrets.test.ts tests/test-derive-client.sh
