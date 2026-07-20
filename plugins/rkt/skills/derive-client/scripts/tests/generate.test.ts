@@ -95,3 +95,22 @@ test("refuses a manifest with an unsupported schema version", async () => {
   await writeFile(bad, JSON.stringify({ ...MANIFEST, schemaVersion: 99 }));
   await expect(generateClient(bad, join(workRoot, "clients-f"))).rejects.toThrow(/schema version/i);
 });
+
+test("refuses a manifest whose site contains path separators", async () => {
+  const bad = join(workRoot, "bad-site.json");
+  await writeFile(bad, JSON.stringify({ ...MANIFEST, site: "../escape" }));
+  await expect(generateClient(bad, join(workRoot, "clients-g"))).rejects.toThrow(/path segment/i);
+});
+
+test("generated client typechecks with tsc --noEmit", async () => {
+  const out = join(workRoot, "clients-tsc");
+  await generateClient(manifestPath, out);
+
+  const install = Bun.spawn(["bun", "install"], { cwd: out, stdout: "pipe", stderr: "pipe" });
+  expect(await install.exited).toBe(0);
+
+  const tsc = Bun.spawn(["bunx", "tsc", "--noEmit"], { cwd: out, stdout: "pipe", stderr: "pipe" });
+  const stderr = await new Response(tsc.stderr).text();
+  expect(await tsc.exited).toBe(0);
+  if (stderr) expect(stderr).not.toMatch(/error TS/i);
+});

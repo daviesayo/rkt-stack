@@ -17,8 +17,7 @@ export interface GeneratedFiles {
 /**
  * Runtime modules copied into the generated repo.
  *
- * This set is closed ONLY because Task 1 split the schema out of manifest.ts:
- * manifest-schema.ts imports `./synthesize` type-only (erased at runtime),
+ * manifest-schema.ts is self-contained (ParamSpec and JsonShape live there).
  * transport.ts imports manifest-schema type-only, secrets.ts imports paths.ts.
  * Copying manifest.ts instead would drag in synthesize.ts and har.ts, i.e. the
  * whole derivation pipeline, for one function.

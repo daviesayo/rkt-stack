@@ -1,6 +1,15 @@
-import type { JsonShape, ParamSpec } from "./synthesize";
-
 export const SCHEMA_VERSION = 1;
+
+export interface ParamSpec {
+  name: string;
+  in: "path" | "query";
+  type: "string" | "number";
+}
+
+export type JsonShape =
+  | { type: "object"; properties: Record<string, JsonShape>; required: string[] }
+  | { type: "array"; items: JsonShape }
+  | { type: "string" | "number" | "boolean" | "null" | "unknown" };
 
 export interface AuthSpec {
   kind: "cookie" | "bearer" | "csrf";
@@ -49,6 +58,9 @@ export function validateManifest(value: unknown): ClientManifest {
   }
   if (typeof m.site !== "string" || m.site.length === 0) {
     throw new Error("manifest must have a site");
+  }
+  if (m.site.includes("..") || /[/\\]/.test(m.site)) {
+    throw new Error(`manifest site must be a single path segment, got ${JSON.stringify(m.site)}`);
   }
   return m as ClientManifest;
 }

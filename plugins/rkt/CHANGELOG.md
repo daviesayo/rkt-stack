@@ -19,6 +19,9 @@
 
 ### Changed
 
+- **Copied manifest schema** — `ParamSpec` and `JsonShape` now live in
+  `manifest-schema.ts` so the generated client's copied runtime set typechecks
+  under `tsc --noEmit` without `synthesize.ts`.
 - Split the manifest schema (`validateManifest` and its types) into
   `lib/manifest-schema.ts` so it can be copied into a generated client without
   dragging the derivation pipeline along. `lib/manifest.ts` re-exports it, so

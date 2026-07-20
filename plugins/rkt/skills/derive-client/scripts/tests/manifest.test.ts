@@ -192,11 +192,19 @@ test("manifest re-exports the schema half, so existing imports keep working", as
 
 test("manifest-schema has no runtime import outside the copyable set", async () => {
   const src = await Bun.file(`${import.meta.dir}/../src/lib/manifest-schema.ts`).text();
-  // Every import must be type-only, or resolve to a file in the copied set.
+  // Self-contained: no imports. If imports are added, every runtime import must
+  // resolve to a file in the copied set.
   const imports = [...src.matchAll(/^import\s+(type\s+)?.*?from\s+"([^"]+)";$/gm)];
-  expect(imports.length).toBeGreaterThan(0);
   for (const [, typeOnly, from] of imports) {
     if (typeOnly) continue;
     expect(["./paths", "./secrets", "./ratelimit"]).toContain(from);
+  }
+});
+
+test("validateManifest rejects a site with path separators or ..", () => {
+  for (const site of ["../evil", "foo/bar", "foo\\bar", ".."]) {
+    expect(() =>
+      validateManifest({ schemaVersion: 1, site, endpoints: [] }),
+    ).toThrow(/single path segment/i);
   }
 });
