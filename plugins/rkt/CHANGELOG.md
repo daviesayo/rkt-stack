@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- Split the manifest schema (`validateManifest` and its types) into
+  `lib/manifest-schema.ts` so it can be copied into a generated client without
+  dragging the derivation pipeline along. `lib/manifest.ts` re-exports it, so
+  no existing import changes.
+
 ## 0.5.0 — 2026-07-20
 
 Adds authentication analysis and a `call` subcommand to `/derive-client`.

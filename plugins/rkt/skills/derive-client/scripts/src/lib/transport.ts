@@ -1,4 +1,4 @@
-import type { ClientManifest, ManifestEndpoint } from "./manifest";
+import type { ClientManifest, ManifestEndpoint } from "./manifest-schema";
 
 export interface BuiltRequest {
   url: string;
