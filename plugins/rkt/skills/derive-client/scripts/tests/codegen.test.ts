@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { commandNames, emitType, typeName } from "../src/lib/codegen";
-import type { ManifestEndpoint } from "../src/lib/manifest";
+import { commandNames, emitCli, emitType, emitTypes, typeName } from "../src/lib/codegen";
+import type { ClientManifest, ManifestEndpoint } from "../src/lib/manifest";
 
 function ep(over: Partial<ManifestEndpoint>): ManifestEndpoint {
   return {
@@ -133,4 +133,68 @@ test("a path of only params falls back to the method", () => {
 test("typeName converts a command to PascalCase with a Response suffix", () => {
   expect(typeName("api-roster")).toBe("ApiRosterResponse");
   expect(typeName("api-roster-2")).toBe("ApiRoster2Response");
+});
+
+const manifest: ClientManifest = {
+  schemaVersion: 1,
+  site: "example",
+  baseUrl: "https://x.test",
+  recordedAt: "2026-07-20T12:00:00.000Z",
+  harSha256: "deadbeef",
+  userAgent: "Mozilla/5.0 Chrome/141.0.0.0",
+  clientHints: {},
+  auth: { kind: "cookie", location: "cookie:sessionid", mintedBy: null, expiry: null },
+  endpoints: [
+    ep({
+      id: "get.api.roster.id",
+      params: [
+        { name: "id", in: "path", type: "number" },
+        { name: "week", in: "query", type: "string" },
+      ],
+      responseShape: {
+        type: "object",
+        properties: { shifts: { type: "array", items: { type: "unknown" } } },
+        required: ["shifts"],
+      },
+    }),
+  ],
+};
+
+test("emitTypes declares one exported type per endpoint", () => {
+  const src = emitTypes(manifest);
+  expect(src).toContain("export type ApiRosterResponse = {");
+  expect(src).toContain("shifts: Array<unknown>;");
+});
+
+test("emitTypes marks the file as generated", () => {
+  expect(emitTypes(manifest)).toMatch(/generated/i);
+});
+
+test("emitCli records the manifest hash it was generated from", () => {
+  expect(emitCli(manifest)).toContain("deadbeef");
+});
+
+test("emitCli emits a subcommand per endpoint with its params", () => {
+  const src = emitCli(manifest);
+  expect(src).toContain('"api-roster"');
+  expect(src).toContain('"id"');
+  expect(src).toContain('"week"');
+});
+
+test("emitCli imports the shared runtime from the sibling lib", () => {
+  const src = emitCli(manifest);
+  expect(src).toContain('from "../lib/transport"');
+  expect(src).toContain('from "../lib/secrets"');
+});
+
+test("emitCli contains no credential value", () => {
+  expect(emitCli(manifest)).not.toContain("sessionid=");
+});
+
+test("emitCli throws on a write-method endpoint", () => {
+  const bad: ClientManifest = {
+    ...manifest,
+    endpoints: [ep({ id: "delete.api.shift.id", method: "DELETE" })],
+  };
+  expect(() => emitCli(bad)).toThrow(/GET and HEAD only/i);
 });

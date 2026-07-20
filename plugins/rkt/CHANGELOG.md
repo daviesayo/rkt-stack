@@ -4,6 +4,9 @@
 
 ### Added
 
+- **CLI source emission** — `emitTypes` and `emitCli` generate `types.ts` and
+  `cli.ts` from a manifest, with a data-driven command table, dry-run via
+  `maskHeaders`, and no credential values in output.
 - **Readable command names** — `commandNames` and `typeName` derive CLI
   subcommand and response type names from path templates instead of raw
   endpoint ids, with deterministic collision suffixes.
