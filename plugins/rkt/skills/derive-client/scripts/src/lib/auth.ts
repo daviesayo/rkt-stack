@@ -95,3 +95,48 @@ export function detectCredentials(entries: HarEntry[]): CredentialCandidate[] {
     .map(([location, v]) => ({ kind: v.kind, location, coverage: v.count / total, value: v.value }))
     .sort((a, b) => b.coverage - a.coverage);
 }
+
+/**
+ * Find the response that produced this credential. Returns null when the
+ * credential was already present when recording began, which is normal for a
+ * profile authenticated in an earlier session.
+ */
+export function traceMintPoint(
+  candidate: CredentialCandidate,
+  entries: HarEntry[],
+): string | null {
+  const secret = candidate.kind === "bearer"
+    ? candidate.value.replace(/^bearer\s+/i, "")
+    : candidate.value;
+  if (secret.length === 0) return null;
+
+  const cookieName = candidate.location.startsWith("cookie:")
+    ? candidate.location.slice("cookie:".length)
+    : null;
+
+  for (const e of entries) {
+    if (cookieName) {
+      const setCookie = e.responseHeaders["set-cookie"];
+      if (setCookie) {
+        const pattern = new RegExp(
+          `(^|[,;\\s])${escapeRegExp(cookieName)}=${escapeRegExp(secret)}(;|,|\\s|$)`,
+        );
+        if (pattern.test(setCookie)) return e.url;
+      }
+    }
+    // Substring matching is only safe for values long enough to be unlikely
+    // to occur incidentally in an unrelated response body.
+    if (
+      secret.length >= MIN_SECRET_LENGTH &&
+      e.responseBody &&
+      e.responseBody.includes(secret)
+    ) {
+      return e.url;
+    }
+  }
+  return null;
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}

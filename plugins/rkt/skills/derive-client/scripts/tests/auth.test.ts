@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { HarEntry } from "../src/lib/har";
-import { detectCredentials } from "../src/lib/auth";
+import { detectCredentials, traceMintPoint } from "../src/lib/auth";
 
 function entry(requestHeaders: Record<string, string>, url = "https://x.test/api/a"): HarEntry {
   return {
@@ -83,4 +83,80 @@ test("results are sorted by coverage descending", () => {
 
 test("returns nothing when no credential material is present", () => {
   expect(detectCredentials([entry({ accept: "application/json" })])).toHaveLength(0);
+});
+
+function respEntry(
+  url: string,
+  responseHeaders: Record<string, string>,
+  responseBody: string | null = null,
+): HarEntry {
+  return {
+    method: "POST",
+    url,
+    status: 200,
+    requestHeaders: {},
+    responseHeaders,
+    mimeType: "application/json",
+    responseBody,
+    startedDateTime: "2026-07-20T12:00:00.000Z",
+  };
+}
+
+test("traces a cookie to the response that set it", () => {
+  const candidate = {
+    kind: "cookie" as const,
+    location: "cookie:sessionid",
+    coverage: 1,
+    value: "s3cr3tvalue",
+  };
+  const mint = traceMintPoint(candidate, [
+    respEntry("https://x.test/login", { "set-cookie": "sessionid=s3cr3tvalue; Path=/; HttpOnly" }),
+    entry({ cookie: "sessionid=s3cr3tvalue" }),
+  ]);
+  expect(mint).toBe("https://x.test/login");
+});
+
+test("traces a bearer token to the response body that returned it", () => {
+  const candidate = {
+    kind: "bearer" as const,
+    location: "authorization",
+    coverage: 1,
+    value: "Bearer abc.def.ghi",
+  };
+  const mint = traceMintPoint(candidate, [
+    respEntry("https://x.test/oauth/token", {}, '{"access_token":"abc.def.ghi","token_type":"Bearer"}'),
+    entry({ authorization: "Bearer abc.def.ghi" }),
+  ]);
+  expect(mint).toBe("https://x.test/oauth/token");
+});
+
+test("returns null when the credential predates the recording", () => {
+  const candidate = {
+    kind: "bearer" as const,
+    location: "authorization",
+    coverage: 1,
+    value: "Bearer abc.def.ghi",
+  };
+  expect(traceMintPoint(candidate, [entry({ authorization: "Bearer abc.def.ghi" })])).toBeNull();
+});
+
+test("matches a set-cookie with attributes and surrounding cookies", () => {
+  const candidate = {
+    kind: "cookie" as const,
+    location: "cookie:sid",
+    coverage: 1,
+    value: "xyzxyzxyz",
+  };
+  const mint = traceMintPoint(candidate, [
+    respEntry("https://x.test/auth", { "set-cookie": "other=1, sid=xyzxyzxyz; Secure; SameSite=Lax" }),
+  ]);
+  expect(mint).toBe("https://x.test/auth");
+});
+
+test("does not body-match a secret shorter than the safety floor", () => {
+  const candidate = { kind: "cookie" as const, location: "cookie:sid", coverage: 1, value: "abc" };
+  const mint = traceMintPoint(candidate, [
+    respEntry("https://x.test/unrelated", {}, "the alphabet starts abc and continues"),
+  ]);
+  expect(mint).toBeNull();
 });
