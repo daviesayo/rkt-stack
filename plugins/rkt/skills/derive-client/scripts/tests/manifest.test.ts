@@ -103,3 +103,18 @@ test("validateManifest rejects an unknown schema version", () => {
 test("validateManifest rejects a manifest with no endpoints array", () => {
   expect(() => validateManifest({ schemaVersion: 1, site: "x" })).toThrow(/endpoints/i);
 });
+
+test("rejects endpoint groups spanning multiple origins", () => {
+  const groups = groupEndpoints([
+    entry("https://example.test/api/me", "{}"),
+    entry("https://api.example.test/api/me", "{}"),
+  ]);
+  expect(() =>
+    buildManifest({
+      site: "example",
+      groups,
+      harSha256: "abc",
+      recordedAt: "2026-07-20T12:00:00.000Z",
+    }),
+  ).toThrow(/multiple origins/i);
+});

@@ -1,11 +1,22 @@
 import { expect, test } from "bun:test";
+import { copyFile, mkdir } from "node:fs/promises";
 import { deriveManifest } from "../src/derive";
+import { recordingDir } from "../src/lib/paths";
+
+let stagingCounter = 0;
+
+async function stageFixture(name: string): Promise<string> {
+  const ts = `test${++stagingCounter}${Date.now()}`;
+  const dir = recordingDir("derive-test", ts);
+  await mkdir(dir, { recursive: true });
+  const dest = `${dir}/session.har`;
+  await copyFile(`${import.meta.dir}/fixtures/${name}`, dest);
+  return dest;
+}
 
 test("derives a manifest end to end from the fixture HAR", async () => {
-  const { manifest, dropped } = await deriveManifest(
-    `${import.meta.dir}/fixtures/sample.har`,
-    "example",
-  );
+  const har = await stageFixture("sample.har");
+  const { manifest, dropped } = await deriveManifest(har, "example");
 
   expect(manifest.schemaVersion).toBe(1);
   expect(manifest.site).toBe("example");
@@ -19,25 +30,32 @@ test("derives a manifest end to end from the fixture HAR", async () => {
 });
 
 test("pins the user agent observed in the recording", async () => {
-  const { manifest } = await deriveManifest(`${import.meta.dir}/fixtures/sample.har`, "example");
+  const har = await stageFixture("sample.har");
+  const { manifest } = await deriveManifest(har, "example");
   expect(manifest.userAgent).toBe("Mozilla/5.0 Chrome/141.0.0.0");
 });
 
 test("computes a content hash of the HAR", async () => {
-  const { manifest } = await deriveManifest(`${import.meta.dir}/fixtures/sample.har`, "example");
+  const har = await stageFixture("sample.har");
+  const { manifest } = await deriveManifest(har, "example");
   expect(manifest.harSha256).toMatch(/^[0-9a-f]{64}$/);
 });
 
 test("the derived manifest passes its own validator", async () => {
-  const { manifest } = await deriveManifest(`${import.meta.dir}/fixtures/sample.har`, "example");
+  const har = await stageFixture("sample.har");
+  const { manifest } = await deriveManifest(har, "example");
   const { validateManifest } = await import("../src/lib/manifest");
   expect(() => validateManifest(JSON.parse(JSON.stringify(manifest)))).not.toThrow();
 });
 
 test("a HAR with no data traffic yields zero endpoints, not a crash", async () => {
-  const { manifest } = await deriveManifest(
-    `${import.meta.dir}/fixtures/assets-only.har`,
-    "example",
-  );
+  const har = await stageFixture("assets-only.har");
+  const { manifest } = await deriveManifest(har, "example");
   expect(manifest.endpoints).toHaveLength(0);
+});
+
+test("rejects a HAR outside ~/.rkt-clients", async () => {
+  await expect(
+    deriveManifest(`${import.meta.dir}/fixtures/sample.har`, "example"),
+  ).rejects.toThrow(/must be under/);
 });

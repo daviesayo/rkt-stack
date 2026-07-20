@@ -5,21 +5,23 @@
  */
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 import { filterEntries, type DropRecord } from "./lib/filter";
 import { readHar } from "./lib/har";
 import { buildManifest, type ClientManifest } from "./lib/manifest";
+import { assertUnderRktRoot } from "./lib/paths";
 import { groupEndpoints } from "./lib/synthesize";
 
 export async function deriveManifest(
   harPath: string,
   site: string,
 ): Promise<{ manifest: ClientManifest; dropped: DropRecord[] }> {
-  const entries = await readHar(harPath);
+  const absHar = assertUnderRktRoot(resolve(harPath));
+  const entries = await readHar(absHar);
   const { kept, dropped } = filterEntries(entries);
   const groups = groupEndpoints(kept);
 
-  const harSha256 = createHash("sha256").update(await readFile(harPath)).digest("hex");
+  const harSha256 = createHash("sha256").update(await readFile(absHar)).digest("hex");
   const recordedAt = entries[0]?.startedDateTime ?? new Date().toISOString();
 
   return { manifest: buildManifest({ site, groups, harSha256, recordedAt }), dropped };
@@ -38,8 +40,9 @@ async function main() {
     process.exit(1);
   }
 
-  const { manifest, dropped } = await deriveManifest(har, site);
-  const outPath = `${dirname(har)}/client.json`;
+  const absHar = assertUnderRktRoot(resolve(har));
+  const { manifest, dropped } = await deriveManifest(absHar, site);
+  const outPath = `${dirname(absHar)}/client.json`;
   await writeFile(outPath, `${JSON.stringify(manifest, null, 2)}\n`);
 
   console.error(`Derived ${manifest.endpoints.length} endpoint(s) -> ${outPath}`);

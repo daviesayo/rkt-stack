@@ -1,7 +1,18 @@
 import { homedir } from "node:os";
+import { resolve } from "node:path";
 
 export function rktRoot(): string {
   return `${homedir()}/.rkt-clients`;
+}
+
+/** Resolve `path` absolutely and fail unless it is under `rktRoot()`. */
+export function assertUnderRktRoot(path: string): string {
+  const abs = resolve(path);
+  const root = rktRoot();
+  if (abs !== root && !abs.startsWith(`${root}/`)) {
+    throw new Error(`path must be under ${root}: ${path}`);
+  }
+  return abs;
 }
 
 export function sanitizeSite(site: string): string {

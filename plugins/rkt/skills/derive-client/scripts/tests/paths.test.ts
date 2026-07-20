@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { homedir } from "node:os";
 import {
+  assertUnderRktRoot,
   profileDir,
   recordingDir,
   rktRoot,
@@ -36,4 +37,13 @@ test("sanitizeSite strips path traversal and unsafe characters", () => {
 
 test("sanitizeSite rejects input that reduces to nothing", () => {
   expect(() => sanitizeSite("../..")).toThrow(/invalid site/i);
+});
+
+test("assertUnderRktRoot accepts paths under rktRoot", () => {
+  const inside = `${rktRoot()}/recordings/example/20260720T120000Z/session.har.zip`;
+  expect(assertUnderRktRoot(inside)).toBe(inside);
+});
+
+test("assertUnderRktRoot rejects paths outside rktRoot", () => {
+  expect(() => assertUnderRktRoot("/tmp/session.har.zip")).toThrow(/must be under/);
 });

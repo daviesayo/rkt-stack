@@ -53,6 +53,13 @@ function endpointId(method: string, pathTemplate: string): string {
 
 export function buildManifest(input: BuildManifestInput): ClientManifest {
   const { site, groups, harSha256, recordedAt } = input;
+  const origins = new Set(groups.map((g) => g.origin));
+  if (origins.size > 1) {
+    const listed = [...origins].sort().join(", ");
+    throw new Error(
+      `recording spans multiple origins (${listed}); re-record against a single API host`,
+    );
+  }
   const first = groups[0]?.samples[0];
 
   const endpoints: ManifestEndpoint[] = groups.map((g) => {

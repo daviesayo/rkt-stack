@@ -4,7 +4,7 @@
  *
  * Usage: bun src/record.ts --site <site>
  *
- * Every executed command is appended to flows.json so the repair path can
+ * Every executed command is appended to flows.jsonl so the repair path can
  * replay the session later.
  */
 import { appendFile, mkdir, writeFile } from "node:fs/promises";
@@ -34,69 +34,72 @@ async function main() {
   await mkdir(outDir, { recursive: true });
 
   const release = await acquireLock(site);
-  const flowsPath = `${outDir}/flows.json`;
-  await writeFile(flowsPath, "");
-
-  const context = await chromium.launchPersistentContext(profileDir(site), {
-    channel: "chrome",
-    headless: false,
-    serviceWorkers: "block",
-    recordHar: {
-      path: `${outDir}/session.har.zip`,
-      content: "attach",
-      mode: "full",
-    },
-  });
-
-  const page = context.pages()[0] ?? (await context.newPage());
-  respond({ ok: true, event: "ready", recordingDir: outDir });
-
   try {
-    for await (const line of console) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
+    const flowsPath = `${outDir}/flows.jsonl`;
+    await writeFile(flowsPath, "", { mode: 0o600 });
 
-      let command;
-      try {
-        command = parseCommand(trimmed);
-      } catch (err) {
-        respond({ ok: false, error: (err as Error).message });
-        continue;
-      }
+    const context = await chromium.launchPersistentContext(profileDir(site), {
+      channel: "chrome",
+      headless: false,
+      serviceWorkers: "block",
+      recordHar: {
+        path: `${outDir}/session.har.zip`,
+        content: "attach",
+        mode: "full",
+      },
+    });
 
-      if (command.kind === "done") break;
+    const page = context.pages()[0] ?? (await context.newPage());
+    respond({ ok: true, event: "ready", recordingDir: outDir });
 
-      try {
-        switch (command.kind) {
-          case "goto":
-            await page.goto(command.url, { waitUntil: "domcontentloaded" });
-            break;
-          case "click":
-            await page.click(command.selector);
-            break;
-          case "fill":
-            await page.fill(command.selector, command.value);
-            break;
-          case "wait":
-            await page.waitForTimeout(command.ms);
-            break;
-          case "snapshot":
-            break;
+    try {
+      for await (const line of console) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+
+        let command;
+        try {
+          command = parseCommand(trimmed);
+        } catch (err) {
+          respond({ ok: false, error: (err as Error).message });
+          continue;
         }
 
-        // Human-shaped pacing between actions.
-        await page.waitForTimeout(400 + Math.floor(Math.random() * 900));
-        await appendFile(flowsPath, `${JSON.stringify(command)}\n`);
-        respond({ ok: true, url: page.url(), title: await page.title() });
-      } catch (err) {
-        respond({ ok: false, error: (err as Error).message, url: page.url() });
+        if (command.kind === "done") break;
+
+        try {
+          switch (command.kind) {
+            case "goto":
+              await page.goto(command.url, { waitUntil: "domcontentloaded" });
+              break;
+            case "click":
+              await page.click(command.selector);
+              break;
+            case "fill":
+              await page.fill(command.selector, command.value);
+              break;
+            case "wait":
+              await page.waitForTimeout(command.ms);
+              break;
+            case "snapshot":
+              break;
+          }
+
+          // Human-shaped pacing between actions.
+          await page.waitForTimeout(400 + Math.floor(Math.random() * 900));
+          await appendFile(flowsPath, `${JSON.stringify(command)}\n`);
+          respond({ ok: true, url: page.url(), title: await page.title() });
+        } catch (err) {
+          respond({ ok: false, error: (err as Error).message, url: page.url() });
+        }
       }
+    } finally {
+      // The HAR is only written on close, so this must always run.
+      await context.close();
+      respond({ ok: true, event: "closed", recordingDir: outDir });
     }
   } finally {
-    // The HAR is only written on close, so this must always run.
-    await context.close();
     await release();
-    respond({ ok: true, event: "closed", recordingDir: outDir });
   }
 }
 
