@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { ClientManifest, ManifestEndpoint } from "../src/lib/manifest";
-import { buildRequest } from "../src/lib/transport";
+import { buildRequest, issue } from "../src/lib/transport";
 
 const endpoint: ManifestEndpoint = {
   id: "get.api.roster.id",
@@ -94,4 +94,25 @@ test("refuses to build a request for a non-read method", () => {
   expect(() => buildRequest(manifest(null), writeEndpoint, { id: "1" }, null)).toThrow(
     /GET and HEAD only/i,
   );
+});
+
+test("issue refuses non-GET/HEAD before calling fetch", async () => {
+  const originalFetch = globalThis.fetch;
+  let fetchCalled = false;
+  globalThis.fetch = (() => {
+    fetchCalled = true;
+    throw new Error("fetch should not be called");
+  }) as typeof fetch;
+
+  try {
+    const built = {
+      url: "https://x.test/api/roster/1",
+      method: "POST",
+      headers: { accept: "application/json" },
+    };
+    await expect(issue(built, (fn) => fn())).rejects.toThrow(/GET and HEAD only/i);
+    expect(fetchCalled).toBe(false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

@@ -63,6 +63,12 @@ export async function issue(
   built: BuiltRequest,
   limit: <T>(fn: () => Promise<T>) => Promise<T>,
 ): Promise<{ status: number; body: string }> {
+  if (!READ_METHODS.has(built.method.toUpperCase())) {
+    throw new Error(
+      `refusing ${built.method} ${built.url}: read mode issues GET and HEAD only`,
+    );
+  }
+
   return limit(async () => {
     const res = await fetch(built.url, { method: built.method, headers: built.headers });
     return { status: res.status, body: await res.text() };
