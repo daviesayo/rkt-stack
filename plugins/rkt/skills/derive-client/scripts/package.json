@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "fflate": "0.8.2",
     "playwright": "1.56.0"
   },
   "devDependencies": {
