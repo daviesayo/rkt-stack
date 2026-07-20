@@ -1,6 +1,17 @@
 import { access } from "node:fs/promises";
 import { profileDir, storageStateFile } from "./paths";
 
+/** Distinguishes "cannot try" from "tried and the session is dead". */
+export class ReauthUnavailableError extends Error {
+  constructor() {
+    super(
+      "browser re-auth needs playwright, which is not installed here. " +
+        "Run 'bun install' in this client's directory to enable it.",
+    );
+    this.name = "ReauthUnavailableError";
+  }
+}
+
 export interface HarvestedSession {
   /** location -> value, in the same keying the secrets file uses. */
   values: Record<string, string>;
@@ -59,7 +70,9 @@ export async function reauthViaProfile(
   timeoutMs = 45_000,
 ): Promise<HarvestedSession | null> {
   const chromium = await loadChromium();
-  if (!chromium) return null;
+  // Missing tooling is not an expired session. Reporting them the same way
+  // sends the user off to re-authenticate a session that is perfectly valid.
+  if (!chromium) throw new ReauthUnavailableError();
 
   let context: ReauthContext | null = null;
   let browser: ReauthBrowser | null = null;

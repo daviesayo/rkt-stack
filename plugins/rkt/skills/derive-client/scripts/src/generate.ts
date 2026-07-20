@@ -59,6 +59,9 @@ const PACKAGE_JSON = `{
   "name": "rkt-clients",
   "private": true,
   "type": "module",
+  "dependencies": {
+    "playwright": "1.56.0"
+  },
   "devDependencies": {
     "@types/bun": "latest",
     "typescript": "5.9.2"

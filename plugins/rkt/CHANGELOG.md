@@ -54,7 +54,13 @@ fix below is a defect that run exposed.
   material) and re-auth restores it in preference to the profile directory.
   The session is saved only after re-auth is confirmed to have authenticated,
   so a failed attempt cannot overwrite a good stored session with a
-  logged-out one.
+  logged-out one, and re-auth polls for the cookies the manifest requires
+  rather than harvesting the moment a page reports idle, since the SSO
+  redirect exchange completes after load events fire.
+- **Generated clients declare `playwright`.** Without it the browser renewal
+  tier silently disabled itself and reported an expired session, sending the
+  user to re-authenticate a session that was perfectly valid. Missing tooling
+  and a dead session are now reported differently.
   This is what makes the browser renewal tier actually work across processes.
 - **Credential renewal.** Access tokens on real SPAs live minutes and
   can be as short as five minutes, so a statically captured credential is dead

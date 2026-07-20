@@ -132,7 +132,13 @@ async function main() {
         manifest.refresh?.kind === "browser" ? manifest.refresh.entryUrl : `${manifest.baseUrl}/`;
       const wanted = (manifest.authBundle?.credentials ?? []).map((c) => c.location);
       console.error("re-authenticating with the recorded browser profile...");
-      const harvested = await reauthViaProfile(manifest.site, entryUrl, wanted);
+      let harvested = null;
+      try {
+        harvested = await reauthViaProfile(manifest.site, entryUrl, wanted);
+      } catch (err) {
+        // A missing dependency is not an expired session; say which it is.
+        console.error((err as Error).message);
+      }
       if (harvested) {
         renewedValues = { ...secret, ...harvested.values };
       } else {
