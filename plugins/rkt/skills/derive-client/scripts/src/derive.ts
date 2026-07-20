@@ -6,25 +6,36 @@
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import { analyzeAuth } from "./lib/auth";
 import { filterEntries, type DropRecord } from "./lib/filter";
 import { readHar } from "./lib/har";
 import { buildManifest, type ClientManifest } from "./lib/manifest";
 import { assertUnderRktRoot } from "./lib/paths";
+import { writeSecret } from "./lib/secrets";
 import { groupEndpoints } from "./lib/synthesize";
 
 export async function deriveManifest(
   harPath: string,
   site: string,
-): Promise<{ manifest: ClientManifest; dropped: DropRecord[] }> {
+): Promise<{ manifest: ClientManifest; dropped: DropRecord[]; secret: string | null }> {
   const absHar = assertUnderRktRoot(resolve(harPath));
   const entries = await readHar(absHar);
   const { kept, dropped } = filterEntries(entries);
   const groups = groupEndpoints(kept);
 
+  // Auth analysis runs over ALL entries, not the filtered set: the login
+  // response that mints a credential is itself a write, and is therefore
+  // dropped by the read-mode filter.
+  const { spec, value } = analyzeAuth(entries);
+
   const harSha256 = createHash("sha256").update(await readFile(absHar)).digest("hex");
   const recordedAt = entries[0]?.startedDateTime ?? new Date().toISOString();
 
-  return { manifest: buildManifest({ site, groups, harSha256, recordedAt }), dropped };
+  return {
+    manifest: buildManifest({ site, groups, harSha256, recordedAt, auth: spec }),
+    dropped,
+    secret: value,
+  };
 }
 
 function arg(name: string): string | undefined {
@@ -41,9 +52,25 @@ async function main() {
   }
 
   const absHar = assertUnderRktRoot(resolve(har));
-  const { manifest, dropped } = await deriveManifest(absHar, site);
+  const { manifest, dropped, secret } = await deriveManifest(absHar, site);
   const outPath = `${dirname(absHar)}/client.json`;
   await writeFile(outPath, `${JSON.stringify(manifest, null, 2)}\n`);
+
+  if (secret) {
+    await writeSecret(site, secret);
+    console.error(
+      `Stored ${manifest.auth?.kind} credential for "${site}" at 0600 ` +
+        `(location: ${manifest.auth?.location}).`,
+    );
+    if (manifest.auth?.expiry) {
+      console.error(`Credential expires: ${manifest.auth.expiry}`);
+    }
+  } else {
+    console.error(
+      "No credential detected. If this site needs auth, the recording may have " +
+        "missed the authenticated requests.",
+    );
+  }
 
   console.error(`Derived ${manifest.endpoints.length} endpoint(s) -> ${outPath}`);
   console.error(`Filtered out ${dropped.length} request(s).`);

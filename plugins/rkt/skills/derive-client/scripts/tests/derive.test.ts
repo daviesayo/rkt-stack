@@ -74,3 +74,27 @@ test("rejects a HAR outside ~/.rkt-clients", async () => {
     deriveManifest(`${import.meta.dir}/fixtures/sample.har`, "example"),
   ).rejects.toThrow(/must be under/);
 });
+
+test("derives auth and returns the secret separately from the manifest", async () => {
+  const har = await stageFixture("authed.har");
+  const { manifest, secret } = await deriveManifest(har, "authtest");
+
+  expect(manifest.auth).toMatchObject({ kind: "cookie", location: "cookie:sessionid" });
+  expect(secret).toBe("SUPERSECRETVALUE");
+  expect(JSON.stringify(manifest)).not.toContain("SUPERSECRETVALUE");
+});
+
+test("auth analysis sees the login response even though the filter drops it", async () => {
+  const har = await stageFixture("authed.har");
+  const { manifest } = await deriveManifest(har, "authtest");
+  // POST /login is dropped from endpoints but must still be traced as the mint point.
+  expect(manifest.auth?.mintedBy).toBe("https://auth.test/login");
+  expect(manifest.endpoints.every((e) => e.method === "GET")).toBe(true);
+});
+
+test("the recorded DELETE never becomes an endpoint in read mode", async () => {
+  const har = await stageFixture("authed.har");
+  const { manifest, dropped } = await deriveManifest(har, "authtest");
+  expect(manifest.endpoints.some((e) => e.method === "DELETE")).toBe(false);
+  expect(dropped.some((d) => /write method/i.test(d.reason))).toBe(true);
+});
