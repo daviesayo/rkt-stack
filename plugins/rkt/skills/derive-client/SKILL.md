@@ -45,6 +45,7 @@ own account, decline and explain why.
 ## Step 1: Check the toolchain
 
 ```bash
+RKT_PLUGIN_ROOT="${RKT_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-<installed-rkt-plugin-root>}}"
 SCRIPTS="${RKT_PLUGIN_ROOT}/skills/derive-client/scripts"
 command -v bun >/dev/null || { echo "bun is required: https://bun.sh"; exit 1; }
 (cd "$SCRIPTS" && bun install)
@@ -52,18 +53,27 @@ command -v bun >/dev/null || { echo "bun is required: https://bun.sh"; exit 1; }
 
 ## Step 2: Start the recorder
 
-The recorder owns the browser and reads commands as JSON lines on stdin. Start
-it in the background with a named pipe so you can issue commands as the crawl
-proceeds:
+Pick a **site slug** once (lowercase, e.g. `alayacare`) and reuse the exact same
+`SITE=...` value in every command below. Each bash snippet is self-contained;
+shell variables and file descriptors do not carry over between tool calls.
+
+The recorder owns the browser and reads commands as JSON lines from a named pipe.
+Paths are pinned under `~/.rkt-clients/run/<site>/` so later steps can find them:
 
 ```bash
+RKT_PLUGIN_ROOT="${RKT_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-<installed-rkt-plugin-root>}}"
+SCRIPTS="${RKT_PLUGIN_ROOT}/skills/derive-client/scripts"
 SITE=<site-slug>
-PIPE=$(mktemp -u); mkfifo "$PIPE"
-(cd "$SCRIPTS" && bun src/record.ts --site "$SITE" < "$PIPE" > /tmp/rkt-record-$SITE.log) &
-exec 3>"$PIPE"
+RUN="${HOME}/.rkt-clients/run/${SITE}"
+PIPE="${RUN}/commands.fifo"
+LOG="${RUN}/record.log"
+mkdir -p "$RUN"
+[[ -p "$PIPE" ]] || mkfifo "$PIPE"
+(cd "$SCRIPTS" && bun src/record.ts --site "$SITE" < "$PIPE") >"$LOG" 2>&1 &
+disown
 ```
 
-Chrome opens visibly. Watch `/tmp/rkt-record-$SITE.log` for the `ready` event.
+Chrome opens visibly. Watch `"$LOG"` for the `ready` event before sending commands.
 
 ## Step 3: Have the user sign in
 
@@ -71,7 +81,9 @@ The profile starts empty, so **the first recording of any site requires a fresh
 sign-in**. Navigate to the login page:
 
 ```bash
-echo '{"kind":"goto","url":"https://<site>/login"}' >&3
+SITE=<site-slug>
+PIPE="${HOME}/.rkt-clients/run/${SITE}/commands.fifo"
+echo '{"kind":"goto","url":"https://<site>/login"}' > "$PIPE"
 ```
 
 Then tell the user: "Chrome is open. Please sign in, and tell me when you're
@@ -89,16 +101,28 @@ sections to derive, listing what you found.
 ## Step 5: Exercise the chosen sections
 
 For each chosen section, issue `goto`, `click`, and `fill` commands to walk
-list views, pagination, filters, and at least one detail view. The recorder
-paces itself between actions; do not add your own tight loops.
+list views, pagination, filters, and at least one detail view. Write each command
+to the pipe by path (one command per bash call):
+
+```bash
+SITE=<site-slug>
+PIPE="${HOME}/.rkt-clients/run/${SITE}/commands.fifo"
+echo '{"kind":"goto","url":"https://<site>/section"}' > "$PIPE"
+```
+
+The recorder paces itself between actions; do not add your own tight loops.
 
 ## Step 6: Close and derive
 
 ```bash
-echo '{"kind":"done"}' >&3
-exec 3>&-
-wait
-HAR=$(ls -td ~/.rkt-clients/recordings/$SITE/*/ | head -1)session.har.zip
+RKT_PLUGIN_ROOT="${RKT_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-<installed-rkt-plugin-root>}}"
+SCRIPTS="${RKT_PLUGIN_ROOT}/skills/derive-client/scripts"
+SITE=<site-slug>
+PIPE="${HOME}/.rkt-clients/run/${SITE}/commands.fifo"
+echo '{"kind":"done"}' > "$PIPE"
+LOCK="${HOME}/.rkt-clients/profiles/${SITE}/.rkt-lock"
+for _ in $(seq 1 60); do [[ ! -f "$LOCK" ]] && break; sleep 1; done
+HAR=$(ls -t "${HOME}/.rkt-clients/recordings/${SITE}"/*/session.har.zip 2>/dev/null | head -1)
 (cd "$SCRIPTS" && bun src/derive.ts --site "$SITE" --har "$HAR")
 ```
 
@@ -112,7 +136,7 @@ All under `~/.rkt-clients/`, never in the repo:
 
 - `profiles/<site>/` — persistent Chrome profile (holds the login)
 - `recordings/<site>/<timestamp>/session.har.zip` — the recording
-- `recordings/<site>/<timestamp>/flows.json` — replayable steps
+- `recordings/<site>/<timestamp>/flows.jsonl` — replayable steps
 - `recordings/<site>/<timestamp>/client.json` — the derived manifest
 
 Never commit these. They contain session credentials.

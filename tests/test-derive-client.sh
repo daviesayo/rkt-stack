@@ -32,14 +32,17 @@ grep -q 'RKT_PLUGIN_ROOT' "$SKILL/SKILL.md" || {
   exit 1
 }
 
-for required in "serviceWorkers" "content" "mode"; do
-  grep -q "$required" "$SCRIPTS/src/record.ts" || {
-    echo "record.ts must set recordHar/$required explicitly" >&2
-    exit 1
-  }
-done
+grep -Eq 'serviceWorkers:\s*["'\'']block["'\'']' "$SCRIPTS/src/record.ts" || {
+  echo "recordHar.serviceWorkers must be 'block' or Service Worker traffic is invisible" >&2
+  exit 1
+}
 
-grep -q "'full'" "$SCRIPTS/src/record.ts" || grep -q '"full"' "$SCRIPTS/src/record.ts" || {
+grep -Eq 'content:\s*["'\'']attach["'\'']' "$SCRIPTS/src/record.ts" || {
+  echo "recordHar.content must be 'attach' or response bodies are missing" >&2
+  exit 1
+}
+
+grep -Eq 'mode:\s*["'\'']full["'\'']' "$SCRIPTS/src/record.ts" || {
   echo "recordHar.mode must be 'full' or the auth pass loses cookies" >&2
   exit 1
 }
