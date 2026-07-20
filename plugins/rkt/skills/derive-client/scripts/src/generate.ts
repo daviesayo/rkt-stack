@@ -48,6 +48,9 @@ node_modules/
 # HAR files carry full session cookies wherever they land.
 *.har
 *.har.zip
+
+# Serialized browser sessions (Playwright storageState) are credential material.
+*.storage-state.json
 `;
 
 // devDependencies are required: tsconfig sets types: ["bun"], so a repo
