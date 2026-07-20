@@ -4,6 +4,9 @@
 
 ### Added
 
+- **Generated client integration test** — `generated-runs.test.ts` generates a
+  client into a temp directory, runs its CLI as a subprocess, verifies
+  `--dry-run` JSON output, and typechecks the emitted repo with `tsc --noEmit`.
 - **Client generator CLI** — `generateClient` scaffolds `rkt-clients/` with
   repo files, copies the closed runtime set into `lib/`, and writes per-site
   `client.json`, `types.ts`, and `cli.ts`. Runnable as
