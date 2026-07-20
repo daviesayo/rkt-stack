@@ -1,6 +1,11 @@
 # Changelog
 
-## [Unreleased]
+## 0.6.0 — 2026-07-20
+
+Completes `derive-client`: record a logged-in session, derive a manifest, and
+generate a standalone typed CLI for the site's internal API. Includes the
+production hardening pass (auth bundles, credential renewal, storageState
+re-auth) that made real-site derivation work.
 
 Hardening pass driven by the first run against a real production site. Every
 fix below is a defect that run exposed.
@@ -93,6 +98,9 @@ fix below is a defect that run exposed.
 - **Generated runtime set** — `refresh.ts` and `reauth.ts` are now copied into
   generated clients so emitted CLIs can renew credentials without importing
   the derivation pipeline.
+- **Generated `.gitignore`** — also ignores `*.storage-state.json`, since the
+  recorder writes Playwright `storageState` beside credentials and a copy
+  must never land in `rkt-clients`.
 
 
 
