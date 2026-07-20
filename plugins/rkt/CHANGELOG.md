@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.4.0 — 2026-07-20
+
+Adds `derive-client`: record a logged-in browser session and derive a typed
+client manifest for a site's internal API.
+
+### Added
+
+- **`/derive-client` skill** — records a HAR from the user's real Chrome via a
+  persistent profile, then derives a validated `client.json` endpoint manifest.
+  Read-only in this release: auth analysis, code generation, repair, and write
+  mode follow in later releases.
+- **Bun/TypeScript workspace** at `skills/derive-client/scripts/` with a pinned
+  Playwright dependency. First non-bash runtime in the plugin, scoped to this
+  skill; `tests/test-derive-client.sh` skips rather than fails when bun is absent.
+
+### Notes
+
+- Recording requires a fresh sign-in the first time any site is recorded: the
+  Playwright profile is separate from the user's day-to-day Chrome profile,
+  which Chrome 136+ blocks from automation.
+- Sites that route API traffic through a Service Worker will record empty.
+  The recorder sets `serviceWorkers: 'block'` to prevent this where possible.
+
 ## 0.3.8 — 2026-07-02
 
 Bakes spawn discipline and Linear PR-title hygiene into the agent definitions.

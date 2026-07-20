@@ -22,6 +22,28 @@ if grep -R "$HOME_PATH_PATTERN" "$SKILL" >/dev/null 2>&1; then
   exit 1
 fi
 
+grep -q 'AskUserQuestion' "$SKILL/SKILL.md" || {
+  echo "derive-client must use AskUserQuestion for prompts" >&2
+  exit 1
+}
+
+grep -q 'RKT_PLUGIN_ROOT' "$SKILL/SKILL.md" || {
+  echo "derive-client should document plugin-root resolution" >&2
+  exit 1
+}
+
+for required in "serviceWorkers" "content" "mode"; do
+  grep -q "$required" "$SCRIPTS/src/record.ts" || {
+    echo "record.ts must set recordHar/$required explicitly" >&2
+    exit 1
+  }
+done
+
+grep -q "'full'" "$SCRIPTS/src/record.ts" || grep -q '"full"' "$SCRIPTS/src/record.ts" || {
+  echo "recordHar.mode must be 'full' or the auth pass loses cookies" >&2
+  exit 1
+}
+
 if ! command -v bun >/dev/null 2>&1; then
   echo "derive-client: bun not installed, skipping unit tests" >&2
   echo "OK (skipped unit tests)"
