@@ -60,13 +60,23 @@ if [[ ! -f "$SCRIPTS/tests/leak.test.ts" ]]; then
   exit 1
 fi
 
+if [[ ! -f "$SCRIPTS/tests/nosecrets.test.ts" ]]; then
+  echo "missing structural no-secrets test for generated clients" >&2
+  exit 1
+fi
+
 if ! command -v bun >/dev/null 2>&1; then
   echo "derive-client: bun not installed, skipping unit tests" >&2
   echo "OK (skipped unit tests)"
   exit 0
 fi
 
-( cd "$SCRIPTS" && bunx tsc --noEmit )
+if [[ -d "$SCRIPTS/node_modules" ]]; then
+  ( cd "$SCRIPTS" && bunx tsc --noEmit )
+else
+  echo "derive-client: node_modules absent, skipping typecheck" >&2
+  echo "derive-client: run 'cd $SCRIPTS && bun install' to enable it" >&2
+fi
 
 ( cd "$SCRIPTS" && bun test )
 

@@ -4,6 +4,9 @@
 
 ### Added
 
+- **Generated client no-secrets test** — `nosecrets.test.ts` structurally
+  asserts that generated client output never contains stored credential values
+  and that emitted repos gitignore secrets, recordings, and HAR files.
 - **Generated client integration test** — `generated-runs.test.ts` generates a
   client into a temp directory, runs its CLI as a subprocess, verifies
   `--dry-run` JSON output, and typechecks the emitted repo with `tsc --noEmit`.
