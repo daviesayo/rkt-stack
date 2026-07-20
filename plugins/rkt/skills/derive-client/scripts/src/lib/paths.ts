@@ -1,8 +1,25 @@
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 
+/**
+ * Root for all runtime artifacts.
+ *
+ * RKT_CLIENTS_ROOT exists so tests can redirect the whole filesystem surface
+ * to a temp directory. It is honored ONLY under NODE_ENV=test, which Bun sets
+ * during `bun test`. Production must never be able to move this root: it is
+ * both the confinement boundary enforced by assertUnderRktRoot and the
+ * location of 0600 credential files.
+ */
 export function rktRoot(): string {
+  if (process.env.NODE_ENV === "test") {
+    const override = process.env.RKT_CLIENTS_ROOT;
+    if (override && override.length > 0) return resolve(override);
+  }
   return `${homedir()}/.rkt-clients`;
+}
+
+export function secretsDir(): string {
+  return `${rktRoot()}/secrets`;
 }
 
 /** Resolve `path` absolutely and fail unless it is under `rktRoot()`. */

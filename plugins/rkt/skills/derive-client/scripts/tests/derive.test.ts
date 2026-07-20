@@ -1,20 +1,28 @@
-import { afterAll, expect, test } from "bun:test";
-import { copyFile, mkdir, rm } from "node:fs/promises";
+import { afterAll, beforeAll, expect, test } from "bun:test";
+import { copyFile, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { deriveManifest } from "../src/derive";
-import { recordingDir, rktRoot } from "../src/lib/paths";
+import { recordingDir } from "../src/lib/paths";
 
-const TEST_SITE = "derive-test";
-
+let testRoot: string;
+const ORIGINAL_ROOT = process.env.RKT_CLIENTS_ROOT;
 let stagingCounter = 0;
 
+beforeAll(async () => {
+  testRoot = await mkdtemp(join(tmpdir(), "rkt-derive-"));
+  process.env.RKT_CLIENTS_ROOT = testRoot;
+});
+
 afterAll(async () => {
-  await rm(`${rktRoot()}/recordings/${TEST_SITE}`, { recursive: true, force: true });
-  await rm(`${rktRoot()}/profiles/${TEST_SITE}`, { recursive: true, force: true });
+  if (ORIGINAL_ROOT === undefined) delete process.env.RKT_CLIENTS_ROOT;
+  else process.env.RKT_CLIENTS_ROOT = ORIGINAL_ROOT;
+  await rm(testRoot, { recursive: true, force: true });
 });
 
 async function stageFixture(name: string): Promise<string> {
-  const ts = `test${++stagingCounter}${Date.now()}`;
-  const dir = recordingDir(TEST_SITE, ts);
+  const ts = `test${++stagingCounter}`;
+  const dir = recordingDir("derive-test", ts);
   await mkdir(dir, { recursive: true });
   const dest = `${dir}/session.har`;
   await copyFile(`${import.meta.dir}/fixtures/${name}`, dest);
