@@ -4,6 +4,10 @@
 
 ### Added
 
+- **Client generator CLI** — `generateClient` scaffolds `rkt-clients/` with
+  repo files, copies the closed runtime set into `lib/`, and writes per-site
+  `client.json`, `types.ts`, and `cli.ts`. Runnable as
+  `bun src/generate.ts --manifest <path> --out <root>`.
 - **CLI source emission** — `emitTypes` and `emitCli` generate `types.ts` and
   `cli.ts` from a manifest, with a data-driven command table, dry-run via
   `maskHeaders`, and no credential values in output.
