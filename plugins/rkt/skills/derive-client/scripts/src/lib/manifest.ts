@@ -1,7 +1,15 @@
+import type { AuthBundle } from "./auth";
+import type { RefreshSpec } from "./refresh";
 import type { EndpointGroup, JsonShape, ParamSpec } from "./synthesize";
 import { inferShape } from "./synthesize";
 
-export const SCHEMA_VERSION = 1;
+/**
+ * 2: auth became a bundle (sites need several credentials at once) and gained
+ *    a refresh spec. Version 1 manifests are rejected: their single static
+ *    credential produces a client that 401s on any site with short-lived
+ *    tokens, so failing loudly beats replaying a dead credential.
+ */
+export const SCHEMA_VERSION = 2;
 
 export interface AuthSpec {
   kind: "cookie" | "bearer" | "csrf";
@@ -32,6 +40,10 @@ export interface ClientManifest {
   userAgent: string;
   clientHints: Record<string, string>;
   auth: AuthSpec | null;
+  /** Every credential the API requires. Preferred over `auth`. */
+  authBundle: AuthBundle | null;
+  /** How to renew credentials when they go stale. */
+  refresh: RefreshSpec | null;
   endpoints: ManifestEndpoint[];
 }
 
@@ -41,6 +53,8 @@ export interface BuildManifestInput {
   harSha256: string;
   recordedAt: string;
   auth?: AuthSpec | null;
+  authBundle?: AuthBundle | null;
+  refresh?: RefreshSpec | null;
 }
 
 function endpointId(method: string, pathTemplate: string): string {
@@ -54,13 +68,17 @@ function endpointId(method: string, pathTemplate: string): string {
 
 export function buildManifest(input: BuildManifestInput): ClientManifest {
   const { site, groups, harSha256, recordedAt } = input;
+  // Origin selection happens in derive.ts before grouping, so by here every
+  // group shares one origin. Kept as an assertion rather than the old
+  // hard-fail, which made any multi-origin SPA underivable.
   const origins = new Set(groups.map((g) => g.origin));
   if (origins.size > 1) {
-    const listed = [...origins].sort().join(", ");
     throw new Error(
-      `recording spans multiple origins (${listed}); Plan 1 supports one API origin per manifest — record a narrower section or wait for origin-qualified endpoint ids (Plan 2)`,
+      `internal: buildManifest received ${origins.size} origins (${[...origins].sort().join(", ")}); ` +
+        `derive.ts must select a primary origin before grouping`,
     );
   }
+
   const first = groups[0]?.samples[0];
 
   const endpoints: ManifestEndpoint[] = groups.map((g) => {
@@ -95,6 +113,8 @@ export function buildManifest(input: BuildManifestInput): ClientManifest {
     userAgent: first?.requestHeaders["user-agent"] ?? "",
     clientHints,
     auth: input.auth ?? null,
+    authBundle: input.authBundle ?? null,
+    refresh: input.refresh ?? null,
     endpoints,
   };
 }

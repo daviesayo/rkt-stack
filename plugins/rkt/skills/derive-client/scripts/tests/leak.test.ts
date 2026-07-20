@@ -30,8 +30,8 @@ async function stage(): Promise<string> {
 }
 
 test("the serialized manifest contains no part of the credential", async () => {
-  const { manifest, secret } = await deriveManifest(await stage(), "leaktest");
-  expect(secret).toBe(SECRET);
+  const { manifest, secrets } = await deriveManifest(await stage(), "leaktest");
+  expect(Object.values(secrets)).toContain(SECRET);
 
   const serialized = JSON.stringify(manifest);
   expect(serialized).not.toContain(SECRET);
@@ -46,8 +46,8 @@ test("the manifest records where the credential lives, not what it is", async ()
 });
 
 test("the secret lands only in the secrets file", async () => {
-  const { secret } = await deriveManifest(await stage(), "leaktest");
-  await writeSecret("leaktest", secret!);
+  const { secrets } = await deriveManifest(await stage(), "leaktest");
+  await writeSecret("leaktest", Object.values(secrets)[0]!);
   const stored = await readFile(secretsFile("leaktest"), "utf8");
   expect(stored).toContain(SECRET);
 });

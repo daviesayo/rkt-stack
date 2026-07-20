@@ -4,6 +4,10 @@ export interface ParamSpec {
   name: string;
   in: "path" | "query";
   type: "string" | "number";
+  /** Present on every recorded sample, so the API almost certainly demands it. */
+  required?: boolean;
+  /** A value observed during recording, used as a default so calls work as-is. */
+  example?: string;
 }
 
 export interface EndpointGroup {
@@ -84,6 +88,8 @@ export function groupEndpoints(entries: HarEntry[]): EndpointGroup[] {
         name: match[1],
         in: "path",
         type: inferType(actualSegments.map((a) => a[i])),
+        required: true,
+        example: actualSegments[0]?.[i],
       });
     });
 
@@ -95,7 +101,16 @@ export function groupEndpoints(entries: HarEntry[]): EndpointGroup[] {
       }
     }
     for (const [name, values] of queryValues) {
-      params.push({ name, in: "query", type: inferType(values) });
+      params.push({
+        name,
+        in: "query",
+        type: inferType(values),
+        // Seen on every sample means the endpoint refuses without it. Carrying
+        // an observed value lets a caller invoke the endpoint without having to
+        // reverse-engineer its required arguments.
+        required: values.length === urls.length,
+        example: values[0],
+      });
     }
 
     groups.push({

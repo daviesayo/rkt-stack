@@ -7,7 +7,7 @@
  * Every executed command is appended to flows.jsonl so the repair path can
  * replay the session later.
  */
-import { appendFile, mkdir, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { chromium } from "playwright";
 import { acquireLock } from "./lib/lock";
 import { profileDir, recordingDir, sanitizeSite } from "./lib/paths";
@@ -51,13 +51,40 @@ async function main() {
     });
 
     const page = context.pages()[0] ?? (await context.newPage());
-    respond({ ok: true, event: "ready", site: sanitizedSite, recordingDir: outDir });
+  respond({
+    ok: true,
+    event: "ready",
+    site: sanitizedSite,
+    recordingDir: outDir,
+    commandFile: arg("commands") ?? null,
+  });
+
+    // Command source. A named pipe was the original design, but opening a FIFO
+    // for read blocks until a writer appears, and every agent Bash call is a
+    // separate shell, so the writer never persisted and the recorder appeared
+    // to hang with an empty log. A polled append-only file has no such
+    // semantics and survives across calls.
+    const commandFile = arg("commands");
+    async function* commandLines(): AsyncGenerator<string> {
+      if (!commandFile) {
+        for await (const line of console) yield line;
+        return;
+      }
+      await writeFile(commandFile, "", { flag: "a" });
+      let consumed = 0;
+      for (;;) {
+        const all = (await readFile(commandFile, "utf8")).split("\n").filter((l) => l.trim());
+        while (consumed < all.length) yield all[consumed++];
+        await new Promise((r) => setTimeout(r, 250));
+      }
+    }
 
     try {
-      for await (const line of console) {
+      for await (const line of commandLines()) {
         const trimmed = line.trim();
         if (!trimmed) continue;
 
+        let snapshot: unknown = null;
         let command;
         try {
           command = parseCommand(trimmed);
@@ -82,14 +109,37 @@ async function main() {
             case "wait":
               await page.waitForTimeout(command.ms);
               break;
-            case "snapshot":
+            case "snapshot": {
+              // Previously a no-op, which made the skill's "map the site" step
+              // impossible: with no way to see the page, the agent fell back to
+              // asking the user to paste URLs by hand.
+              snapshot = await page.evaluate(() => {
+                const seen = new Set<string>();
+                const links = Array.from(document.querySelectorAll("a[href]"))
+                  .map((a) => ({
+                    text: (a.textContent || "").trim().replace(/\s+/g, " ").slice(0, 80),
+                    href: (a as HTMLAnchorElement).href,
+                  }))
+                  .filter((l) => {
+                    if (!l.text || !l.href.startsWith("http") || seen.has(l.href)) return false;
+                    seen.add(l.href);
+                    return true;
+                  })
+                  .slice(0, 120);
+                const headings = Array.from(document.querySelectorAll("h1,h2"))
+                  .map((h) => (h.textContent || "").trim().replace(/\s+/g, " ").slice(0, 80))
+                  .filter(Boolean)
+                  .slice(0, 20);
+                return { headings, links };
+              });
               break;
+            }
           }
 
           // Human-shaped pacing between actions.
           await page.waitForTimeout(400 + Math.floor(Math.random() * 900));
           await appendFile(flowsPath, `${JSON.stringify(command)}\n`);
-          respond({ ok: true, url: page.url(), title: await page.title() });
+          respond({ ok: true, url: page.url(), title: await page.title(), ...(snapshot ? { snapshot } : {}) });
         } catch (err) {
           respond({ ok: false, error: (err as Error).message, url: page.url() });
         }

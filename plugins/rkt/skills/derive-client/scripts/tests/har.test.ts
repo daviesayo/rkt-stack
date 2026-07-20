@@ -15,10 +15,10 @@ test("normalizes headers to a lowercased map", async () => {
 test("exposes method, url, status, mimeType and body", async () => {
   const [first] = await readHar(`${import.meta.dir}/fixtures/sample.har`);
   expect(first.method).toBe("GET");
-  expect(first.url).toBe("https://example.test/api/v2/roster/4821?week=2026-W30");
+  expect(first.url).toBe("https://example.test/api/v2/items/4821?week=2026-W30");
   expect(first.status).toBe(200);
   expect(first.mimeType).toBe("application/json");
-  expect(first.responseBody).toBe('{"shifts":[{"id":1,"client":"A"}]}');
+  expect(first.responseBody).toBe('{"results":[{"id":1,"client":"A"}]}');
 });
 
 test("throws a clear error on a malformed HAR", async () => {

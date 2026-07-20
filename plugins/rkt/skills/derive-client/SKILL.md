@@ -54,12 +54,15 @@ command -v bun >/dev/null || { echo "bun is required: https://bun.sh"; exit 1; }
 ## Step 2: Start the recorder
 
 Pick a **site slug** once (lowercase letters, digits, and hyphens only — e.g.
-`alayacare` or `alaya-care`; dots and other punctuation are rejected) and reuse
+`example-app`; dots and other punctuation are rejected) and reuse
 the exact same `SITE=...` value in every command below. Each bash snippet is
 self-contained; shell variables and file descriptors do not carry over between
 tool calls.
 
-The recorder owns the browser and reads commands as JSON lines from a named pipe.
+The recorder owns the browser and reads commands as JSON lines appended to a
+plain file. It is deliberately **not** a named pipe: opening a FIFO for read
+blocks until a writer appears, and because every bash call is a separate shell
+the writer never persisted, so the recorder appeared to hang with an empty log.
 Paths are pinned under `~/.rkt-clients/run/<site>/` so later steps can find them:
 
 ```bash
@@ -68,11 +71,11 @@ SCRIPTS="${RKT_PLUGIN_ROOT}/skills/derive-client/scripts"
 SITE=<site-slug>
 [[ "$SITE" =~ ^[a-z0-9-]+$ ]] || { echo "site slug must be lowercase letters, digits, hyphens only"; exit 1; }
 RUN="${HOME}/.rkt-clients/run/${SITE}"
-PIPE="${RUN}/commands.fifo"
+CMDS="${RUN}/commands.jsonl"
 LOG="${RUN}/record.log"
 mkdir -p "$RUN"
-[[ -p "$PIPE" ]] || mkfifo "$PIPE"
-(cd "$SCRIPTS" && bun src/record.ts --site "$SITE" < "$PIPE") >"$LOG" 2>&1 &
+: > "$CMDS"   # append-only command file; NOT a fifo (see note below)
+(cd "$SCRIPTS" && bun src/record.ts --site "$SITE" --commands "$CMDS") >"$LOG" 2>&1 &
 disown
 ```
 
@@ -89,8 +92,8 @@ sign-in**. Navigate to the login page:
 
 ```bash
 SITE=<site-slug>
-PIPE="${HOME}/.rkt-clients/run/${SITE}/commands.fifo"
-echo '{"kind":"goto","url":"https://<site>/login"}' > "$PIPE"
+CMDS="${HOME}/.rkt-clients/run/${SITE}/commands.jsonl"
+echo '{"kind":"goto","url":"https://<site>/login"}' >> "$CMDS"
 ```
 
 Then tell the user: "Chrome is open. Please sign in, and tell me when you're
@@ -100,6 +103,18 @@ On later recordings of the same site the profile is already authenticated and
 this step is a no-op.
 
 ## Step 4: Map the site and pick sections
+
+Ask the recorder what is on the page rather than guessing:
+
+```bash
+SITE=<site-slug>
+CMDS="${HOME}/.rkt-clients/run/${SITE}/commands.jsonl"
+echo '{"kind":"snapshot"}' >> "$CMDS"
+```
+
+The response carries `snapshot.headings` and `snapshot.links` (text plus href,
+deduplicated). Use those to enumerate the app's sections. Navigate with `goto`
+and snapshot again to go deeper.
 
 Navigate the site's main nav, reading each page's title and URL from the
 recorder's responses. Then ask via `AskUserQuestion` (multi-select) which
@@ -113,8 +128,8 @@ to the pipe by path (one command per bash call):
 
 ```bash
 SITE=<site-slug>
-PIPE="${HOME}/.rkt-clients/run/${SITE}/commands.fifo"
-echo '{"kind":"goto","url":"https://<site>/section"}' > "$PIPE"
+CMDS="${HOME}/.rkt-clients/run/${SITE}/commands.jsonl"
+echo '{"kind":"goto","url":"https://<site>/section"}' >> "$CMDS"
 ```
 
 The recorder paces itself between actions; do not add your own tight loops.
@@ -126,12 +141,12 @@ RKT_PLUGIN_ROOT="${RKT_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-<installed-rkt-plugin-
 SCRIPTS="${RKT_PLUGIN_ROOT}/skills/derive-client/scripts"
 SITE=<site-slug>
 LOG="${HOME}/.rkt-clients/run/${SITE}/record.log"
-PIPE="${HOME}/.rkt-clients/run/${SITE}/commands.fifo"
+CMDS="${HOME}/.rkt-clients/run/${SITE}/commands.jsonl"
 READY=$(grep -m1 '"event":"ready"' "$LOG" || true)
 SANITIZED_SITE=$(printf '%s' "$READY" | sed -n 's/.*"site":"\([^"]*\)".*/\1/p')
 RECORDING_DIR=$(printf '%s' "$READY" | sed -n 's/.*"recordingDir":"\([^"]*\)".*/\1/p')
 [[ -n "$SANITIZED_SITE" ]] && SITE="$SANITIZED_SITE"
-echo '{"kind":"done"}' > "$PIPE"
+echo '{"kind":"done"}' >> "$CMDS"
 LOCK="${HOME}/.rkt-clients/profiles/${SITE}/.rkt-lock"
 for _ in $(seq 1 60); do [[ ! -f "$LOCK" ]] && break; sleep 1; done
 if [[ -n "$RECORDING_DIR" && -f "$RECORDING_DIR/session.har.zip" ]]; then
@@ -143,7 +158,7 @@ fi
 (cd "$SCRIPTS" && bun src/derive.ts --site "$SITE" --har "$HAR")
 ```
 
-If `echo … > "$PIPE"` hangs, the recorder may have died — check `"$LOG"` before
+If `echo … >> "$CMDS"` hangs, the recorder may have died — check `"$LOG"` before
 retrying.
 
 Report the derived endpoints to the user. If zero endpoints were derived but the
@@ -155,7 +170,7 @@ through a Service Worker, which HAR recording cannot see.
 `derive.ts` reports what it found, for example:
 
 ```
-Stored cookie credential for "alayacare" at 0600 (location: cookie:sessionid).
+Stored cookie credential for "example-app" at 0600 (location: cookie:sessionid).
 Credential expires: 2026-08-01T00:00:00.000Z
 ```
 
@@ -184,6 +199,22 @@ changes between recording and replay.
 
 A 401 or 403 means the credential is wrong, expired, or bound to something the
 transport does not replay. Re-record rather than guessing.
+
+### Staying authenticated
+
+Access tokens on modern apps expire in minutes, so `call` renews automatically
+rather than making you re-record. It tries, in order:
+
+1. The stored credential as-is.
+2. An OAuth `refresh_token` grant, when the recording contained a token
+   exchange. One POST, no browser.
+3. The recorded browser profile, launched headless. The identity provider's own
+   session cookie outlives the access token by a long way, so loading the app
+   with that profile makes it mint a fresh token unattended.
+
+Rotated tokens are written back, so a scheduled job stays signed in without
+help. Only when the profile itself is no longer signed in does a human need to
+re-run this skill.
 
 Only GET and HEAD endpoints can be called. Recorded writes are excluded from
 the manifest in read mode, and `call` refuses them even if one appears.

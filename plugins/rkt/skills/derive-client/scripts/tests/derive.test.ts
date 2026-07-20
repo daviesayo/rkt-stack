@@ -33,14 +33,14 @@ test("derives a manifest end to end from the fixture HAR", async () => {
   const har = await stageFixture("sample.har");
   const { manifest, dropped } = await deriveManifest(har, "example");
 
-  expect(manifest.schemaVersion).toBe(1);
+  expect(manifest.schemaVersion).toBe(2);
   expect(manifest.site).toBe("example");
   expect(manifest.baseUrl).toBe("https://example.test");
 
   // The .js asset is filtered out; only the roster API survives.
   expect(manifest.endpoints).toHaveLength(1);
   expect(manifest.endpoints[0].method).toBe("GET");
-  expect(manifest.endpoints[0].pathTemplate).toBe("/api/v2/roster/4821");
+  expect(manifest.endpoints[0].pathTemplate).toBe("/api/v2/items/4821");
   expect(dropped.some((d) => d.url.endsWith("app.js"))).toBe(true);
 });
 
@@ -77,10 +77,10 @@ test("rejects a HAR outside ~/.rkt-clients", async () => {
 
 test("derives auth and returns the secret separately from the manifest", async () => {
   const har = await stageFixture("authed.har");
-  const { manifest, secret } = await deriveManifest(har, "authtest");
+  const { manifest, secrets } = await deriveManifest(har, "authtest");
 
   expect(manifest.auth).toMatchObject({ kind: "cookie", location: "cookie:sessionid" });
-  expect(secret).toBe("SUPERSECRETVALUE");
+  expect(Object.values(secrets)).toContain("SUPERSECRETVALUE");
   expect(JSON.stringify(manifest)).not.toContain("SUPERSECRETVALUE");
 });
 

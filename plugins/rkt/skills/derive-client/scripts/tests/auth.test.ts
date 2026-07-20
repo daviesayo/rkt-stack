@@ -11,6 +11,7 @@ function entry(requestHeaders: Record<string, string>, url = "https://x.test/api
     responseHeaders: {},
     mimeType: "application/json",
     responseBody: "{}",
+    postData: null,
     startedDateTime: "2026-07-20T12:00:00.000Z",
   };
 }
@@ -95,6 +96,7 @@ function respEntry(
     url,
     status: 200,
     requestHeaders: {},
+    postData: null,
     responseHeaders,
     mimeType: "application/json",
     responseBody,

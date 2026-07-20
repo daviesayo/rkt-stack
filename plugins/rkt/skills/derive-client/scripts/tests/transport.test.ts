@@ -3,9 +3,9 @@ import type { ClientManifest, ManifestEndpoint } from "../src/lib/manifest";
 import { buildRequest, issue } from "../src/lib/transport";
 
 const endpoint: ManifestEndpoint = {
-  id: "get.api.roster.id",
+  id: "get.api.items.id",
   method: "GET",
-  pathTemplate: "/api/roster/{id}",
+  pathTemplate: "/api/items/{id}",
   params: [
     { name: "id", in: "path", type: "number" },
     { name: "week", in: "query", type: "string" },
@@ -30,13 +30,15 @@ function manifest(
     userAgent: "Mozilla/5.0 Chrome/141.0.0.0",
     clientHints: { "sec-ch-ua": '"Chromium";v="141"' },
     auth,
+    authBundle: null,
+    refresh: null,
     endpoints: [endpoint],
   };
 }
 
 test("substitutes path params and appends query params", () => {
   const built = buildRequest(manifest(null), endpoint, { id: "4821", week: "2026-W30" }, null);
-  expect(built.url).toBe("https://x.test/api/roster/4821?week=2026-W30");
+  expect(built.url).toBe("https://x.test/api/items/4821?week=2026-W30");
   expect(built.method).toBe("GET");
 });
 
@@ -78,7 +80,7 @@ test("applies a csrf credential to its recorded header", () => {
 
 test("omits query params the caller did not supply", () => {
   const built = buildRequest(manifest(null), endpoint, { id: "4821" }, null);
-  expect(built.url).toBe("https://x.test/api/roster/4821");
+  expect(built.url).toBe("https://x.test/api/items/4821");
 });
 
 test("throws a named error when a required path param is missing", () => {
@@ -89,7 +91,7 @@ test("throws a named error when a required path param is missing", () => {
 
 test("url-encodes param values", () => {
   const built = buildRequest(manifest(null), endpoint, { id: "a b/c", week: "x&y" }, null);
-  expect(built.url).toBe("https://x.test/api/roster/a%20b%2Fc?week=x%26y");
+  expect(built.url).toBe("https://x.test/api/items/a%20b%2Fc?week=x%26y");
 });
 
 test("refuses to build a request for a non-read method", () => {
@@ -123,7 +125,7 @@ test("allows http loopback when credentials are attached", () => {
     { id: "1" },
     "Bearer s3cr3tvalue",
   );
-  expect(built.url).toBe("http://localhost:3000/api/roster/1");
+  expect(built.url).toBe("http://localhost:3000/api/items/1");
 });
 
 test("issue refuses non-GET/HEAD before calling fetch", async () => {
@@ -136,7 +138,7 @@ test("issue refuses non-GET/HEAD before calling fetch", async () => {
 
   try {
     const built = {
-      url: "https://x.test/api/roster/1",
+      url: "https://x.test/api/items/1",
       method: "POST",
       headers: { accept: "application/json" },
     };
@@ -145,4 +147,29 @@ test("issue refuses non-GET/HEAD before calling fetch", async () => {
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("supplies recorded values for params the API requires", () => {
+  // A param present on every recorded sample is mandatory. Dropping it because
+  // the caller did not repeat it yields a 400 that reads like a client bug.
+  const ep: ManifestEndpoint = {
+    ...endpoint,
+    pathTemplate: "/api/v2/settings",
+    params: [
+      { name: "keys", in: "query", type: "string", required: true, example: "modals_v2" },
+      { name: "page", in: "query", type: "number", required: false, example: "1" },
+    ],
+  };
+  const built = buildRequest(manifest(null), ep, {}, null);
+  expect(built.url).toBe("https://x.test/api/v2/settings?keys=modals_v2");
+});
+
+test("an explicit param overrides the recorded example", () => {
+  const ep: ManifestEndpoint = {
+    ...endpoint,
+    pathTemplate: "/api/v2/settings",
+    params: [{ name: "keys", in: "query", type: "string", required: true, example: "modals_v2" }],
+  };
+  const built = buildRequest(manifest(null), ep, { keys: "other" }, null);
+  expect(built.url).toBe("https://x.test/api/v2/settings?keys=other");
 });
