@@ -8,6 +8,8 @@ export interface HarEntry {
   responseHeaders: Record<string, string>;
   mimeType: string;
   responseBody: string | null;
+  /** Request body text, needed to replay token grants. Empty when absent. */
+  postData: string | null;
   startedDateTime: string;
 }
 
@@ -49,6 +51,7 @@ export async function readHar(path: string): Promise<HarEntry[]> {
     responseHeaders: headerMap(e.response?.headers),
     mimeType: e.response?.content?.mimeType ?? "",
     responseBody: e.response?.content?.text ?? null,
+    postData: readPostData(e.request?.postData),
     startedDateTime: e.startedDateTime ?? "",
   }));
 }
@@ -72,4 +75,24 @@ async function readHarFromZip(path: string): Promise<any> {
     }
   }
   return har;
+}
+
+interface RawPostData {
+  text?: string;
+  params?: Array<{ name?: string; value?: string }>;
+}
+
+/**
+ * HAR stores a request body either as raw text or as parsed params, depending
+ * on content type. Normalize to urlencoded text so callers see one shape.
+ */
+function readPostData(post: RawPostData | undefined): string | null {
+  if (!post) return null;
+  if (typeof post.text === "string" && post.text.length > 0) return post.text;
+  if (Array.isArray(post.params) && post.params.length > 0) {
+    return post.params
+      .map((p) => `${encodeURIComponent(p.name ?? "")}=${encodeURIComponent(p.value ?? "")}`)
+      .join("&");
+  }
+  return null;
 }

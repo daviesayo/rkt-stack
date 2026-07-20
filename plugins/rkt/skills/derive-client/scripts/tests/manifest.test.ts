@@ -17,6 +17,7 @@ function entry(url: string, body: string): HarEntry {
     responseHeaders: {},
     mimeType: "application/json",
     responseBody: body,
+    postData: null,
     startedDateTime: "2026-07-20T12:00:00.000Z",
   };
 }
@@ -102,10 +103,10 @@ test("validateManifest rejects an unknown schema version", () => {
 });
 
 test("validateManifest rejects a manifest with no endpoints array", () => {
-  expect(() => validateManifest({ schemaVersion: 1, site: "x" })).toThrow(/endpoints/i);
+  expect(() => validateManifest({ schemaVersion: 2, site: "x" })).toThrow(/endpoints/i);
 });
 
-test("rejects endpoint groups spanning multiple origins", () => {
+test("multi-origin groups are an internal error, not a user-facing failure", () => {
   const groups = groupEndpoints([
     entry("https://example.test/api/me", "{}"),
     entry("https://api.example.test/api/me", "{}"),
@@ -117,7 +118,7 @@ test("rejects endpoint groups spanning multiple origins", () => {
       harSha256: "abc",
       recordedAt: "2026-07-20T12:00:00.000Z",
     }),
-  ).toThrow(/multiple origins/i);
+  ).toThrow(/internal: buildManifest received 2 origins/i);
 });
 
 const authedEntries: HarEntry[] = [
@@ -132,6 +133,7 @@ const authedEntries: HarEntry[] = [
     responseHeaders: {},
     mimeType: "application/json",
     responseBody: '{"shifts":[]}',
+    postData: null,
     startedDateTime: "2026-07-20T12:00:00.000Z",
   },
 ];

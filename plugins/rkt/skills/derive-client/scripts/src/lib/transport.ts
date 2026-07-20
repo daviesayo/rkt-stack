@@ -27,11 +27,52 @@ function assertSecureTransport(baseUrl: string): void {
   }
 }
 
+/**
+ * Apply every credential the site requires.
+ *
+ * `secret` accepts either a bundle (location -> value) or a bare string for
+ * single-credential callers. Cookies are merged into one header, since a
+ * request carries at most one Cookie header and real sites need several
+ * cookies at once.
+ */
+export function applyCredentials(
+  manifest: ClientManifest,
+  headers: Record<string, string>,
+  secret: Record<string, string> | string | null,
+): void {
+  if (!secret) return;
+
+  const bundle = manifest.authBundle?.credentials ?? (manifest.auth ? [manifest.auth] : []);
+  if (bundle.length === 0) return;
+
+  assertSecureTransport(manifest.baseUrl);
+
+  const values: Record<string, string> =
+    typeof secret === "string"
+      ? { [bundle[0].location]: secret }
+      : secret;
+
+  const cookies: string[] = [];
+  for (const cred of bundle) {
+    const value = values[cred.location];
+    if (value === undefined) continue;
+    if (cred.kind === "cookie") {
+      const name = cred.location.startsWith("cookie:")
+        ? cred.location.slice("cookie:".length)
+        : cred.location;
+      cookies.push(`${name}=${value}`);
+    } else {
+      headers[cred.location.toLowerCase()] = value;
+    }
+  }
+  if (cookies.length > 0) headers["cookie"] = cookies.join("; ");
+}
+
 export function buildRequest(
   manifest: ClientManifest,
   endpoint: ManifestEndpoint,
   params: Record<string, string>,
-  secret: string | null,
+  secret: Record<string, string> | string | null,
 ): BuiltRequest {
   // Defence in depth: the filter pass should already have excluded writes,
   // but nothing reaches the network without passing this check too.
@@ -63,18 +104,7 @@ export function buildRequest(
     ...manifest.clientHints,
   };
 
-  const auth = manifest.auth;
-  if (auth && secret) {
-    assertSecureTransport(manifest.baseUrl);
-    if (auth.kind === "cookie") {
-      const name = auth.location.startsWith("cookie:")
-        ? auth.location.slice("cookie:".length)
-        : auth.location;
-      headers["cookie"] = `${name}=${secret}`;
-    } else {
-      headers[auth.location.toLowerCase()] = secret;
-    }
-  }
+  applyCredentials(manifest, headers, secret);
 
   return { url, method: endpoint.method, headers };
 }

@@ -33,7 +33,7 @@ test("derives a manifest end to end from the fixture HAR", async () => {
   const har = await stageFixture("sample.har");
   const { manifest, dropped } = await deriveManifest(har, "example");
 
-  expect(manifest.schemaVersion).toBe(1);
+  expect(manifest.schemaVersion).toBe(2);
   expect(manifest.site).toBe("example");
   expect(manifest.baseUrl).toBe("https://example.test");
 
@@ -77,10 +77,10 @@ test("rejects a HAR outside ~/.rkt-clients", async () => {
 
 test("derives auth and returns the secret separately from the manifest", async () => {
   const har = await stageFixture("authed.har");
-  const { manifest, secret } = await deriveManifest(har, "authtest");
+  const { manifest, secrets } = await deriveManifest(har, "authtest");
 
   expect(manifest.auth).toMatchObject({ kind: "cookie", location: "cookie:sessionid" });
-  expect(secret).toBe("SUPERSECRETVALUE");
+  expect(Object.values(secrets)).toContain("SUPERSECRETVALUE");
   expect(JSON.stringify(manifest)).not.toContain("SUPERSECRETVALUE");
 });
 

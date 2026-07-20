@@ -30,6 +30,8 @@ function manifest(
     userAgent: "Mozilla/5.0 Chrome/141.0.0.0",
     clientHints: { "sec-ch-ua": '"Chromium";v="141"' },
     auth,
+    authBundle: null,
+    refresh: null,
     endpoints: [endpoint],
   };
 }
