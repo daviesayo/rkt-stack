@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.5.0 — 2026-07-20
+
+Adds authentication analysis and a `call` subcommand to `/derive-client`.
+
+### Added
+
+- **Auth analysis** — detects the session credential (cookie, bearer, or CSRF)
+  from recorded traffic, traces where it was minted, and reads its expiry from
+  a JWT `exp` claim or cookie attributes. The manifest records where the
+  credential lives; the value goes to `<rkt-root>/secrets/<site>.json` at 0600.
+- **`call` subcommand** — invokes a derived read endpoint by id with path and
+  query params, applying the stored credential and the pinned User-Agent and
+  client hints. `--dry-run` prints the built request with the credential
+  redacted.
+- **Rate limiter** — serializes requests and spaces them 400 to 1300 ms. It
+  becomes load-bearing when generated clients issue requests in a loop.
+
+### Fixed
+
+- **Read mode now derives GET and HEAD only.** Previously any recorded write
+  that returned 2xx JSON became an endpoint in `client.json`. Harmless while
+  nothing could execute a manifest, but not once `call` shipped. `call` refuses
+  non-read methods as a second line of defence.
+- **TypeScript is now actually typechecked.** `tsconfig.json` referenced a
+  `bun-types` package that is not installed, so `tsc --noEmit` had always
+  failed. The test wrapper now runs it.
+
+### Changed
+
+- `rktRoot()` honors `RKT_CLIENTS_ROOT` under `NODE_ENV=test` only, so tests
+  redirect to a temp directory instead of writing to the user's real home.
+  Production behavior is unchanged, and the path-confinement boundary cannot
+  be moved by the environment.
+
+### Security
+
+- Credentials are written atomically (temp file at 0600, then rename) so an
+  overwrite never leaves the file world-readable, live in a 0700 directory,
+  are never placed in a manifest, and are redacted before any output
+  truncation.
+
 ## 0.4.0 — 2026-07-20
 
 Adds `derive-client`: record a logged-in browser session and derive a typed

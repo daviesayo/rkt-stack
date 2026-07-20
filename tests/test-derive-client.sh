@@ -47,11 +47,26 @@ grep -Eq 'mode:\s*["'\'']full["'\'']' "$SCRIPTS/src/record.ts" || {
   exit 1
 }
 
+# No secrets file may ever be tracked by git.
+if git -C "$ROOT/../.." ls-files --error-unmatch '**/secrets/*.json' >/dev/null 2>&1; then
+  echo "secrets files must never be committed" >&2
+  exit 1
+fi
+
+# The leak test is the structural guarantee that manifests carry no secrets;
+# its absence must fail the suite rather than silently reduce coverage.
+if [[ ! -f "$SCRIPTS/tests/leak.test.ts" ]]; then
+  echo "missing structural leak test at scripts/tests/leak.test.ts" >&2
+  exit 1
+fi
+
 if ! command -v bun >/dev/null 2>&1; then
   echo "derive-client: bun not installed, skipping unit tests" >&2
   echo "OK (skipped unit tests)"
   exit 0
 fi
+
+( cd "$SCRIPTS" && bunx tsc --noEmit )
 
 ( cd "$SCRIPTS" && bun test )
 
