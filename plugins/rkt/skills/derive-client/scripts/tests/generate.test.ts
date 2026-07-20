@@ -52,6 +52,7 @@ test("scaffolds the repo with a gitignore covering secrets and recordings", asyn
   expect(gitignore).toContain("secrets/");
   expect(gitignore).toContain("recordings/");
   expect(gitignore).toContain("node_modules/");
+  expect(gitignore).toContain("*.storage-state.json");
 });
 
 test("copies the shared runtime into lib/", async () => {

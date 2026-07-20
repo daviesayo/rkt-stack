@@ -1,6 +1,11 @@
 # Changelog
 
-## [Unreleased]
+## 0.6.0 — 2026-07-20
+
+Completes `derive-client`: record a logged-in session, derive a manifest, and
+generate a standalone typed CLI for the site's internal API. Includes the
+production hardening pass (auth bundles, credential renewal, storageState
+re-auth) that made real-site derivation work.
 
 Hardening pass driven by the first run against a real production site. Every
 fix below is a defect that run exposed.
@@ -47,6 +52,15 @@ fix below is a defect that run exposed.
   while being unable to authenticate. The recorder now saves Playwright
   `storageState` (0600, beside the credentials, since it is credential
   material) and re-auth restores it in preference to the profile directory.
+  The session is saved only after re-auth is confirmed to have authenticated,
+  so a failed attempt cannot overwrite a good stored session with a
+  logged-out one, and re-auth polls for the cookies the manifest requires
+  rather than harvesting the moment a page reports idle, since the SSO
+  redirect exchange completes after load events fire.
+- **Generated clients declare `playwright`.** Without it the browser renewal
+  tier silently disabled itself and reported an expired session, sending the
+  user to re-authenticate a session that was perfectly valid. Missing tooling
+  and a dead session are now reported differently.
   This is what makes the browser renewal tier actually work across processes.
 - **Credential renewal.** Access tokens on real SPAs live minutes and
   can be as short as five minutes, so a statically captured credential is dead
@@ -93,6 +107,9 @@ fix below is a defect that run exposed.
 - **Generated runtime set** — `refresh.ts` and `reauth.ts` are now copied into
   generated clients so emitted CLIs can renew credentials without importing
   the derivation pipeline.
+- **Generated `.gitignore`** — also ignores `*.storage-state.json`, since the
+  recorder writes Playwright `storageState` beside credentials and a copy
+  must never land in `rkt-clients`.
 
 
 

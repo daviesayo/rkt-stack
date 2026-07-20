@@ -1,6 +1,6 @@
 {
   "name": "rkt",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Personal AI toolbox — project bootstrapping, workflow orchestration, and prompt engineering",
   "author": {
     "name": "Davies Ayo",

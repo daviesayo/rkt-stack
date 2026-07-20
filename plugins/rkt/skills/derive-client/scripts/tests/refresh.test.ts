@@ -128,4 +128,30 @@ test("browser re-auth reports failure rather than a half-populated session", asy
     3000,
   );
   expect(result).toBeNull();
-}, 30000);
+}, 90000);
+
+test("a failed re-auth does not overwrite a stored session", async () => {
+  const { mkdtemp, writeFile, readFile, mkdir } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const prev = process.env.RKT_CLIENTS_ROOT;
+  const root = await mkdtemp(join(tmpdir(), "rkt-reauth-"));
+  process.env.RKT_CLIENTS_ROOT = root;
+  try {
+    const { storageStateFile } = await import("../src/lib/paths");
+    const { reauthViaProfile } = await import("../src/lib/reauth");
+    const path = storageStateFile("failsite");
+    await mkdir(join(root, "secrets"), { recursive: true });
+    const good = JSON.stringify({ cookies: [{ name: "KEEP_ME", value: "v" }], origins: [] });
+    await writeFile(path, good);
+
+    // Re-auth cannot succeed: no such site was ever recorded.
+    const result = await reauthViaProfile("failsite", "https://app.invalid/", ["cookie:SESSION"], 2000);
+    expect(result).toBeNull();
+    // The stored session must survive the failure.
+    expect(await readFile(path, "utf8")).toBe(good);
+  } finally {
+    if (prev === undefined) delete process.env.RKT_CLIENTS_ROOT;
+    else process.env.RKT_CLIENTS_ROOT = prev;
+  }
+}, 90000);

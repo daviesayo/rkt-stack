@@ -80,4 +80,6 @@ test("the generated repo gitignores everything that could hold a credential", as
   expect(gitignore).toContain("recordings/");
   // HAR files carry full session cookies wherever they land.
   expect(gitignore).toContain("*.har");
+  // storageState is a serialized browser session — credential material.
+  expect(gitignore).toContain("*.storage-state.json");
 });

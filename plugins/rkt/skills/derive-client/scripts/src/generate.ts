@@ -48,6 +48,9 @@ node_modules/
 # HAR files carry full session cookies wherever they land.
 *.har
 *.har.zip
+
+# Serialized browser sessions (Playwright storageState) are credential material.
+*.storage-state.json
 `;
 
 // devDependencies are required: tsconfig sets types: ["bun"], so a repo
@@ -56,6 +59,9 @@ const PACKAGE_JSON = `{
   "name": "rkt-clients",
   "private": true,
   "type": "module",
+  "dependencies": {
+    "playwright": "1.56.0"
+  },
   "devDependencies": {
     "@types/bun": "latest",
     "typescript": "5.9.2"
