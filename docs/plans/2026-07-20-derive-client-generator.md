@@ -13,16 +13,18 @@
 
 ## What this plan completes
 
-After this plan, derive-client is usable end to end: record a site, derive a manifest, and get a typed CLI you can cron. That makes this the release point for the whole feature (see Task 9).
+After this plan, derive-client is usable end to end: record a site, derive a manifest, and get a typed CLI you can cron. That makes this the release point for the whole feature (see Task 10).
 
 Plans 4 and 5 (repair, DOM scrapers, `full` mode writes) remain, but each is an enhancement to a working tool rather than a missing piece of one.
 
 ## Release policy change
 
-`AGENTS.md` is amended **on this branch** (not yet on main) so plugin versions are bumped **at release time, not per change**. The amendment ships with this plan's PR. That rule governs this plan:
+`AGENTS.md` is amended **on this branch** (commit `f9cf976`, carried through the merge at `c1e13de`) so plugin versions are bumped **at release time, not per change**. The amendment is already committed here and ships with this plan's PR; Task 0 verifies it is present before anything else runs, because the whole release policy below depends on it.
 
-- Tasks 1 to 8 add entries under `## [Unreleased]` in `plugins/rkt/CHANGELOG.md` and **do not touch the plugin manifests**.
-- Task 9 renames `[Unreleased]` to `0.6.0`, bumps both manifests once, and tags.
+- Tasks 1 to 9 add entries under `## [Unreleased]` in `plugins/rkt/CHANGELOG.md` and **do not touch the plugin manifests**.
+- Task 10 turns `[Unreleased]` into `0.6.0`, bumps both manifests once, and hands the tag to the user.
+
+`plugins/rkt/CHANGELOG.md` currently has **no** `## [Unreleased]` section (it opens with `## 0.5.0 — 2026-07-20`), so the first task to touch it creates the heading.
 
 0.4.0 and 0.5.0 were bumped under the old rule and never tagged. They stay as-is in history; `v0.6.0` is the first tag.
 
@@ -32,7 +34,17 @@ Plans 4 and 5 (repair, DOM scrapers, `full` mode writes) remain, but each is an 
 
 **2. The runtime is copied, not re-authored.** `generate.ts` copies a fixed allowlist of already-tested files from the skill's `src/lib/` into `rkt-clients/lib/`, overwriting on every run. There is one source of truth (the skill), and the copies are build artifacts marked with a header. The alternative, re-authoring the runtime as string templates inside the generator, would duplicate logic that Plan 2 already tested and let the two drift.
 
-**3. Generated files are committed.** `rkt-clients/lib/` and each `rkt-clients/<site>/` are checked in, because the point is a client that runs on a machine that has never seen the plugin. They carry a "generated, do not edit" header and a record of the manifest hash they came from.
+**3. The copied set must be a genuinely closed import graph, and it is not one today.** `src/lib/manifest.ts:2` value-imports `inferShape` from `./synthesize`, which imports `./har`. Copying only `paths, manifest, secrets, ratelimit, transport` produces a repo that dies at module load:
+
+```
+error: Cannot find module './synthesize' from '.../lib/manifest.ts'
+```
+
+Reproduced on Bun 1.3.11. Pulling `synthesize.ts` and `har.ts` across would fix resolution but ship the entire derivation half of the toolchain (`buildManifest`, `groupEndpoints`, `inferShape`, the HAR parser) into a client repo that needs exactly one function from it, `validateManifest`. Task 1 therefore splits the schema half of `manifest.ts` into `lib/manifest-schema.ts`, which imports only `./synthesize` **types** (erased at runtime). The copied set becomes closed *and* free of dead code.
+
+**4. Generated files are committed.** `rkt-clients/lib/` and each `rkt-clients/<site>/` are checked in, because the point is a client that runs on a machine that has never seen the plugin. They carry a "generated, do not edit" header and a record of the manifest hash they came from.
+
+**5. Header masking, not string redaction, on the dry-run path.** The shipped `src/call.ts:31` masks header values with `maskHeaders` *before* `JSON.stringify`, and `src/lib/secrets.ts:67-70` documents why: masking at the value level "so `JSON.stringify` escaping cannot hide the secret." A secret containing a quote survives serialize-then-redact, because the serialized form is `ab\"cd` and no longer matches the raw secret. Generated clients use the same `maskHeaders` path, so they are never weaker than the `call` they replace.
 
 ## Global Constraints
 
@@ -44,7 +56,7 @@ Everything from Plans 1 and 2 still applies. Restated because a task implementer
 - No machine-local home paths (`/Users/<name>`) hardcoded in any skill file or generated file.
 - Safety checks key on structure or shape, never on names.
 - **Read mode only:** the generator emits subcommands for GET and HEAD endpoints. It refuses any other method, which cannot appear in a read-mode manifest but is checked anyway.
-- **Secrets never enter `rkt-clients`.** Generated clients read `<rkt-root>/secrets/<site>.json` at runtime; no credential is ever written into a generated file. Task 8 asserts this structurally.
+- **Secrets never enter `rkt-clients`.** Generated clients read `<rkt-root>/secrets/<site>.json` at runtime; no credential is ever written into a generated file. Task 7 asserts this structurally.
 - Tests are idempotent, use temp directories, and clean up. `RKT_CLIENTS_ROOT` redirects the root under `NODE_ENV=test` only.
 - Typecheck (`bunx tsc --noEmit`) must pass; it runs in the test wrapper.
 
@@ -69,14 +81,169 @@ Everything from Plans 1 and 2 still applies. Restated because a task implementer
 
 - `plugins/rkt/skills/derive-client/SKILL.md` — generate step, generated-client usage.
 - `tests/test-derive-client.sh` — guard that generated output carries no secrets.
-- `plugins/rkt/CHANGELOG.md` — `[Unreleased]`, then `0.6.0` in Task 9.
-- Both plugin manifests — **Task 9 only.**
+- `plugins/rkt/CHANGELOG.md` — `[Unreleased]`, then `0.6.0` in Task 10.
+- Both plugin manifests — **Task 10 only.**
 
 Paths without a `plugins/` or `tests/` prefix are relative to `plugins/rkt/skills/derive-client/`.
 
 ---
 
-## Task 1: Type emission from recorded shapes
+## Task 0: Preflight
+
+**Files:** none modified.
+
+Two preconditions this plan asserts. Both are cheap to check and expensive to discover mid-execution.
+
+- [ ] **Step 1: Confirm the AGENTS.md amendment is present**
+
+```bash
+cd /Users/rocket/Documents/Repositories/rkt-stack
+grep -q "Bump versions at release time" AGENTS.md && echo "release policy present" || {
+  echo "MISSING: this plan's release policy depends on the AGENTS.md amendment" >&2
+  echo "It lives on this branch in commit f9cf976. If it is absent, you are on the" >&2
+  echo "wrong branch or it was reverted; restore it before continuing." >&2
+  exit 1
+}
+```
+
+Expected: `release policy present`. The amendment is on this branch only, not on `main`; checking out `main` will not show it.
+
+- [ ] **Step 2: Confirm the baseline is green**
+
+```bash
+cd plugins/rkt/skills/derive-client/scripts && bun install && bun test && bunx tsc --noEmit
+```
+
+Expected: all suites pass and the typecheck is silent. `bun install` matters: a checkout without `node_modules` fails the typecheck with `TS2688: Cannot find type definition file for 'bun'`.
+
+---
+
+## Task 1: Split the manifest schema into a runtime-copyable module
+
+**Files:**
+- Create: `scripts/src/lib/manifest-schema.ts`
+- Modify: `scripts/src/lib/manifest.ts`
+- Modify: `scripts/src/lib/transport.ts`
+- Modify: `scripts/tests/manifest.test.ts`
+
+**Interfaces:**
+- Produces: `lib/manifest-schema.ts` exporting `SCHEMA_VERSION`, `AuthSpec`, `ManifestEndpoint`, `ClientManifest`, and `validateManifest`. It imports **only types** from `./synthesize`, so it has no runtime dependency.
+- `lib/manifest.ts` re-exports all of those (so every existing import keeps working) and retains `BuildManifestInput` and `buildManifest`.
+
+This is the fix for the closed-import-graph problem in design decision 3. Doing it first means Task 5's generator copies a set that actually resolves.
+
+- [ ] **Step 1: Write the failing test**
+
+Append to `tests/manifest.test.ts`:
+
+```ts
+import {
+  SCHEMA_VERSION as SCHEMA_VERSION_FROM_SCHEMA,
+  validateManifest as validateFromSchema,
+} from "../src/lib/manifest-schema";
+
+test("manifest-schema exports the schema half independently", () => {
+  expect(SCHEMA_VERSION_FROM_SCHEMA).toBe(1);
+  expect(() => validateFromSchema({ schemaVersion: 99, site: "x", endpoints: [] })).toThrow(
+    /schema version/i,
+  );
+});
+
+test("manifest re-exports the schema half, so existing imports keep working", async () => {
+  const fromManifest = await import("../src/lib/manifest");
+  expect(fromManifest.SCHEMA_VERSION).toBe(SCHEMA_VERSION_FROM_SCHEMA);
+  expect(typeof fromManifest.validateManifest).toBe("function");
+});
+
+test("manifest-schema has no runtime import outside the copyable set", async () => {
+  const src = await Bun.file(`${import.meta.dir}/../src/lib/manifest-schema.ts`).text();
+  // Every import must be type-only, or resolve to a file in the copied set.
+  const imports = [...src.matchAll(/^import\s+(type\s+)?.*?from\s+"([^"]+)";$/gm)];
+  expect(imports.length).toBeGreaterThan(0);
+  for (const [, typeOnly, from] of imports) {
+    if (typeOnly) continue;
+    expect(["./paths", "./secrets", "./ratelimit"]).toContain(from);
+  }
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cd plugins/rkt/skills/derive-client/scripts && bun test tests/manifest.test.ts`
+Expected: FAIL at module resolution for `../src/lib/manifest-schema`.
+
+- [ ] **Step 3: Create `src/lib/manifest-schema.ts`**
+
+Move the following out of `src/lib/manifest.ts` verbatim: `SCHEMA_VERSION`, `AuthSpec`, `ManifestEndpoint`, `ClientManifest`, and `validateManifest`. The import line must be **type-only**:
+
+```ts
+import type { JsonShape, ParamSpec } from "./synthesize";
+```
+
+`import type` is erased at compile time, so this file has no runtime edge to `synthesize.ts`. Do not import `inferShape` here.
+
+- [ ] **Step 4: Reduce `src/lib/manifest.ts` to the builder half**
+
+`manifest.ts` keeps `BuildManifestInput`, `buildManifest`, and the `endpointId` helper. Replace its removed declarations with a re-export so every existing importer is unaffected:
+
+```ts
+export type { AuthSpec, ClientManifest, ManifestEndpoint } from "./manifest-schema";
+export { SCHEMA_VERSION, validateManifest } from "./manifest-schema";
+```
+
+It still value-imports `inferShape` from `./synthesize`, which is correct: the builder belongs to the derivation half and is never copied into a generated client.
+
+- [ ] **Step 5: Point `transport.ts` at the schema module**
+
+In `src/lib/transport.ts`, change the type import so the copied set does not reach into `manifest.ts` at all:
+
+```ts
+import type { ClientManifest, ManifestEndpoint } from "./manifest-schema";
+```
+
+- [ ] **Step 6: Run tests and prove the copied set now resolves**
+
+```bash
+cd plugins/rkt/skills/derive-client/scripts
+bun test && bunx tsc --noEmit
+
+# The closure check that fails today.
+rm -rf /tmp/rkt-closure && mkdir -p /tmp/rkt-closure/lib
+for f in paths manifest-schema secrets ratelimit transport; do
+  cp "src/lib/$f.ts" /tmp/rkt-closure/lib/
+done
+printf 'import { validateManifest } from "./lib/manifest-schema";\nimport { buildRequest } from "./lib/transport";\nconsole.log(typeof validateManifest, typeof buildRequest);\n' > /tmp/rkt-closure/probe.ts
+bun /tmp/rkt-closure/probe.ts
+rm -rf /tmp/rkt-closure
+```
+
+Expected: all tests pass, silent typecheck, and the probe prints `function function`. Before this task the same probe against `manifest.ts` fails with `Cannot find module './synthesize'`.
+
+- [ ] **Step 7: Add the CHANGELOG entry**
+
+`plugins/rkt/CHANGELOG.md` has no `## [Unreleased]` section yet. Create one directly below the `# Changelog` heading:
+
+```markdown
+## [Unreleased]
+
+### Changed
+
+- Split the manifest schema (`validateManifest` and its types) into
+  `lib/manifest-schema.ts` so it can be copied into a generated client without
+  dragging the derivation pipeline along. `lib/manifest.ts` re-exports it, so
+  no existing import changes.
+```
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add plugins/rkt/skills/derive-client/scripts/src/lib plugins/rkt/skills/derive-client/scripts/tests/manifest.test.ts plugins/rkt/CHANGELOG.md
+git commit -m "refactor(derive-client): split manifest schema for runtime copying"
+```
+
+---
+
+## Task 2: Type emission from recorded shapes
 
 **Files:**
 - Create: `scripts/src/lib/codegen.ts`
@@ -237,7 +404,7 @@ git commit -m "feat(derive-client): emit TypeScript types from recorded shapes"
 
 ---
 
-## Task 2: Readable command and type names
+## Task 3: Readable command and type names
 
 **Files:**
 - Modify: `scripts/src/lib/codegen.ts`
@@ -367,7 +534,7 @@ git commit -m "feat(derive-client): derive readable command names from paths"
 
 ---
 
-## Task 3: CLI source emission
+## Task 4: CLI source emission
 
 **Files:**
 - Modify: `scripts/src/lib/codegen.ts`
@@ -500,14 +667,35 @@ export function emitCli(manifest: ClientManifest): string {
   // The command table is emitted as data, not as generated control flow:
   // one runtime dispatch loop is far easier to read and debug than N
   // generated functions, and it keeps the generated file small.
+  //
+  // The table is NOT `as const`. With it, a manifest whose endpoints are all
+  // param-less types every `params` as `readonly []`, so the element of
+  // `params.map((p) => ...)` is `never` and the generated file fails to
+  // typecheck with TS2339. Verified on tsc 5.9 under --strict. A mixed
+  // manifest happens to survive via the union, which makes this a defect that
+  // only shows up on certain sites.
   return `${GENERATED_HEADER(manifest)}
 import { readFile } from "node:fs/promises";
-import { validateManifest } from "../lib/manifest";
+import { validateManifest } from "../lib/manifest-schema";
 import { createLimiter } from "../lib/ratelimit";
-import { readSecret, redact } from "../lib/secrets";
+import { maskHeaders, readSecret, redact } from "../lib/secrets";
 import { buildRequest, issue } from "../lib/transport";
+import type { ${responseTypes.join(", ")} } from "./types";
 
-const COMMANDS = ${JSON.stringify(commands, null, 2)} as const;
+interface CommandSpec {
+  command: string;
+  id: string;
+  method: string;
+  pathTemplate: string;
+  params: Array<{ name: string; in: "path" | "query"; type: "string" | "number" }>;
+}
+
+const COMMANDS: CommandSpec[] = ${JSON.stringify(commands, null, 2)};
+
+/** Response type per command, for callers importing this module. */
+export type ResponseFor = {
+${responseMap.join("\n")}
+};
 
 function usage(): never {
   console.error("usage: bun cli.ts <command> [--param value ...] [--dry-run]");
@@ -564,10 +752,15 @@ async function main() {
   const built = buildRequest(manifest, endpoint, params, secret);
 
   if (process.argv.includes("--dry-run")) {
+    // Mask header VALUES before serializing. Redacting the serialized string
+    // instead would miss a secret containing a quote, because JSON escaping
+    // rewrites it (ab"cd becomes ab\\"cd and no longer matches).
     console.log(
-      JSON.parse(
-        redact(JSON.stringify({ method: built.method, url: built.url, headers: built.headers }), secret),
-      ) && redact(JSON.stringify({ method: built.method, url: built.url, headers: built.headers }, null, 2), secret),
+      JSON.stringify(
+        { method: built.method, url: built.url, headers: maskHeaders(built.headers, secret) },
+        null,
+        2,
+      ),
     );
     return;
   }
@@ -582,13 +775,29 @@ async function main() {
 }
 
 if (import.meta.main) {
-  await main();
+  try {
+    await main();
+  } catch (err) {
+    // buildRequest throws on a missing path param; without this the user gets
+    // a raw stack trace while every other failure path prints a clean message.
+    console.error((err as Error).message);
+    process.exit(1);
+  }
 }
 `;
 }
 ```
 
-Note the dry-run redaction: the request is serialized to JSON **first**, then redacted, matching the Plan 2 fix where masking after serialization was needed so an escaped secret cannot survive. Simplify the doubled expression above to a single `console.log(redact(JSON.stringify({...}, null, 2), secret));` if the implementer finds the `&&` form confusing; the behavior required is redact-after-serialize.
+Two things to compute before the template, alongside `commands`:
+
+```ts
+  const responseTypes = manifest.endpoints.map((e) => typeName(names.get(e.id)!));
+  const responseMap = manifest.endpoints.map(
+    (e) => `  ${JSON.stringify(names.get(e.id)!)}: ${typeName(names.get(e.id)!)};`,
+  );
+```
+
+`responseTypes` feeds the `import type` line and `responseMap` the exported `ResponseFor` map, which is what makes `types.ts` load-bearing rather than dead weight. If a manifest has zero endpoints, emit neither the import nor the map: guard both with `manifest.endpoints.length > 0`, since `import type { } from "./types"` is invalid syntax.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -604,7 +813,7 @@ git commit -m "feat(derive-client): emit generated client source from a manifest
 
 ---
 
-## Task 4: The generator CLI and repo scaffold
+## Task 5: The generator CLI and repo scaffold
 
 **Files:**
 - Create: `scripts/src/generate.ts`
@@ -703,14 +912,14 @@ test("is idempotent: a second run produces identical bytes", async () => {
   expect(second).toBe(first);
 });
 
-test("no generated file contains a credential value", async () => {
+test("every runtime file in the copied set is present", async () => {
   const out = join(workRoot, "clients-e");
   const { written } = await generateClient(manifestPath, out);
-  for (const path of written) {
-    const src = await readFile(path, "utf8");
-    expect(src).not.toContain("SUPERSECRET");
-    expect(src).not.toMatch(/sessionid=\w/);
+  for (const f of ["paths.ts", "manifest-schema.ts", "secrets.ts", "ratelimit.ts", "transport.ts"]) {
+    expect(written.some((p) => p.endsWith(join("lib", f)))).toBe(true);
   }
+  // manifest.ts pulls in the derivation pipeline; it must NOT be copied.
+  expect(written.some((p) => p.endsWith(join("lib", "manifest.ts")))).toBe(false);
 });
 
 test("refuses a manifest with an unsupported schema version", async () => {
@@ -745,11 +954,23 @@ export interface GeneratedFiles {
 }
 
 /**
- * Runtime modules copied into the generated repo. These five form a closed
- * import graph: transport imports manifest, secrets imports paths, and
- * nothing reaches outside the set.
+ * Runtime modules copied into the generated repo.
+ *
+ * This set is closed ONLY because Task 1 split the schema out of manifest.ts:
+ * manifest-schema.ts imports `./synthesize` type-only (erased at runtime),
+ * transport.ts imports manifest-schema type-only, secrets.ts imports paths.ts.
+ * Copying manifest.ts instead would drag in synthesize.ts and har.ts, i.e. the
+ * whole derivation pipeline, for one function.
+ *
+ * If you add a file here, re-run the closure probe from Task 1 Step 6.
  */
-const RUNTIME_FILES = ["paths.ts", "manifest.ts", "secrets.ts", "ratelimit.ts", "transport.ts"];
+const RUNTIME_FILES = [
+  "paths.ts",
+  "manifest-schema.ts",
+  "secrets.ts",
+  "ratelimit.ts",
+  "transport.ts",
+];
 
 const COPIED_HEADER = `// Copied from the rkt derive-client skill. Do not edit here.
 // Edit the skill's src/lib/ and regenerate.
@@ -759,12 +980,22 @@ const GITIGNORE = `# Credentials and recordings never belong in this repo.
 secrets/
 recordings/
 node_modules/
+
+# HAR files carry full session cookies wherever they land.
+*.har
+*.har.zip
 `;
 
+// devDependencies are required: tsconfig sets types: ["bun"], so a repo
+// without @types/bun installed fails `tsc --noEmit` with TS2688.
 const PACKAGE_JSON = `{
   "name": "rkt-clients",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "5.9.2"
+  }
 }
 `;
 
@@ -874,7 +1105,7 @@ git commit -m "feat(derive-client): generate standalone typed clients"
 
 ---
 
-## Task 5: Verify a generated client actually runs
+## Task 6: Verify a generated client actually runs
 
 **Files:**
 - Create: `scripts/tests/generated-runs.test.ts`
@@ -969,11 +1200,28 @@ test("an unknown command exits non-zero and lists the valid ones", async () => {
 });
 
 test("the generated client typechecks on its own", async () => {
+  // The emitted tsconfig sets types: ["bun"], so @types/bun must be installed
+  // in the generated repo first. Without this the test fails with TS2688 —
+  // the same failure the plugin's own wrapper hits on a fresh checkout.
+  const install = Bun.spawn(["bun", "install", "--silent"], {
+    cwd: outRoot,
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const installCode = await install.exited;
+  if (installCode !== 0) {
+    // Offline or otherwise unable to install: skip rather than report a
+    // failure that says nothing about the generated code.
+    console.warn("skipping generated-client typecheck: bun install failed");
+    return;
+  }
+
   const proc = Bun.spawn(["bunx", "tsc", "--noEmit"], {
     cwd: outRoot,
     stderr: "pipe",
     stdout: "pipe",
   });
+  // tsc writes diagnostics to stdout, not stderr.
   const stdout = await new Response(proc.stdout).text();
   const code = await proc.exited;
   expect(stdout).toBe("");
@@ -985,7 +1233,7 @@ test("the generated client typechecks on its own", async () => {
 
 Run: `cd plugins/rkt/skills/derive-client/scripts && bun test tests/generated-runs.test.ts`
 
-If Task 3's emitted source has any defect (unresolved import, syntax error, wrong dispatch), these tests fail here. Fix `lib/codegen.ts` until they pass; do not weaken the assertions. The `--dry-run` output must parse as JSON, which means the emitted dry-run branch must print exactly one JSON document.
+If Task 4's emitted source has any defect (unresolved import, syntax error, wrong dispatch), these tests fail here. Fix `lib/codegen.ts` until they pass; do not weaken the assertions. The `--dry-run` output must parse as JSON, which means the emitted dry-run branch must print exactly one JSON document.
 
 - [ ] **Step 3: Commit**
 
@@ -996,7 +1244,7 @@ git commit -m "test(derive-client): execute a generated client end to end"
 
 ---
 
-## Task 6: Structural no-secrets guarantee for generated output
+## Task 7: Structural no-secrets guarantee for generated output
 
 **Files:**
 - Create: `scripts/tests/nosecrets.test.ts`
@@ -1075,11 +1323,21 @@ test("no generated file contains the stored credential", async () => {
   }
 });
 
-test("the generated repo gitignores the directories that could hold secrets", async () => {
-  const out = join(workRoot, "clients");
+test("the generated repo gitignores everything that could hold a credential", async () => {
+  // Generate here rather than relying on the previous test's side effect, so
+  // this passes under -t filtering and any test ordering.
+  const dir = join(workRoot, "recording-gi");
+  await mkdir(dir, { recursive: true });
+  const manifestPath = join(dir, "client.json");
+  await writeFile(manifestPath, JSON.stringify(MANIFEST));
+  const out = join(workRoot, "clients-gi");
+  await generateClient(manifestPath, out);
+
   const gitignore = await readFile(join(out, ".gitignore"), "utf8");
   expect(gitignore).toContain("secrets/");
   expect(gitignore).toContain("recordings/");
+  // HAR files carry full session cookies wherever they land.
+  expect(gitignore).toContain("*.har");
 });
 ```
 
@@ -1104,42 +1362,49 @@ fi
 Plan 2 added `bunx tsc --noEmit` to this wrapper, which needs `@types/bun` from
 `node_modules`. The wrapper skips cleanly when `bun` is absent but not when
 dependencies are merely uninstalled, so on a fresh clone the suite **fails**
-with `TS2688: Cannot find type definition file for 'bun'` rather than skipping
-or self-healing. Verified on this repo: a checkout without
-`scripts/node_modules` fails, and `bun install` fixes it.
+with `TS2688: Cannot find type definition file for 'bun'`. Verified on this
+repo: a checkout without `scripts/node_modules` fails, and `bun install` fixes
+it.
 
-Install dependencies before the typecheck, replacing the bare
-`( cd "$SCRIPTS" && bunx tsc --noEmit )` line:
-
-```bash
-# The typecheck needs @types/bun; a fresh checkout has no node_modules yet.
-( cd "$SCRIPTS" && bun install --silent ) || {
-  echo "derive-client: bun install failed, skipping typecheck and unit tests" >&2
-  echo "OK (skipped: dependencies unavailable)"
-  exit 0
-}
-
-( cd "$SCRIPTS" && bunx tsc --noEmit )
-```
-
-Verify the fix actually addresses the reported case:
+Do **not** fix this by running `bun install` inside the wrapper. `tests/test-derive-client.sh`
+is one of twelve suite scripts, and AGENTS.md Guardrails require tests to be
+idempotent; installing would mutate `bun.lock` and `node_modules/` and require
+network on every run, pulling `playwright` and `fflate`. Skip the typecheck
+instead, and say so loudly:
 
 ```bash
-mv plugins/rkt/skills/derive-client/scripts/node_modules /tmp/rkt-nm-backup
-bash tests/test-derive-client.sh
+if [[ -d "$SCRIPTS/node_modules" ]]; then
+  ( cd "$SCRIPTS" && bunx tsc --noEmit )
+else
+  echo "derive-client: node_modules absent, skipping typecheck" >&2
+  echo "derive-client: run 'cd $SCRIPTS && bun install' to enable it" >&2
+fi
 ```
 
-Expected: PASS. The wrapper reinstalls dependencies and proceeds, rather than
-failing on the missing type definitions. (If the machine is offline, it prints
-the skip message and exits 0.) Restore afterwards if the reinstall did not
-already recreate it: `mv /tmp/rkt-nm-backup plugins/rkt/skills/derive-client/scripts/node_modules 2>/dev/null || true`
+The unit tests below it still run: `bun test` resolves the workspace's own
+source without `node_modules`, and only the typecheck needs the type package.
 
-- [ ] **Step 5: Verify the wrapper passes**
+- [ ] **Step 5: Verify the fix against the reported case**
+
+Use a throwaway clone rather than moving the real `node_modules`, so a failure
+cannot leave the working checkout broken:
+
+```bash
+TMPCLONE=$(mktemp -d)/rkt-stack
+git clone -q --no-hardlinks . "$TMPCLONE"
+( cd "$TMPCLONE" && git checkout -q "$(git rev-parse --abbrev-ref HEAD)" && bash tests/test-derive-client.sh )
+rm -rf "$(dirname "$TMPCLONE")"
+```
+
+Expected: PASS, with the skip message on stderr. Before this change the same
+clone fails with `TS2688`.
+
+- [ ] **Step 6: Verify the wrapper passes**
 
 Run: `bash tests/test-derive-client.sh`
 Expected: PASS, ending `OK`.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add plugins/rkt/skills/derive-client/scripts/tests/nosecrets.test.ts tests/test-derive-client.sh
@@ -1148,7 +1413,7 @@ git commit -m "test(derive-client): assert generated clients carry no credential
 
 ---
 
-## Task 7: Create the rkt-clients repo and generate the first real client
+## Task 8: Create the rkt-clients repo and generate the first real client
 
 **Files:** none in this repo. This task produces the private `rkt-clients` repo.
 
@@ -1193,8 +1458,12 @@ If the call returns 401 or 403, stop: the credential is wrong, expired, or bound
 cd "$OUT"
 git init -q
 git add -A
-git status --short | grep -E "secrets/|\.har" && echo "STOP: secrets or recordings staged" && exit 1
-git commit -q -m "feat: initial generated clients"
+if git diff --cached --name-only | grep -Ei "secrets/|\.har(\.zip)?$|\.env"; then
+  echo "STOP: credential-bearing files are staged. Unstage and fix .gitignore." >&2
+else
+  git commit -q -m "feat: initial generated clients"
+  echo "committed"
+fi
 ```
 
 The `.gitignore` written by the generator already excludes `secrets/` and `recordings/`; the grep above is a second check before anything is committed.
@@ -1213,7 +1482,7 @@ Report to the user: which site, how many commands, whether the live call matched
 
 ---
 
-## Task 8: SKILL.md generate step
+## Task 9: SKILL.md generate step
 
 **Files:**
 - Modify: `plugins/rkt/skills/derive-client/SKILL.md`
@@ -1271,18 +1540,24 @@ git commit -m "docs(derive-client): document the typed client generator"
 
 ---
 
-## Task 9: Release 0.6.0
+## Task 10: Release 0.6.0
 
 **Files:**
 - Modify: `plugins/rkt/CHANGELOG.md`
 - Modify: `plugins/rkt/.claude-plugin/plugin.json`
 - Modify: `plugins/rkt/.codex-plugin/plugin.json`
 
-This is the **only** task in this plan that touches a version number, per the amended `AGENTS.md` Release Flow that ships on this branch. Tasks 1 to 8 accumulate under `## [Unreleased]`.
+This is the **only** task in this plan that touches a version number, per the amended `AGENTS.md` Release Flow that ships on this branch. Tasks 1 to 9 accumulate under `## [Unreleased]`.
 
 - [ ] **Step 1: Confirm the accumulated entry**
 
-`plugins/rkt/CHANGELOG.md` should currently carry an `## [Unreleased]` section holding this plan's entries. If earlier tasks did not add them, write it now:
+`plugins/rkt/CHANGELOG.md` should carry an `## [Unreleased]` section created by Task 1 Step 7 and extended by later tasks. Verify it exists and holds this plan's entries:
+
+```bash
+grep -n "## \[Unreleased\]" plugins/rkt/CHANGELOG.md
+```
+
+If it is missing (earlier tasks skipped their CHANGELOG step), create it below the `# Changelog` heading with the full set now:
 
 ```markdown
 ## [Unreleased]
@@ -1353,27 +1628,27 @@ git push origin main v0.6.0
 
 | Spec requirement | Task |
 | --- | --- |
-| Bun/TypeScript CLI, one subcommand per endpoint | 3 |
-| Typed responses derived from recorded shapes | 1, 3 |
-| Readable identifiers over raw ids | 2 |
-| Shared runtime lib | 4 (copied allowlist) |
-| Generated client is standalone and cron-capable | 4 (no plugin imports), 5 (executes as a subprocess) |
-| Auth loaded from the gitignored secrets file | 3 (emitted `readSecret` call), 6 (no credential in output) |
-| Human-shaped rate limiting in generated clients | 3 (emitted `createLimiter`) — this is where the Plan 2 limiter finally has multiple calls to pace |
-| Pinned UA and client hints | 3, asserted live in 5 |
-| `--dry-run` with redaction | 3, asserted live in 5 |
-| Read mode only | 3 (`emitCli` refuses writes) |
-| `rkt-clients` repo with `.gitignore` for `secrets/` and `recordings/` | 4, verified in 6, enforced again in 7 Step 4 |
-| Private repo, no push without approval | 7 |
-| Smoke-test the real thing end to end | 5 (generated client runs), 7 (against a real site) |
-| Shape-not-value comparison | 7 Step 3, 8 |
-| Version bumped once at release, not per plan | 9 |
+| Bun/TypeScript CLI, one subcommand per endpoint | 4 |
+| Typed responses derived from recorded shapes | 2 (emission), 4 (`types.ts` imported and exposed as `ResponseFor`) |
+| Readable identifiers over raw ids | 3 |
+| Shared runtime lib | 5 (copied allowlist), closed by 1 |
+| Generated client is standalone and cron-capable | 1 (closed import graph), 5 (no plugin imports), 6 (executes as a subprocess) |
+| Auth loaded from the gitignored secrets file | 4 (emitted `readSecret` call), 7 (no credential in output) |
+| Human-shaped rate limiting in generated clients | 4 (emitted `createLimiter`) — this is where the Plan 2 limiter finally has multiple calls to pace |
+| Pinned UA and client hints | 4, asserted live in 6 |
+| `--dry-run` masks credentials | 4 (`maskHeaders` before serialization), asserted live in 6 |
+| Read mode only | 4 (`emitCli` refuses writes) |
+| `rkt-clients` repo with `.gitignore` for `secrets/`, `recordings/`, `*.har` | 5, verified in 7, enforced again in 8 Step 4 |
+| Private repo, no push without approval | 8 |
+| Smoke-test the real thing end to end | 6 (generated client runs), 8 (against a real site) |
+| Shape-not-value comparison | 8 Step 3, 9 |
+| Version bumped once at release, not per plan | 0 (policy present), 10 (single bump) |
 
 **Deferred to later plans, by design:** repair with `flows.json` replay and stale-endpoint retention (Plan 4), DOM scraper endpoints and `full` mode writes with the rollback journal (Plan 5).
 
 ## Open risks carried into execution
 
-1. **Task 5 is where emitted-source defects surface.** Tasks 1 to 4 test strings; Task 5 is the first to execute them. Expect to iterate on `emitCli` there. If the emitted dry-run branch prints anything other than exactly one JSON document, the test's `JSON.parse` fails, which is the intended signal.
+1. **Task 6 is where emitted-source defects surface.** Tasks 2 to 5 test strings; Task 6 is the first to execute them. Expect to iterate on `emitCli` there. If the emitted dry-run branch prints anything other than exactly one JSON document, the test's `JSON.parse` fails, which is the intended signal.
 2. **The copied runtime can drift.** `lib/` in `rkt-clients` is refreshed on every generate, but a client generated months ago and never regenerated runs old code. The copied-file header says where the source lives; Plan 4's repair path is the natural place to also refresh `lib/`.
-3. **A manifest with zero endpoints generates an empty CLI.** That is correct behavior for an HTML-only site, but the user should be told plainly rather than handed a client with no commands. Task 7 Step 5 covers reporting it.
+3. **A manifest with zero endpoints generates an empty CLI.** That is correct behavior for an HTML-only site, but the user should be told plainly rather than handed a client with no commands. Task 8 Step 5 covers reporting it.
 4. **`schemaVersion` is pinned at 1.** If Plan 5 makes `AuthSpec` a list (a live risk from Plan 2), generated clients from before the bump will refuse to load newer manifests. That is the intended fail-loud behavior, but it means regenerating every client at that point.
