@@ -7,10 +7,10 @@
  * Every executed command is appended to flows.jsonl so the repair path can
  * replay the session later.
  */
-import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { chromium } from "playwright";
 import { acquireLock } from "./lib/lock";
-import { profileDir, recordingDir, sanitizeSite } from "./lib/paths";
+import { profileDir, recordingDir, sanitizeSite, storageStateFile, secretsDir } from "./lib/paths";
 import { parseCommand } from "./lib/protocol";
 
 function arg(name: string): string | undefined {
@@ -145,6 +145,16 @@ async function main() {
         }
       }
     } finally {
+      // Persist the browser session BEFORE closing. Cookies that prove an SSO
+      // session are usually session-scoped, so closing the browser discards
+      // them and the profile directory alone cannot re-authenticate later.
+      try {
+        await mkdir(secretsDir(), { recursive: true, mode: 0o700 });
+        await context.storageState({ path: storageStateFile(sanitizedSite) });
+        await chmod(storageStateFile(sanitizedSite), 0o600);
+      } catch (err) {
+        respond({ ok: false, error: `could not save browser session: ${(err as Error).message}` });
+      }
       // The HAR is only written on close, so this must always run.
       await context.close();
       respond({ ok: true, event: "closed", site: sanitizedSite, recordingDir: outDir });

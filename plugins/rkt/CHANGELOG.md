@@ -41,6 +41,13 @@ fix below is a defect that run exposed.
 
 ### Added
 
+- **Browser sessions are serialized, not left to the profile directory.** The
+  cookie that proves an SSO session is typically session-scoped, and browsers
+  discard those on close, so a persistent profile could look authenticated
+  while being unable to authenticate. The recorder now saves Playwright
+  `storageState` (0600, beside the credentials, since it is credential
+  material) and re-auth restores it in preference to the profile directory.
+  This is what makes the browser renewal tier actually work across processes.
 - **Credential renewal.** Access tokens on real SPAs live minutes and
   can be as short as five minutes, so a statically captured credential is dead
   long before a scheduled job fires. Recordings are scanned for an OAuth token exchange (detected by

@@ -18,6 +18,18 @@ export function rktRoot(): string {
   return `${homedir()}/.rkt-clients`;
 }
 
+/**
+ * Serialized browser session for a site.
+ *
+ * Kept separately from the profile directory because the cookies that prove an
+ * SSO session are frequently session-scoped (no Max-Age), and a browser
+ * discards those on close. storageState() serializes them to disk, which is
+ * the only way a later process can reuse the session.
+ */
+export function storageStateFile(site: string): string {
+  return `${secretsDir()}/${sanitizeSite(site)}.storage-state.json`;
+}
+
 export function secretsDir(): string {
   return `${rktRoot()}/secrets`;
 }
