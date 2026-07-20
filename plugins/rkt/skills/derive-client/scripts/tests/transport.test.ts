@@ -102,7 +102,7 @@ test("issue refuses non-GET/HEAD before calling fetch", async () => {
   globalThis.fetch = (() => {
     fetchCalled = true;
     throw new Error("fetch should not be called");
-  }) as typeof fetch;
+  }) as unknown as typeof fetch;
 
   try {
     const built = {
