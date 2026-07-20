@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { HarEntry } from "../src/lib/har";
-import { detectCredentials, traceMintPoint } from "../src/lib/auth";
+import { detectCredentials, detectExpiry, traceMintPoint } from "../src/lib/auth";
 
 function entry(requestHeaders: Record<string, string>, url = "https://x.test/api/a"): HarEntry {
   return {
@@ -159,4 +159,68 @@ test("does not body-match a secret shorter than the safety floor", () => {
     respEntry("https://x.test/unrelated", {}, "the alphabet starts abc and continues"),
   ]);
   expect(mint).toBeNull();
+});
+
+/** Build an unsigned JWT with the given payload. The signature is irrelevant here. */
+function jwt(payload: Record<string, unknown>): string {
+  const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url");
+  return `${b64({ alg: "HS256", typ: "JWT" })}.${b64(payload)}.sig`;
+}
+
+test("reads the exp claim from a JWT bearer token", () => {
+  const exp = Math.floor(Date.parse("2026-08-01T00:00:00Z") / 1000);
+  const candidate = {
+    kind: "bearer" as const,
+    location: "authorization",
+    coverage: 1,
+    value: `Bearer ${jwt({ exp })}`,
+  };
+  expect(detectExpiry(candidate, [])).toBe("2026-08-01T00:00:00.000Z");
+});
+
+test("reads Expires from the matching set-cookie", () => {
+  const candidate = {
+    kind: "cookie" as const,
+    location: "cookie:sid",
+    coverage: 1,
+    value: "xyzxyzxyz",
+  };
+  const mint = respEntry("https://x.test/auth", {
+    "set-cookie": "sid=xyzxyzxyz; Expires=Sat, 01 Aug 2026 00:00:00 GMT; Path=/",
+  });
+  expect(detectExpiry(candidate, [mint])).toBe("2026-08-01T00:00:00.000Z");
+});
+
+test("computes expiry from Max-Age relative to the response time", () => {
+  const candidate = {
+    kind: "cookie" as const,
+    location: "cookie:sid",
+    coverage: 1,
+    value: "xyzxyzxyz",
+  };
+  const mint: HarEntry = {
+    ...respEntry("https://x.test/auth", { "set-cookie": "sid=xyzxyzxyz; Max-Age=3600" }),
+    startedDateTime: "2026-07-20T12:00:00.000Z",
+  };
+  expect(detectExpiry(candidate, [mint])).toBe("2026-07-20T13:00:00.000Z");
+});
+
+test("returns null for an opaque token with no expiry signal", () => {
+  const candidate = {
+    kind: "cookie" as const,
+    location: "cookie:sid",
+    coverage: 1,
+    value: "opaquevalue",
+  };
+  expect(detectExpiry(candidate, [])).toBeNull();
+});
+
+test("returns null rather than throwing on a malformed JWT", () => {
+  const candidate = {
+    kind: "bearer" as const,
+    location: "authorization",
+    coverage: 1,
+    value: "Bearer not.a.realjwt",
+  };
+  expect(detectExpiry(candidate, [])).toBeNull();
 });

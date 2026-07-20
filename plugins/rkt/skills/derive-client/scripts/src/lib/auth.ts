@@ -140,3 +140,61 @@ export function traceMintPoint(
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
+
+/**
+ * Best-effort expiry, as an ISO timestamp. A JWT exp claim wins; otherwise
+ * fall back to cookie attributes. Null means "not discoverable", not an error.
+ */
+export function detectExpiry(
+  candidate: CredentialCandidate,
+  entries: HarEntry[],
+): string | null {
+  const secret = candidate.kind === "bearer"
+    ? candidate.value.replace(/^bearer\s+/i, "")
+    : candidate.value;
+
+  const fromJwt = jwtExpiry(secret);
+  if (fromJwt) return fromJwt;
+
+  const cookieName = candidate.location.startsWith("cookie:")
+    ? candidate.location.slice("cookie:".length)
+    : null;
+  if (!cookieName) return null;
+
+  for (const e of entries) {
+    const setCookie = e.responseHeaders["set-cookie"];
+    if (!setCookie) continue;
+    if (
+      !new RegExp(`(^|[,;\\s])${escapeRegExp(cookieName)}=${escapeRegExp(secret)}`).test(setCookie)
+    ) {
+      continue;
+    }
+
+    const maxAge = setCookie.match(/Max-Age=(\d+)/i);
+    if (maxAge) {
+      const base = Date.parse(e.startedDateTime);
+      if (Number.isFinite(base)) {
+        return new Date(base + Number(maxAge[1]) * 1000).toISOString();
+      }
+    }
+
+    const expires = setCookie.match(/Expires=([^;,]+(?:,[^;]+)?)/i);
+    if (expires) {
+      const parsed = Date.parse(expires[1].trim());
+      if (Number.isFinite(parsed)) return new Date(parsed).toISOString();
+    }
+  }
+  return null;
+}
+
+function jwtExpiry(token: string): string | null {
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
+    if (typeof payload?.exp !== "number") return null;
+    return new Date(payload.exp * 1000).toISOString();
+  } catch {
+    return null;
+  }
+}
