@@ -79,7 +79,7 @@ test("falls back to the best available origin when every host looks third-party"
 
 test("classifies identity requests by path even on an unremarkable host", () => {
   expect(isIdentityRequest("https://example.com/realms/x/protocol/openid-connect/token")).toBe(true);
-  expect(isIdentityRequest("https://example.com/api/roster")).toBe(false);
+  expect(isIdentityRequest("https://example.com/api/items")).toBe(false);
 });
 
 test("third-party matching covers subdomains but not lookalikes", () => {

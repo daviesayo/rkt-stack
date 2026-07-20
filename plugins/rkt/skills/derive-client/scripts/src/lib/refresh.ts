@@ -3,9 +3,9 @@ import type { HarEntry } from "./har";
 /**
  * How a client re-authenticates when its stored credential goes stale.
  *
- * Real SPAs hold access tokens measured in minutes. AlayaCare's is 300s with
- * a 3600s refresh window, so a statically captured credential is dead long
- * before any cron fires. A derived client is only useful if it can renew.
+ * Real SPAs hold access tokens measured in minutes, often with a refresh
+ * window measured in hours, so a statically captured credential is dead long
+ * before a scheduled job fires. A derived client is only useful if it renews.
  */
 export type RefreshSpec =
   | {

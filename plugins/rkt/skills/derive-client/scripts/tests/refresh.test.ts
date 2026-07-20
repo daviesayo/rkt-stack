@@ -81,7 +81,7 @@ const manifest = (): ClientManifest => ({
   auth: null,
   authBundle: {
     credentials: [
-      { kind: "cookie", location: "cookie:PHPSESSID", mintedBy: null, expiry: null },
+      { kind: "cookie", location: "cookie:SESSIONID", mintedBy: null, expiry: null },
       { kind: "cookie", location: "cookie:X-Access-Token", mintedBy: null, expiry: null },
       { kind: "csrf", location: "x-csrf-token", mintedBy: null, expiry: null },
     ],
@@ -94,18 +94,18 @@ const manifest = (): ClientManifest => ({
 test("merges multiple cookies into one Cookie header and sets other credentials as headers", () => {
   const headers: Record<string, string> = {};
   applyCredentials(manifest(), headers, {
-    "cookie:PHPSESSID": "sess1",
+    "cookie:SESSIONID": "sess1",
     "cookie:X-Access-Token": "tok1",
     "x-csrf-token": "csrf1",
   });
-  expect(headers["cookie"]).toBe("PHPSESSID=sess1; X-Access-Token=tok1");
+  expect(headers["cookie"]).toBe("SESSIONID=sess1; X-Access-Token=tok1");
   expect(headers["x-csrf-token"]).toBe("csrf1");
 });
 
 test("skips credentials with no stored value rather than sending empty ones", () => {
   const headers: Record<string, string> = {};
-  applyCredentials(manifest(), headers, { "cookie:PHPSESSID": "sess1" });
-  expect(headers["cookie"]).toBe("PHPSESSID=sess1");
+  applyCredentials(manifest(), headers, { "cookie:SESSIONID": "sess1" });
+  expect(headers["cookie"]).toBe("SESSIONID=sess1");
   expect(headers["x-csrf-token"]).toBeUndefined();
 });
 
@@ -114,3 +114,18 @@ test("applies nothing when there is no secret at all", () => {
   applyCredentials(manifest(), headers, null);
   expect(Object.keys(headers)).toHaveLength(0);
 });
+
+// --- browser re-auth tier ---
+
+test("browser re-auth reports failure rather than a half-populated session", async () => {
+  const { reauthViaProfile } = await import("../src/lib/reauth");
+  // No profile exists for this site, so the launch cannot yield the wanted
+  // cookies. A null result is the signal that a human must re-record.
+  const result = await reauthViaProfile(
+    "definitely-not-a-recorded-site",
+    "https://app.test/",
+    ["cookie:SESSION"],
+    3000,
+  );
+  expect(result).toBeNull();
+}, 30000);

@@ -11,6 +11,7 @@ import { assertUnderRktRoot } from "./lib/paths";
 import { createLimiter } from "./lib/ratelimit";
 import { maskHeaders, readSecrets, redactAll, writeSecret } from "./lib/secrets";
 import { refreshViaOidc } from "./lib/refresh";
+import { reauthViaProfile } from "./lib/reauth";
 import { REFRESH_TOKEN_KEY } from "./derive";
 import { buildRequest, issue, type BuiltRequest } from "./lib/transport";
 
@@ -99,32 +100,54 @@ async function main() {
   const limiter = createLimiter();
   let { status, body } = await issue(built, limiter);
 
-  // Modern SPAs hold access tokens measured in minutes, so a 401 usually means
-  // "stale", not "wrong". Renew once and retry before reporting failure.
-  if (status === 401 && secret && manifest.refresh?.kind === "oidc") {
-    const rt = secret[REFRESH_TOKEN_KEY];
-    if (rt) {
-      console.error("credential rejected (401); refreshing via OIDC and retrying once...");
-      const renewed = await refreshViaOidc(manifest.refresh, rt, manifest.userAgent);
+  // A 401 on a derived client almost always means "stale", not "wrong".
+  // Renew and retry once before reporting failure. Tiers run cheapest first:
+  // an OIDC refresh is a single POST, while browser re-auth costs a headless
+  // Chrome launch but survives a refresh token that has also expired.
+  if (status === 401 && secret) {
+    let renewedValues: Record<string, string> | null = null;
+
+    if (manifest.refresh?.kind === "oidc" && secret[REFRESH_TOKEN_KEY]) {
+      console.error("credential rejected (401); refreshing via OIDC...");
+      const renewed = await refreshViaOidc(
+        manifest.refresh,
+        secret[REFRESH_TOKEN_KEY],
+        manifest.userAgent,
+      );
       if (renewed) {
-        const updated = { ...secret };
+        renewedValues = { ...secret };
         const cookieName = manifest.refresh.accessTokenCookie;
-        if (cookieName) updated[`cookie:${cookieName}`] = renewed.accessToken;
+        if (cookieName) renewedValues[`cookie:${cookieName}`] = renewed.accessToken;
         const bearer = manifest.authBundle?.credentials.find((c) => c.kind === "bearer");
-        if (bearer) updated[bearer.location] = `Bearer ${renewed.accessToken}`;
+        if (bearer) renewedValues[bearer.location] = `Bearer ${renewed.accessToken}`;
         // Providers rotate refresh tokens; persist the new one or the next
         // refresh fails against an already-consumed token.
-        if (renewed.refreshToken) updated[REFRESH_TOKEN_KEY] = renewed.refreshToken;
-        await writeSecret(manifest.site, updated);
+        if (renewed.refreshToken) renewedValues[REFRESH_TOKEN_KEY] = renewed.refreshToken;
+      } else {
+        console.error("OIDC refresh refused; falling back to browser re-auth...");
+      }
+    }
 
-        built = buildRequest(manifest, endpoint, params, updated);
-        ({ status, body } = await issue(built, limiter));
+    if (!renewedValues) {
+      const entryUrl =
+        manifest.refresh?.kind === "browser" ? manifest.refresh.entryUrl : `${manifest.baseUrl}/`;
+      const wanted = (manifest.authBundle?.credentials ?? []).map((c) => c.location);
+      console.error("re-authenticating with the recorded browser profile...");
+      const harvested = await reauthViaProfile(manifest.site, entryUrl, wanted);
+      if (harvested) {
+        renewedValues = { ...secret, ...harvested.values };
       } else {
         console.error(
-          "refresh was refused. The refresh token has likely expired too; " +
-            "re-run /derive-client to re-authenticate.",
+          `could not re-authenticate "${manifest.site}". The saved browser profile is no ` +
+            `longer signed in; re-run /derive-client to sign in again.`,
         );
       }
+    }
+
+    if (renewedValues) {
+      await writeSecret(manifest.site, renewedValues);
+      built = buildRequest(manifest, endpoint, params, renewedValues);
+      ({ status, body } = await issue(built, limiter));
     }
   }
 

@@ -24,8 +24,8 @@ function entry(url: string, body: string): HarEntry {
 
 const groups = () =>
   groupEndpoints([
-    entry("https://example.test/api/roster/4821", '{"shifts":[{"id":1}]}'),
-    entry("https://example.test/api/roster/9002", '{"shifts":[{"id":2}]}'),
+    entry("https://example.test/api/items/4821", '{"results":[{"id":1}]}'),
+    entry("https://example.test/api/items/9002", '{"results":[{"id":2}]}'),
   ]);
 
 test("builds a manifest with the pinned schema version", () => {
@@ -68,14 +68,14 @@ test("derives stable endpoint ids from method and template", () => {
     harSha256: "abc",
     recordedAt: "2026-07-20T12:00:00.000Z",
   });
-  expect(m.endpoints[0].id).toBe("get.api.roster.id");
-  expect(m.endpoints[0].pathTemplate).toBe("/api/roster/{id}");
+  expect(m.endpoints[0].id).toBe("get.api.items.id");
+  expect(m.endpoints[0].pathTemplate).toBe("/api/items/{id}");
   expect(m.endpoints[0].source).toBe("xhr");
   expect(m.endpoints[0].fragile).toBe(false);
 });
 
 test("marks HTML-sourced endpoints as fragile scrapes", () => {
-  const htmlEntry: HarEntry = { ...entry("https://example.test/roster", "<html></html>"), mimeType: "text/html" };
+  const htmlEntry: HarEntry = { ...entry("https://example.test/page", "<html></html>"), mimeType: "text/html" };
   const m = buildManifest({
     site: "example",
     groups: groupEndpoints([htmlEntry]),
@@ -124,7 +124,7 @@ test("multi-origin groups are an internal error, not a user-facing failure", () 
 const authedEntries: HarEntry[] = [
   {
     method: "GET",
-    url: "https://x.test/api/roster/4821",
+    url: "https://x.test/api/items/4821",
     status: 200,
     requestHeaders: {
       authorization: "Bearer abc.def.ghijkl",
@@ -132,7 +132,7 @@ const authedEntries: HarEntry[] = [
     },
     responseHeaders: {},
     mimeType: "application/json",
-    responseBody: '{"shifts":[]}',
+    responseBody: '{"results":[]}',
     postData: null,
     startedDateTime: "2026-07-20T12:00:00.000Z",
   },

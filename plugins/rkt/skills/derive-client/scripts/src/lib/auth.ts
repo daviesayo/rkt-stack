@@ -206,7 +206,7 @@ function jwtExpiry(token: string): string | null {
  *
  * Kept for compatibility with single-credential callers. Prefer
  * analyzeAuthBundle: real sites authenticate with several pieces at once
- * (AlayaCare needs a session cookie, an access-token cookie AND an
+ * (the site needs a session cookie, an access-token cookie AND an
  * x-csrf-token header), and picking only the highest-coverage one yields a
  * client that authenticates partially and 401s.
  */
@@ -261,14 +261,14 @@ export interface BundleAnalysis {
  * Coverage is measured against requests to the API origin only. Measuring it
  * against the whole recording (which includes assets, telemetry and the
  * identity handshake) pushes every real credential below any sane threshold:
- * on the AlayaCare recording the session cookie appeared on 131 of 654 total
- * entries, i.e. 20%, despite being present on essentially every API call.
+ * a session cookie can appear on a small fraction of total entries while
+ * being present on essentially every API call.
  */
 export function analyzeAuthBundle(apiEntries: HarEntry[], allEntries: HarEntry[]): BundleAnalysis {
   // Score against genuine API calls only. An app origin usually also serves
   // its own HTML and JS bundles, and counting those in the denominator sinks
-  // real credentials below any threshold: AlayaCare's x-csrf-token sits on
-  // 57% of its JSON calls but only 32% of all requests to that host.
+  // real credentials below any threshold: a CSRF header can ride most JSON
+  // calls while covering only a third of all requests to that host.
   const scored = apiEntries.filter(
     (e) => /json/i.test(e.mimeType) && e.status >= 200 && e.status < 300,
   );

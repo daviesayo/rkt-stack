@@ -2,8 +2,8 @@
 
 ## [Unreleased]
 
-Hardening pass driven by the first real run against a live site (AlayaCare).
-Every fix below is a defect that run exposed.
+Hardening pass driven by the first run against a real production site. Every
+fix below is a defect that run exposed.
 
 ### Fixed
 
@@ -13,16 +13,16 @@ Every fix below is a defect that run exposed.
   embedded chat widget and an identity provider fire on every page of a modern
   SPA. The primary API origin is now selected by JSON-response volume, with
   third-party and identity origins excluded and every dropped origin reported.
-  The AlayaCare recording spanned 10 origins and now derives 31 endpoints.
+  A recording spanning ten origins now derives cleanly.
 - **Credentials are captured as a bundle.** Only the single highest-coverage
   credential was kept, producing clients that authenticate partially and 401.
-  AlayaCare needs a session cookie, an access-token cookie and an
-  `x-csrf-token` header simultaneously; all three are now captured and applied,
-  with cookies merged into one header.
+  A site may need a session cookie, a separate access-token cookie and a CSRF
+  header simultaneously; all are now captured and applied, with cookies merged
+  into one header.
 - **Credential coverage is scored against API calls, not the whole recording.**
   An app origin also serves its own HTML and JS, which sank real credentials
-  below any threshold: the AlayaCare session cookie scored 20% despite riding
-  essentially every API call.
+  below any threshold: a session cookie can score 20% while riding essentially
+  every API call.
 - **Build-artifact JSON is no longer mistaken for API endpoints.** Micro-frontend
   and webpack manifests under `/shell/`, `/webapp/` and similar are dropped.
 - **The recorder no longer hangs on start.** Commands arrive via an append-only
@@ -36,13 +36,15 @@ Every fix below is a defect that run exposed.
 
 ### Added
 
-- **Credential renewal.** Access tokens on real SPAs live minutes: AlayaCare's
-  is 300 seconds, so a statically captured credential is dead long before any
-  cron fires. Recordings are scanned for an OAuth token exchange (detected by
+- **Credential renewal.** Access tokens on real SPAs live minutes and
+  can be as short as five minutes, so a statically captured credential is dead
+  long before a scheduled job fires. Recordings are scanned for an OAuth token exchange (detected by
   response shape, so it works for any standards-compliant provider rather than
   one vendor), and `call` performs the `refresh_token` grant and retries once on
   a 401, persisting rotated refresh tokens. Where no token exchange exists, the
-  manifest records a browser re-auth fallback using the recorded Chrome profile.
+  manifest records a browser re-auth tier: the recorded Chrome profile is
+  relaunched headless so the app mints a fresh token unattended, which is what
+  keeps a scheduled job signed in once the refresh window has also lapsed.
 - Manifests record `authBundle` and `refresh`; **`schemaVersion` is now 2**, and
   version 1 manifests are rejected rather than replayed with a dead credential.
 

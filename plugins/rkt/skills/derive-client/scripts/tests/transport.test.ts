@@ -3,9 +3,9 @@ import type { ClientManifest, ManifestEndpoint } from "../src/lib/manifest";
 import { buildRequest, issue } from "../src/lib/transport";
 
 const endpoint: ManifestEndpoint = {
-  id: "get.api.roster.id",
+  id: "get.api.items.id",
   method: "GET",
-  pathTemplate: "/api/roster/{id}",
+  pathTemplate: "/api/items/{id}",
   params: [
     { name: "id", in: "path", type: "number" },
     { name: "week", in: "query", type: "string" },
@@ -38,7 +38,7 @@ function manifest(
 
 test("substitutes path params and appends query params", () => {
   const built = buildRequest(manifest(null), endpoint, { id: "4821", week: "2026-W30" }, null);
-  expect(built.url).toBe("https://x.test/api/roster/4821?week=2026-W30");
+  expect(built.url).toBe("https://x.test/api/items/4821?week=2026-W30");
   expect(built.method).toBe("GET");
 });
 
@@ -80,7 +80,7 @@ test("applies a csrf credential to its recorded header", () => {
 
 test("omits query params the caller did not supply", () => {
   const built = buildRequest(manifest(null), endpoint, { id: "4821" }, null);
-  expect(built.url).toBe("https://x.test/api/roster/4821");
+  expect(built.url).toBe("https://x.test/api/items/4821");
 });
 
 test("throws a named error when a required path param is missing", () => {
@@ -91,7 +91,7 @@ test("throws a named error when a required path param is missing", () => {
 
 test("url-encodes param values", () => {
   const built = buildRequest(manifest(null), endpoint, { id: "a b/c", week: "x&y" }, null);
-  expect(built.url).toBe("https://x.test/api/roster/a%20b%2Fc?week=x%26y");
+  expect(built.url).toBe("https://x.test/api/items/a%20b%2Fc?week=x%26y");
 });
 
 test("refuses to build a request for a non-read method", () => {
@@ -125,7 +125,7 @@ test("allows http loopback when credentials are attached", () => {
     { id: "1" },
     "Bearer s3cr3tvalue",
   );
-  expect(built.url).toBe("http://localhost:3000/api/roster/1");
+  expect(built.url).toBe("http://localhost:3000/api/items/1");
 });
 
 test("issue refuses non-GET/HEAD before calling fetch", async () => {
@@ -138,7 +138,7 @@ test("issue refuses non-GET/HEAD before calling fetch", async () => {
 
   try {
     const built = {
-      url: "https://x.test/api/roster/1",
+      url: "https://x.test/api/items/1",
       method: "POST",
       headers: { accept: "application/json" },
     };

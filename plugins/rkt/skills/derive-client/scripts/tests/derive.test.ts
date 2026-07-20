@@ -40,7 +40,7 @@ test("derives a manifest end to end from the fixture HAR", async () => {
   // The .js asset is filtered out; only the roster API survives.
   expect(manifest.endpoints).toHaveLength(1);
   expect(manifest.endpoints[0].method).toBe("GET");
-  expect(manifest.endpoints[0].pathTemplate).toBe("/api/v2/roster/4821");
+  expect(manifest.endpoints[0].pathTemplate).toBe("/api/v2/items/4821");
   expect(dropped.some((d) => d.url.endsWith("app.js"))).toBe(true);
 });
 

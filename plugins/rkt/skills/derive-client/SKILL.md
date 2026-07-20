@@ -54,7 +54,7 @@ command -v bun >/dev/null || { echo "bun is required: https://bun.sh"; exit 1; }
 ## Step 2: Start the recorder
 
 Pick a **site slug** once (lowercase letters, digits, and hyphens only — e.g.
-`alayacare` or `alaya-care`; dots and other punctuation are rejected) and reuse
+`example-app`; dots and other punctuation are rejected) and reuse
 the exact same `SITE=...` value in every command below. Each bash snippet is
 self-contained; shell variables and file descriptors do not carry over between
 tool calls.
@@ -170,7 +170,7 @@ through a Service Worker, which HAR recording cannot see.
 `derive.ts` reports what it found, for example:
 
 ```
-Stored cookie credential for "alayacare" at 0600 (location: cookie:sessionid).
+Stored cookie credential for "example-app" at 0600 (location: cookie:sessionid).
 Credential expires: 2026-08-01T00:00:00.000Z
 ```
 
@@ -199,6 +199,22 @@ changes between recording and replay.
 
 A 401 or 403 means the credential is wrong, expired, or bound to something the
 transport does not replay. Re-record rather than guessing.
+
+### Staying authenticated
+
+Access tokens on modern apps expire in minutes, so `call` renews automatically
+rather than making you re-record. It tries, in order:
+
+1. The stored credential as-is.
+2. An OAuth `refresh_token` grant, when the recording contained a token
+   exchange. One POST, no browser.
+3. The recorded browser profile, launched headless. The identity provider's own
+   session cookie outlives the access token by a long way, so loading the app
+   with that profile makes it mint a fresh token unattended.
+
+Rotated tokens are written back, so a scheduled job stays signed in without
+help. Only when the profile itself is no longer signed in does a human need to
+re-run this skill.
 
 Only GET and HEAD endpoints can be called. Recorded writes are excluded from
 the manifest in read mode, and `call` refuses them even if one appears.

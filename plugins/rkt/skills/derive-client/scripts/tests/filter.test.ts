@@ -24,7 +24,7 @@ test("keeps JSON API responses", () => {
 
 test("keeps HTML documents, which may carry scrape-only data", () => {
   const { kept } = filterEntries([
-    entry({ mimeType: "text/html", url: "https://example.test/roster" }),
+    entry({ mimeType: "text/html", url: "https://example.test/page" }),
   ]);
   expect(kept).toHaveLength(1);
 });
