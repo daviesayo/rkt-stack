@@ -8,7 +8,7 @@ let workRoot: string;
 let outRoot: string;
 
 const MANIFEST = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   site: "runs",
   baseUrl: "https://x.test",
   recordedAt: "2026-07-20T12:00:00.000Z",
@@ -16,6 +16,8 @@ const MANIFEST = {
   userAgent: "Mozilla/5.0 Chrome/141.0.0.0",
   clientHints: { "sec-ch-ua": '"Chromium";v="141"' },
   auth: null,
+  authBundle: null,
+  refresh: null,
   endpoints: [
     {
       id: "get.api.roster.id",

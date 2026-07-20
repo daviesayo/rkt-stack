@@ -136,7 +136,7 @@ test("typeName converts a command to PascalCase with a Response suffix", () => {
 });
 
 const manifest: ClientManifest = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   site: "example",
   baseUrl: "https://x.test",
   recordedAt: "2026-07-20T12:00:00.000Z",
@@ -144,12 +144,14 @@ const manifest: ClientManifest = {
   userAgent: "Mozilla/5.0 Chrome/141.0.0.0",
   clientHints: {},
   auth: { kind: "cookie", location: "cookie:sessionid", mintedBy: null, expiry: null },
+  authBundle: null,
+  refresh: null,
   endpoints: [
     ep({
       id: "get.api.roster.id",
       params: [
-        { name: "id", in: "path", type: "number" },
-        { name: "week", in: "query", type: "string" },
+        { name: "id", in: "path", type: "number", required: true, example: "4821" },
+        { name: "week", in: "query", type: "string", required: true, example: "2026-W30" },
       ],
       responseShape: {
         type: "object",
@@ -197,4 +199,13 @@ test("emitCli throws on a write-method endpoint", () => {
     endpoints: [ep({ id: "delete.api.shift.id", method: "DELETE" })],
   };
   expect(() => emitCli(bad)).toThrow(/GET and HEAD only/i);
+});
+
+test("emitCli emits renewal imports and param metadata in COMMANDS", () => {
+  const src = emitCli(manifest);
+  expect(src).toContain("readSecrets");
+  expect(src).toContain("refreshViaOidc");
+  expect(src).toContain("reauthViaProfile");
+  expect(src).toContain('"required": true');
+  expect(src).toContain('"example": "2026-W30"');
 });

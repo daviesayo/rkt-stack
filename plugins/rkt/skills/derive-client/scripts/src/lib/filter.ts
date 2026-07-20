@@ -31,6 +31,15 @@ const ANALYTICS_HOSTS = [
 
 const DATA_MIME = /json|text\/html|xml/i;
 
+/**
+ * JSON that is shipped as a build artifact rather than served by an API:
+ * micro-frontend manifests, webpack/federation manifests, i18n bundles,
+ * source maps. These pass a mime-type check but are not endpoints, and on a
+ * modern SPA they outnumber the real API surface.
+ */
+const STATIC_JSON_PATH =
+  /\.(json|map)$|\/(shell|assets?|static|build|dist|locales?|i18n|webapp)\//i;
+
 const READ_METHODS = new Set(["GET", "HEAD"]);
 
 export interface FilterOptions {
@@ -79,6 +88,10 @@ export function filterEntries(
     }
     if (!DATA_MIME.test(e.mimeType)) {
       dropped.push({ url: e.url, reason: `non-data content type (${e.mimeType})` });
+      continue;
+    }
+    if (/json/i.test(e.mimeType) && STATIC_JSON_PATH.test(new URL(e.url).pathname)) {
+      dropped.push({ url: e.url, reason: "build artifact, not an API endpoint" });
       continue;
     }
     kept.push(e);

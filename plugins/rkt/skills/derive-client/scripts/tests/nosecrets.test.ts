@@ -10,7 +10,7 @@ let workRoot: string;
 const ORIGINAL_ROOT = process.env.RKT_CLIENTS_ROOT;
 
 const MANIFEST = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   site: "nosecrets",
   baseUrl: "https://x.test",
   recordedAt: "2026-07-20T12:00:00.000Z",
@@ -18,6 +18,8 @@ const MANIFEST = {
   userAgent: "Mozilla/5.0 Chrome/141.0.0.0",
   clientHints: {},
   auth: { kind: "cookie", location: "cookie:sessionid", mintedBy: null, expiry: null },
+  authBundle: null,
+  refresh: null,
   endpoints: [
     {
       id: "get.api.roster.id",

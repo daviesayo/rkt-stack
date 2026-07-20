@@ -14,15 +14,15 @@ test("infers a flat object with scalar types", () => {
 });
 
 test("infers arrays from their first element", () => {
-  expect(inferShape(['{"shifts":[{"id":1}]}'])).toEqual({
+  expect(inferShape(['{"results":[{"id":1}]}'])).toEqual({
     type: "object",
     properties: {
-      shifts: {
+      results: {
         type: "array",
         items: { type: "object", properties: { id: { type: "number" } }, required: ["id"] },
       },
     },
-    required: ["shifts"],
+    required: ["results"],
   });
 });
 

@@ -1,5 +1,7 @@
 import type { HarEntry } from "./har";
-import type { AuthSpec } from "./manifest";
+import type { AuthBundle, AuthSpec } from "./manifest-schema";
+
+export type { AuthBundle } from "./manifest-schema";
 
 export interface CredentialCandidate {
   kind: "cookie" | "bearer" | "csrf";
@@ -203,6 +205,12 @@ function jwtExpiry(token: string): string | null {
 /**
  * Run all three passes and split the result: the spec is manifest-safe, the
  * value is secret. Callers must never merge them.
+ *
+ * Kept for compatibility with single-credential callers. Prefer
+ * analyzeAuthBundle: real sites authenticate with several pieces at once
+ * (the site needs a session cookie, an access-token cookie AND an
+ * x-csrf-token header), and picking only the highest-coverage one yields a
+ * client that authenticates partially and 401s.
  */
 export function analyzeAuth(
   entries: HarEntry[],
@@ -218,5 +226,99 @@ export function analyzeAuth(
       expiry: detectExpiry(primary, entries),
     },
     value: primary.value,
+  };
+}
+
+/**
+ * Fraction of authenticated API requests a credential must appear on to be
+ * considered part of the bundle. Below this it is incidental (a one-off
+ * header on a single endpoint) rather than session material.
+ */
+/**
+ * Deliberately low. The costs are asymmetric: including a credential the API
+ * does not need costs one extra header on the wire, while omitting one it does
+ * need costs a 401 that looks like an auth bug. CSRF tokens in particular ride
+ * only a subset of requests by design, so a majority threshold excludes them
+ * exactly when they matter.
+ */
+export const BUNDLE_COVERAGE_THRESHOLD = 0.1;
+
+
+export interface BundleAnalysis {
+  bundle: AuthBundle | null;
+  /** location -> secret value. Never enters a manifest. */
+  values: Record<string, string>;
+  /** Candidates seen but excluded, for the confirmation gate. */
+  rejected: Array<{ location: string; coverage: number; reason: string }>;
+}
+
+/**
+ * Detect every credential the API origin actually requires.
+ *
+ * Coverage is measured against requests to the API origin only. Measuring it
+ * against the whole recording (which includes assets, telemetry and the
+ * identity handshake) pushes every real credential below any sane threshold:
+ * a session cookie can appear on a small fraction of total entries while
+ * being present on essentially every API call.
+ */
+export function analyzeAuthBundle(apiEntries: HarEntry[], allEntries: HarEntry[]): BundleAnalysis {
+  // Score against genuine API calls only. An app origin usually also serves
+  // its own HTML and JS bundles, and counting those in the denominator sinks
+  // real credentials below any threshold: a CSRF header can ride most JSON
+  // calls while covering only a third of all requests to that host.
+  const scored = apiEntries.filter(
+    (e) => /json/i.test(e.mimeType) && e.status >= 200 && e.status < 300,
+  );
+  const candidates = detectCredentials(scored.length > 0 ? scored : apiEntries);
+  if (candidates.length === 0) {
+    return { bundle: null, values: {}, rejected: [] };
+  }
+
+  const credentials: AuthSpec[] = [];
+  const values: Record<string, string> = {};
+  const rejected: BundleAnalysis["rejected"] = [];
+
+  for (const c of candidates) {
+    if (c.coverage < BUNDLE_COVERAGE_THRESHOLD) {
+      rejected.push({
+        location: c.location,
+        coverage: c.coverage,
+        reason: `appears on ${Math.round(c.coverage * 100)}% of API requests, below the ${Math.round(
+          BUNDLE_COVERAGE_THRESHOLD * 100,
+        )}% bundle threshold`,
+      });
+      continue;
+    }
+    credentials.push({
+      kind: c.kind,
+      location: c.location,
+      mintedBy: traceMintPoint(c, allEntries),
+      expiry: detectExpiry(c, allEntries),
+    });
+    values[c.location] = c.value;
+  }
+
+  if (credentials.length === 0) {
+    // Everything fell below threshold. Keep the strongest rather than
+    // producing a client with no auth at all.
+    const best = candidates[0];
+    credentials.push({
+      kind: best.kind,
+      location: best.location,
+      mintedBy: traceMintPoint(best, allEntries),
+      expiry: detectExpiry(best, allEntries),
+    });
+    values[best.location] = best.value;
+  }
+
+  const expiries = credentials
+    .map((c) => c.expiry)
+    .filter((x): x is string => typeof x === "string")
+    .sort();
+
+  return {
+    bundle: { credentials, earliestExpiry: expiries[0] ?? null },
+    values,
+    rejected,
   };
 }

@@ -9,7 +9,9 @@ import { resolve } from "node:path";
 import { validateManifest } from "./lib/manifest";
 import { assertUnderRktRoot } from "./lib/paths";
 import { createLimiter } from "./lib/ratelimit";
-import { maskHeaders, readSecret, redact } from "./lib/secrets";
+import { maskHeaders, readSecrets, redactAll, REFRESH_TOKEN_KEY, writeSecret } from "./lib/secrets";
+import { refreshViaOidc } from "./lib/refresh";
+import { reauthViaProfile } from "./lib/reauth";
 import { buildRequest, issue, type BuiltRequest } from "./lib/transport";
 
 export function parseParams(argv: string[]): Record<string, string> {
@@ -24,7 +26,10 @@ export function parseParams(argv: string[]): Record<string, string> {
   return out;
 }
 
-export function formatDryRunPreview(built: BuiltRequest, secret: string | null): string {
+export function formatDryRunPreview(
+  built: BuiltRequest,
+  secret: Record<string, string> | string | null,
+): string {
   const preview = {
     method: built.method,
     url: built.url,
@@ -66,7 +71,7 @@ async function main() {
     process.exit(1);
   }
 
-  const secret = await readSecret(manifest.site);
+  const secret = await readSecrets(manifest.site);
   if (manifest.auth && !secret) {
     console.error(
       `no stored credential for "${manifest.site}". Re-run derive on a recording ` +
@@ -83,22 +88,74 @@ async function main() {
   }
 
   // Throws for any non-GET/HEAD endpoint.
-  const built = buildRequest(manifest, endpoint, parseParams(process.argv), secret);
+  const params = parseParams(process.argv);
+  let built = buildRequest(manifest, endpoint, params, secret);
 
   if (process.argv.includes("--dry-run")) {
     console.log(formatDryRunPreview(built, secret));
     return;
   }
 
-  const { status, body } = await issue(built, createLimiter());
+  const limiter = createLimiter();
+  let { status, body } = await issue(built, limiter);
+
+  // A 401 on a derived client almost always means "stale", not "wrong".
+  // Renew and retry once before reporting failure. Tiers run cheapest first:
+  // an OIDC refresh is a single POST, while browser re-auth costs a headless
+  // Chrome launch but survives a refresh token that has also expired.
+  if (status === 401 && secret) {
+    let renewedValues: Record<string, string> | null = null;
+
+    if (manifest.refresh?.kind === "oidc" && secret[REFRESH_TOKEN_KEY]) {
+      console.error("credential rejected (401); refreshing via OIDC...");
+      const renewed = await refreshViaOidc(
+        manifest.refresh,
+        secret[REFRESH_TOKEN_KEY],
+        manifest.userAgent,
+      );
+      if (renewed) {
+        renewedValues = { ...secret };
+        const cookieName = manifest.refresh.accessTokenCookie;
+        if (cookieName) renewedValues[`cookie:${cookieName}`] = renewed.accessToken;
+        const bearer = manifest.authBundle?.credentials.find((c) => c.kind === "bearer");
+        if (bearer) renewedValues[bearer.location] = `Bearer ${renewed.accessToken}`;
+        // Providers rotate refresh tokens; persist the new one or the next
+        // refresh fails against an already-consumed token.
+        if (renewed.refreshToken) renewedValues[REFRESH_TOKEN_KEY] = renewed.refreshToken;
+      } else {
+        console.error("OIDC refresh refused; falling back to browser re-auth...");
+      }
+    }
+
+    if (!renewedValues) {
+      const entryUrl =
+        manifest.refresh?.kind === "browser" ? manifest.refresh.entryUrl : `${manifest.baseUrl}/`;
+      const wanted = (manifest.authBundle?.credentials ?? []).map((c) => c.location);
+      console.error("re-authenticating with the recorded browser profile...");
+      const harvested = await reauthViaProfile(manifest.site, entryUrl, wanted);
+      if (harvested) {
+        renewedValues = { ...secret, ...harvested.values };
+      } else {
+        console.error(
+          `could not re-authenticate "${manifest.site}". The saved browser profile is no ` +
+            `longer signed in; re-run /derive-client to sign in again.`,
+        );
+      }
+    }
+
+    if (renewedValues) {
+      await writeSecret(manifest.site, renewedValues);
+      built = buildRequest(manifest, endpoint, params, renewedValues);
+      ({ status, body } = await issue(built, limiter));
+    }
+  }
+
   if (status >= 400) {
     console.error(`HTTP ${status}`);
-    // Redact BEFORE truncating: a secret straddling the cut would otherwise
-    // leak its prefix.
-    console.error(redact(body, secret).slice(0, 2000));
+    console.error(redactAll(body, secret).slice(0, 2000));
     process.exit(1);
   }
-  console.log(redact(body, secret));
+  console.log(redactAll(body, secret));
 }
 
 if (import.meta.main) {

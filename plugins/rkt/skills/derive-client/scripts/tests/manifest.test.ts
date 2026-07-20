@@ -21,14 +21,15 @@ function entry(url: string, body: string): HarEntry {
     responseHeaders: {},
     mimeType: "application/json",
     responseBody: body,
+    postData: null,
     startedDateTime: "2026-07-20T12:00:00.000Z",
   };
 }
 
 const groups = () =>
   groupEndpoints([
-    entry("https://example.test/api/roster/4821", '{"shifts":[{"id":1}]}'),
-    entry("https://example.test/api/roster/9002", '{"shifts":[{"id":2}]}'),
+    entry("https://example.test/api/items/4821", '{"results":[{"id":1}]}'),
+    entry("https://example.test/api/items/9002", '{"results":[{"id":2}]}'),
   ]);
 
 test("builds a manifest with the pinned schema version", () => {
@@ -62,6 +63,8 @@ test("emits auth as null, to be filled by the auth pass", () => {
     recordedAt: "2026-07-20T12:00:00.000Z",
   });
   expect(m.auth).toBeNull();
+  expect(m.authBundle).toBeNull();
+  expect(m.refresh).toBeNull();
 });
 
 test("derives stable endpoint ids from method and template", () => {
@@ -71,14 +74,14 @@ test("derives stable endpoint ids from method and template", () => {
     harSha256: "abc",
     recordedAt: "2026-07-20T12:00:00.000Z",
   });
-  expect(m.endpoints[0].id).toBe("get.api.roster.id");
-  expect(m.endpoints[0].pathTemplate).toBe("/api/roster/{id}");
+  expect(m.endpoints[0].id).toBe("get.api.items.id");
+  expect(m.endpoints[0].pathTemplate).toBe("/api/items/{id}");
   expect(m.endpoints[0].source).toBe("xhr");
   expect(m.endpoints[0].fragile).toBe(false);
 });
 
 test("marks HTML-sourced endpoints as fragile scrapes", () => {
-  const htmlEntry: HarEntry = { ...entry("https://example.test/roster", "<html></html>"), mimeType: "text/html" };
+  const htmlEntry: HarEntry = { ...entry("https://example.test/page", "<html></html>"), mimeType: "text/html" };
   const m = buildManifest({
     site: "example",
     groups: groupEndpoints([htmlEntry]),
@@ -106,10 +109,10 @@ test("validateManifest rejects an unknown schema version", () => {
 });
 
 test("validateManifest rejects a manifest with no endpoints array", () => {
-  expect(() => validateManifest({ schemaVersion: 1, site: "x" })).toThrow(/endpoints/i);
+  expect(() => validateManifest({ schemaVersion: 2, site: "x" })).toThrow(/endpoints/i);
 });
 
-test("rejects endpoint groups spanning multiple origins", () => {
+test("multi-origin groups are an internal error, not a user-facing failure", () => {
   const groups = groupEndpoints([
     entry("https://example.test/api/me", "{}"),
     entry("https://api.example.test/api/me", "{}"),
@@ -121,13 +124,13 @@ test("rejects endpoint groups spanning multiple origins", () => {
       harSha256: "abc",
       recordedAt: "2026-07-20T12:00:00.000Z",
     }),
-  ).toThrow(/multiple origins/i);
+  ).toThrow(/internal: buildManifest received 2 origins/i);
 });
 
 const authedEntries: HarEntry[] = [
   {
     method: "GET",
-    url: "https://x.test/api/roster/4821",
+    url: "https://x.test/api/items/4821",
     status: 200,
     requestHeaders: {
       authorization: "Bearer abc.def.ghijkl",
@@ -135,7 +138,8 @@ const authedEntries: HarEntry[] = [
     },
     responseHeaders: {},
     mimeType: "application/json",
-    responseBody: '{"shifts":[]}',
+    responseBody: '{"results":[]}',
+    postData: null,
     startedDateTime: "2026-07-20T12:00:00.000Z",
   },
 ];
@@ -178,7 +182,7 @@ test("auth remains null when the analysis found nothing", () => {
 });
 
 test("manifest-schema exports the schema half independently", () => {
-  expect(SCHEMA_VERSION_FROM_SCHEMA).toBe(1);
+  expect(SCHEMA_VERSION_FROM_SCHEMA).toBe(2);
   expect(() => validateFromSchema({ schemaVersion: 99, site: "x", endpoints: [] })).toThrow(
     /schema version/i,
   );
@@ -204,7 +208,7 @@ test("manifest-schema has no runtime import outside the copyable set", async () 
 test("validateManifest rejects a site with path separators or ..", () => {
   for (const site of ["../evil", "foo/bar", "foo\\bar", ".."]) {
     expect(() =>
-      validateManifest({ schemaVersion: 1, site, endpoints: [] }),
+      validateManifest({ schemaVersion: 2, site, endpoints: [] }),
     ).toThrow(/single path segment/i);
   }
 });

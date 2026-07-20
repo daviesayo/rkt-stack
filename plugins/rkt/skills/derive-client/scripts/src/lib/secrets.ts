@@ -1,9 +1,15 @@
 import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { secretsDir, secretsFile } from "./paths";
 
+/** Reserved secrets key for the OAuth refresh token. */
+export const REFRESH_TOKEN_KEY = "@refresh_token";
+
 interface SecretBody {
-  value: string;
+  /** location -> value, e.g. {"cookie:PHPSESSID": "...", "x-csrf-token": "..."} */
+  values: Record<string, string>;
   storedAt: string;
+  /** Legacy single-value field, read for forward compat only. */
+  value?: string;
 }
 
 /**
@@ -14,7 +20,10 @@ interface SecretBody {
  * until a follow-up chmod. Writing a fresh 0600 temp file and renaming it
  * into place closes that window: rename is atomic and keeps the source mode.
  */
-export async function writeSecret(site: string, value: string): Promise<void> {
+export async function writeSecret(
+  site: string,
+  values: Record<string, string> | string,
+): Promise<void> {
   const dir = secretsDir();
   await mkdir(dir, { recursive: true, mode: 0o700 });
   // mkdir ignores mode when the directory already exists.
@@ -22,7 +31,8 @@ export async function writeSecret(site: string, value: string): Promise<void> {
 
   const finalPath = secretsFile(site);
   const tmpPath = `${finalPath}.${process.pid}.tmp`;
-  const body: SecretBody = { value, storedAt: new Date().toISOString() };
+  const normalized = typeof values === "string" ? { default: values } : values;
+  const body: SecretBody = { values: normalized, storedAt: new Date().toISOString() };
 
   try {
     await writeFile(tmpPath, `${JSON.stringify(body, null, 2)}\n`, { mode: 0o600 });
@@ -34,13 +44,37 @@ export async function writeSecret(site: string, value: string): Promise<void> {
   }
 }
 
-export async function readSecret(site: string): Promise<string | null> {
+/** All stored credentials for a site, keyed by location. */
+export async function readSecrets(site: string): Promise<Record<string, string> | null> {
   try {
     const body = JSON.parse(await readFile(secretsFile(site), "utf8")) as SecretBody;
-    return typeof body.value === "string" ? body.value : null;
+    if (body.values && typeof body.values === "object") return body.values;
+    if (typeof body.value === "string") return { default: body.value };
+    return null;
   } catch {
     return null;
   }
+}
+
+/** Single-credential accessor, kept for callers that only need one value. */
+export async function readSecret(site: string): Promise<string | null> {
+  const all = await readSecrets(site);
+  if (!all) return null;
+  return Object.values(all)[0] ?? null;
+}
+
+/** Redact every value in a bundle, longest first so substrings cannot survive. */
+export function redactAll(
+  text: string,
+  values: Record<string, string> | string | null,
+): string {
+  if (!values) return text;
+  if (typeof values === "string") return redact(text, values);
+  let out = text;
+  for (const v of Object.values(values).sort((a, b) => b.length - a.length)) {
+    out = redact(out, v);
+  }
+  return out;
 }
 
 /**
@@ -70,8 +104,17 @@ export function redact(text: string, secret: string | null): string {
  */
 export function maskHeaders(
   headers: Record<string, string>,
-  secret: string | null,
+  secret: Record<string, string> | string | null,
 ): Record<string, string> {
+  if (secret && typeof secret === "object") {
+    // Mask longest-first so a short value cannot leave a longer one partly
+    // visible after substitution.
+    let out = { ...headers };
+    for (const v of Object.values(secret).sort((a, b) => b.length - a.length)) {
+      out = maskHeaders(out, v);
+    }
+    return out;
+  }
   if (!secret || secret.length === 0) return { ...headers };
 
   const bare = secret.replace(/^bearer\s+/i, "");

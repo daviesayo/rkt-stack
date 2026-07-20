@@ -17,12 +17,14 @@ export interface GeneratedFiles {
 /**
  * Runtime modules copied into the generated repo.
  *
- * manifest-schema.ts is self-contained (ParamSpec and JsonShape live there).
- * transport.ts imports manifest-schema type-only, secrets.ts imports paths.ts.
- * Copying manifest.ts instead would drag in synthesize.ts and har.ts, i.e. the
- * whole derivation pipeline, for one function.
+ * manifest-schema.ts is self-contained (ParamSpec, JsonShape, RefreshSpec).
+ * refresh.ts re-exports RefreshSpec and implements OIDC renewal without har.ts.
+ * reauth.ts depends on paths.ts and playwright (dev-time only for browser tier).
+ * transport.ts imports manifest-schema type-only; secrets.ts imports paths.ts.
+ * Copying manifest.ts or refresh-detect.ts would drag in the derivation pipeline.
  *
- * If you add a file here, re-run the closure probe from Task 1 Step 6.
+ * If you add a file here, re-run the closure probe: generate into a temp dir,
+ * bun install, and tsc --noEmit in the generated out.
  */
 const RUNTIME_FILES = [
   "paths.ts",
@@ -30,6 +32,8 @@ const RUNTIME_FILES = [
   "secrets.ts",
   "ratelimit.ts",
   "transport.ts",
+  "refresh.ts",
+  "reauth.ts",
 ];
 
 const COPIED_HEADER = `// Copied from the rkt derive-client skill. Do not edit here.

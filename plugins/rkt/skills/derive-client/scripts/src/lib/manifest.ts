@@ -1,9 +1,9 @@
+import type { AuthBundle, AuthSpec, ClientManifest, ManifestEndpoint, RefreshSpec } from "./manifest-schema";
 import type { EndpointGroup } from "./synthesize";
 import { inferShape } from "./synthesize";
-import type { AuthSpec, ClientManifest, ManifestEndpoint } from "./manifest-schema";
 import { SCHEMA_VERSION, validateManifest } from "./manifest-schema";
 
-export type { AuthSpec, ClientManifest, ManifestEndpoint } from "./manifest-schema";
+export type { AuthSpec, AuthBundle, ClientManifest, ManifestEndpoint, RefreshSpec } from "./manifest-schema";
 export { SCHEMA_VERSION, validateManifest } from "./manifest-schema";
 
 export interface BuildManifestInput {
@@ -12,6 +12,8 @@ export interface BuildManifestInput {
   harSha256: string;
   recordedAt: string;
   auth?: AuthSpec | null;
+  authBundle?: AuthBundle | null;
+  refresh?: RefreshSpec | null;
 }
 
 function endpointId(method: string, pathTemplate: string): string {
@@ -25,13 +27,17 @@ function endpointId(method: string, pathTemplate: string): string {
 
 export function buildManifest(input: BuildManifestInput): ClientManifest {
   const { site, groups, harSha256, recordedAt } = input;
+  // Origin selection happens in derive.ts before grouping, so by here every
+  // group shares one origin. Kept as an assertion rather than the old
+  // hard-fail, which made any multi-origin SPA underivable.
   const origins = new Set(groups.map((g) => g.origin));
   if (origins.size > 1) {
-    const listed = [...origins].sort().join(", ");
     throw new Error(
-      `recording spans multiple origins (${listed}); Plan 1 supports one API origin per manifest — record a narrower section or wait for origin-qualified endpoint ids (Plan 2)`,
+      `internal: buildManifest received ${origins.size} origins (${[...origins].sort().join(", ")}); ` +
+        `derive.ts must select a primary origin before grouping`,
     );
   }
+
   const first = groups[0]?.samples[0];
 
   const endpoints: ManifestEndpoint[] = groups.map((g) => {
@@ -66,6 +72,8 @@ export function buildManifest(input: BuildManifestInput): ClientManifest {
     userAgent: first?.requestHeaders["user-agent"] ?? "",
     clientHints,
     auth: input.auth ?? null,
+    authBundle: input.authBundle ?? null,
+    refresh: input.refresh ?? null,
     endpoints,
   };
 }

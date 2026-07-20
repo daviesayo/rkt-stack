@@ -8,7 +8,7 @@ let workRoot: string;
 let manifestPath: string;
 
 const MANIFEST = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   site: "example",
   baseUrl: "https://x.test",
   recordedAt: "2026-07-20T12:00:00.000Z",
@@ -16,6 +16,8 @@ const MANIFEST = {
   userAgent: "Mozilla/5.0 Chrome/141.0.0.0",
   clientHints: {},
   auth: { kind: "cookie", location: "cookie:sessionid", mintedBy: null, expiry: null },
+  authBundle: null,
+  refresh: null,
   endpoints: [
     {
       id: "get.api.roster.id",
@@ -55,7 +57,7 @@ test("scaffolds the repo with a gitignore covering secrets and recordings", asyn
 test("copies the shared runtime into lib/", async () => {
   const out = join(workRoot, "clients-b");
   await generateClient(manifestPath, out);
-  for (const f of ["paths.ts", "manifest-schema.ts", "secrets.ts", "ratelimit.ts", "transport.ts"]) {
+  for (const f of ["paths.ts", "manifest-schema.ts", "secrets.ts", "ratelimit.ts", "transport.ts", "refresh.ts", "reauth.ts"]) {
     const src = await readFile(join(out, "lib", f), "utf8");
     expect(src.length).toBeGreaterThan(0);
     expect(src).toMatch(/GENERATED|copied/i);
@@ -83,7 +85,7 @@ test("is idempotent: a second run produces identical bytes", async () => {
 test("every runtime file in the copied set is present", async () => {
   const out = join(workRoot, "clients-e");
   const { written } = await generateClient(manifestPath, out);
-  for (const f of ["paths.ts", "manifest-schema.ts", "secrets.ts", "ratelimit.ts", "transport.ts"]) {
+  for (const f of ["paths.ts", "manifest-schema.ts", "secrets.ts", "ratelimit.ts", "transport.ts", "refresh.ts", "reauth.ts"]) {
     expect(written.some((p) => p.endsWith(join("lib", f)))).toBe(true);
   }
   // manifest.ts pulls in the derivation pipeline; it must NOT be copied.

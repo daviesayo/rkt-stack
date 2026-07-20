@@ -1,9 +1,13 @@
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export interface ParamSpec {
   name: string;
   in: "path" | "query";
   type: "string" | "number";
+  /** Present on every recorded sample, so the API almost certainly demands it. */
+  required?: boolean;
+  /** A value observed during recording, used as a default so calls work as-is. */
+  example?: string;
 }
 
 export type JsonShape =
@@ -17,6 +21,31 @@ export interface AuthSpec {
   mintedBy: string | null;
   expiry: string | null;
 }
+
+export interface AuthBundle {
+  credentials: AuthSpec[];
+  earliestExpiry: string | null;
+}
+
+export type RefreshSpec =
+  | {
+      kind: "oidc";
+      /** Full token endpoint URL, e.g. https://idp/realms/x/protocol/openid-connect/token */
+      tokenEndpoint: string;
+      clientId: string;
+      /** Cookie name the refreshed access token must be written back into, if any. */
+      accessTokenCookie: string | null;
+      /** Seconds the access token is valid, as observed. */
+      expiresIn: number | null;
+      /** Seconds the refresh token is valid, as observed. */
+      refreshExpiresIn: number | null;
+    }
+  | {
+      /** Relaunch the recorded Chrome profile headless and harvest fresh cookies. */
+      kind: "browser";
+      /** URL to load so the app performs its own token dance. */
+      entryUrl: string;
+    };
 
 export interface ManifestEndpoint {
   id: string;
@@ -40,6 +69,10 @@ export interface ClientManifest {
   userAgent: string;
   clientHints: Record<string, string>;
   auth: AuthSpec | null;
+  /** Every credential the API requires. Preferred over `auth`. */
+  authBundle: AuthBundle | null;
+  /** How to renew credentials when they go stale. */
+  refresh: RefreshSpec | null;
   endpoints: ManifestEndpoint[];
 }
 
