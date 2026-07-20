@@ -68,7 +68,10 @@ test("groupEndpoints infers path and query params with types", () => {
     entry("https://example.test/api/items/9002?week=2026-W31&limit=25"),
   ]);
   const byName = Object.fromEntries(group.params.map((p) => [p.name, p]));
-  expect(byName.id).toEqual({ name: "id", in: "path", type: "number" });
-  expect(byName.week).toEqual({ name: "week", in: "query", type: "string" });
-  expect(byName.limit).toEqual({ name: "limit", in: "query", type: "number" });
+  expect(byName.id).toMatchObject({ name: "id", in: "path", type: "number", required: true });
+  expect(byName.week).toMatchObject({ name: "week", in: "query", type: "string", required: true });
+  expect(byName.limit).toMatchObject({ name: "limit", in: "query", type: "number", required: true });
+  // Recorded values ride along so a caller can invoke the endpoint as-is.
+  expect(byName.id.example).toBe("4821");
+  expect(byName.week.example).toBe("2026-W30");
 });
