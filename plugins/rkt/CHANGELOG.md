@@ -4,6 +4,9 @@
 
 ### Added
 
+- **SKILL.md generate step** — Step 9 documents how to run `generate.ts`,
+  use the emitted CLI, and verify generated clients without writing credentials
+  into `rkt-clients`.
 - **Generated client no-secrets test** — `nosecrets.test.ts` structurally
   asserts that generated client output never contains stored credential values
   and that emitted repos gitignore secrets, recordings, and HAR files.

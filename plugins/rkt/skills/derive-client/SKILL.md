@@ -188,6 +188,39 @@ transport does not replay. Re-record rather than guessing.
 Only GET and HEAD endpoints can be called. Recorded writes are excluded from
 the manifest in read mode, and `call` refuses them even if one appears.
 
+## Step 9: Generate the typed client
+
+`call` is the manual path. For repeat use, generate a standalone client:
+
+```bash
+RKT_PLUGIN_ROOT="${RKT_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-<installed-rkt-plugin-root>}}"
+SCRIPTS="${RKT_PLUGIN_ROOT}/skills/derive-client/scripts"
+MANIFEST="<recordingDir>/client.json"
+OUT="${HOME}/Documents/Repositories/rkt-clients"
+(cd "$SCRIPTS" && bun src/generate.ts --manifest "$MANIFEST" --out "$OUT")
+```
+
+This writes `$OUT/<site>/` with `client.json`, `types.ts`, and `cli.ts`, and
+refreshes the shared runtime in `$OUT/lib/`. The generated client has no
+dependency on this plugin and can be run from cron.
+
+Use it:
+
+```bash
+bun "$OUT/<site>/cli.ts"                        # list commands
+bun "$OUT/<site>/cli.ts" <command> --dry-run    # inspect the request
+bun "$OUT/<site>/cli.ts" <command>              # run it, JSON to stdout
+```
+
+Verify a generated client the same way as `call`: compare against the browser
+by shape, not by value.
+
+Generated files carry a "do not edit" header. To change one, re-record or
+re-derive and regenerate; hand edits are overwritten on the next run.
+
+Credentials are never written into `rkt-clients`. Each client reads
+`<rkt-root>/secrets/<site>.json` at runtime.
+
 ## Artifacts
 
 All paths below resolve under `~/.rkt-clients/`. (`RKT_CLIENTS_ROOT` relocates
