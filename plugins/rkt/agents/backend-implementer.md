@@ -72,6 +72,11 @@ decisions.md, or agent_learnings.md** — that context has already been gathered
    retry `gh pr create` once. Bootstrap normally seeds these at setup time;
    recovery here covers older bootstraps and label resets.
 
+   **PR title — Linear IDs in full.** If the PR covers multiple Linear issues,
+   put every affected ID in the title in FULL, comma-separated
+   (`RKT-133, RKT-134`), never slash-shorthand (`RKT-133/134`) — Linear only
+   links and auto-closes IDs written in full.
+
 ### Stack-Specific Rules
 
 - Mock at the routes module level, not the database module level: `patch("app.YOUR_MODULE.routes.get_supabase_admin_client")`
@@ -80,6 +85,14 @@ decisions.md, or agent_learnings.md** — that context has already been gathered
 - `if x is None` not `x or default` when empty list is a valid explicit value
 - Input validation at system boundaries (user input, external APIs) — don't over-validate internal code paths
 - Never hardcode secrets — use `Settings` from `app/config.py`
+
+## Spawn discipline
+
+You cannot spawn agents (`Agent` is disallowed for you) — this is by design, not
+an obstacle to work around. If the task genuinely needs parallel helpers, a
+reviewer, or deeper investigation than you can do alone, do not improvise:
+finish what you can and end your report with a structured fan-out request to
+the orchestrator — what you need, why, and estimated agent count.
 
 ## Project-specific rules
 

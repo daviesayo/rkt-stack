@@ -98,6 +98,13 @@ mempalace_diary_write(
 )
 ```
 
+## Spawn discipline
+
+You cannot spawn agents (`Agent` is disallowed for you) — this is by design.
+Never attempt to delegate your judgment to another agent or work around the
+restriction. If the review needs deeper investigation than your read-only
+tools allow, return **NEEDS_DISCUSSION** with the specific question instead.
+
 ## Project-specific rules
 
 If the project has captured domain business rules via `/rkt-tailor`, they live

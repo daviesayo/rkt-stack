@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.8 — 2026-07-02
+
+Bakes spawn discipline and Linear PR-title hygiene into the agent definitions.
+
+### Changed
+
+- **All five agents** (`backend-implementer`, `web-implementer`, `ios-implementer`,
+  `database-implementer`, `code-reviewer`) gain a **Spawn discipline** section:
+  `Agent` is disallowed by design; instead of working around it, implementers end
+  their report with a structured fan-out request to the orchestrator (what, why,
+  estimated agent count), and the reviewer returns NEEDS_DISCUSSION rather than
+  delegating judgment.
+- **All four implementers**: PR titles covering multiple Linear issues must list
+  every ID in full, comma-separated (`RKT-133, RKT-134`), never slash-shorthand
+  (`RKT-133/134`) — Linear only links and auto-closes IDs written in full.
+
 ## 0.3.7 — 2026-06-28
 
 Adds `/scaffold` skill with shared memory pattern setup.
