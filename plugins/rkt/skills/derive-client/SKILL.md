@@ -53,9 +53,11 @@ command -v bun >/dev/null || { echo "bun is required: https://bun.sh"; exit 1; }
 
 ## Step 2: Start the recorder
 
-Pick a **site slug** once (lowercase, e.g. `alayacare`) and reuse the exact same
-`SITE=...` value in every command below. Each bash snippet is self-contained;
-shell variables and file descriptors do not carry over between tool calls.
+Pick a **site slug** once (lowercase letters, digits, and hyphens only — e.g.
+`alayacare` or `alaya-care`; dots and other punctuation are rejected) and reuse
+the exact same `SITE=...` value in every command below. Each bash snippet is
+self-contained; shell variables and file descriptors do not carry over between
+tool calls.
 
 The recorder owns the browser and reads commands as JSON lines from a named pipe.
 Paths are pinned under `~/.rkt-clients/run/<site>/` so later steps can find them:
@@ -64,6 +66,7 @@ Paths are pinned under `~/.rkt-clients/run/<site>/` so later steps can find them
 RKT_PLUGIN_ROOT="${RKT_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-<installed-rkt-plugin-root>}}"
 SCRIPTS="${RKT_PLUGIN_ROOT}/skills/derive-client/scripts"
 SITE=<site-slug>
+[[ "$SITE" =~ ^[a-z0-9-]+$ ]] || { echo "site slug must be lowercase letters, digits, hyphens only"; exit 1; }
 RUN="${HOME}/.rkt-clients/run/${SITE}"
 PIPE="${RUN}/commands.fifo"
 LOG="${RUN}/record.log"
@@ -73,7 +76,11 @@ mkdir -p "$RUN"
 disown
 ```
 
-Chrome opens visibly. Watch `"$LOG"` for the `ready` event before sending commands.
+Chrome opens visibly. Read `"$LOG"` and find the first line with
+`"event":"ready"`. Use the `site` and `recordingDir` values from that JSON for
+all filesystem paths in Steps 6 and the Artifacts section (lock file, HAR,
+derive output). If the line is missing after a few seconds, check `"$LOG"` for
+errors before sending commands.
 
 ## Step 3: Have the user sign in
 
@@ -118,13 +125,26 @@ The recorder paces itself between actions; do not add your own tight loops.
 RKT_PLUGIN_ROOT="${RKT_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-<installed-rkt-plugin-root>}}"
 SCRIPTS="${RKT_PLUGIN_ROOT}/skills/derive-client/scripts"
 SITE=<site-slug>
+LOG="${HOME}/.rkt-clients/run/${SITE}/record.log"
 PIPE="${HOME}/.rkt-clients/run/${SITE}/commands.fifo"
+READY=$(grep -m1 '"event":"ready"' "$LOG" || true)
+SANITIZED_SITE=$(printf '%s' "$READY" | sed -n 's/.*"site":"\([^"]*\)".*/\1/p')
+RECORDING_DIR=$(printf '%s' "$READY" | sed -n 's/.*"recordingDir":"\([^"]*\)".*/\1/p')
+[[ -n "$SANITIZED_SITE" ]] && SITE="$SANITIZED_SITE"
 echo '{"kind":"done"}' > "$PIPE"
 LOCK="${HOME}/.rkt-clients/profiles/${SITE}/.rkt-lock"
 for _ in $(seq 1 60); do [[ ! -f "$LOCK" ]] && break; sleep 1; done
-HAR=$(ls -t "${HOME}/.rkt-clients/recordings/${SITE}"/*/session.har.zip 2>/dev/null | head -1)
+if [[ -n "$RECORDING_DIR" && -f "$RECORDING_DIR/session.har.zip" ]]; then
+  HAR="$RECORDING_DIR/session.har.zip"
+else
+  HAR=$(ls -t "${HOME}/.rkt-clients/recordings/${SITE}"/*/session.har.zip 2>/dev/null | head -1)
+fi
+[[ -n "$HAR" && -f "$HAR" ]] || { echo "no recording found for $SITE"; exit 1; }
 (cd "$SCRIPTS" && bun src/derive.ts --site "$SITE" --har "$HAR")
 ```
+
+If `echo … > "$PIPE"` hangs, the recorder may have died — check `"$LOG"` before
+retrying.
 
 Report the derived endpoints to the user. If zero endpoints were derived but the
 site clearly worked, say so plainly: the likely cause is API traffic routed

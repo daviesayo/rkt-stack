@@ -57,7 +57,7 @@ export function buildManifest(input: BuildManifestInput): ClientManifest {
   if (origins.size > 1) {
     const listed = [...origins].sort().join(", ");
     throw new Error(
-      `recording spans multiple origins (${listed}); re-record against a single API host`,
+      `recording spans multiple origins (${listed}); Plan 1 supports one API origin per manifest — record a narrower section or wait for origin-qualified endpoint ids (Plan 2)`,
     );
   }
   const first = groups[0]?.samples[0];

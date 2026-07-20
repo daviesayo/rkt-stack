@@ -1,13 +1,20 @@
-import { expect, test } from "bun:test";
-import { copyFile, mkdir } from "node:fs/promises";
+import { afterAll, expect, test } from "bun:test";
+import { copyFile, mkdir, rm } from "node:fs/promises";
 import { deriveManifest } from "../src/derive";
-import { recordingDir } from "../src/lib/paths";
+import { recordingDir, rktRoot } from "../src/lib/paths";
+
+const TEST_SITE = "derive-test";
 
 let stagingCounter = 0;
 
+afterAll(async () => {
+  await rm(`${rktRoot()}/recordings/${TEST_SITE}`, { recursive: true, force: true });
+  await rm(`${rktRoot()}/profiles/${TEST_SITE}`, { recursive: true, force: true });
+});
+
 async function stageFixture(name: string): Promise<string> {
   const ts = `test${++stagingCounter}${Date.now()}`;
-  const dir = recordingDir("derive-test", ts);
+  const dir = recordingDir(TEST_SITE, ts);
   await mkdir(dir, { recursive: true });
   const dest = `${dir}/session.har`;
   await copyFile(`${import.meta.dir}/fixtures/${name}`, dest);

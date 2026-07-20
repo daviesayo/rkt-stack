@@ -10,7 +10,7 @@
 import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import { chromium } from "playwright";
 import { acquireLock } from "./lib/lock";
-import { profileDir, recordingDir } from "./lib/paths";
+import { profileDir, recordingDir, sanitizeSite } from "./lib/paths";
 import { parseCommand } from "./lib/protocol";
 
 function arg(name: string): string | undefined {
@@ -29,6 +29,7 @@ async function main() {
     process.exit(1);
   }
 
+  const sanitizedSite = sanitizeSite(site);
   const timestamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
   const outDir = recordingDir(site, timestamp);
   await mkdir(outDir, { recursive: true });
@@ -50,7 +51,7 @@ async function main() {
     });
 
     const page = context.pages()[0] ?? (await context.newPage());
-    respond({ ok: true, event: "ready", recordingDir: outDir });
+    respond({ ok: true, event: "ready", site: sanitizedSite, recordingDir: outDir });
 
     try {
       for await (const line of console) {
@@ -96,7 +97,7 @@ async function main() {
     } finally {
       // The HAR is only written on close, so this must always run.
       await context.close();
-      respond({ ok: true, event: "closed", recordingDir: outDir });
+      respond({ ok: true, event: "closed", site: sanitizedSite, recordingDir: outDir });
     }
   } finally {
     await release();
