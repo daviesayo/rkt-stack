@@ -1,6 +1,8 @@
 import type { JsonShape } from "./synthesize";
 import type { ManifestEndpoint } from "./manifest";
 
+const READ_METHODS = new Set(["GET", "HEAD"]);
+
 /**
  * Derive readable subcommand names from paths rather than raw endpoint ids.
  * Collisions are resolved by appending -2, -3 in manifest order, so the same
@@ -11,6 +13,13 @@ export function commandNames(endpoints: ManifestEndpoint[]): Map<string, string>
   const used = new Map<string, number>();
 
   for (const endpoint of endpoints) {
+    const method = endpoint.method.toUpperCase();
+    if (!READ_METHODS.has(method)) {
+      throw new Error(
+        `refusing ${endpoint.method} ${endpoint.pathTemplate}: read mode derives GET and HEAD only`,
+      );
+    }
+
     const segments = endpoint.pathTemplate
       .split("/")
       .filter(Boolean)
@@ -18,7 +27,6 @@ export function commandNames(endpoints: ManifestEndpoint[]): Map<string, string>
       .map((s) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, ""))
       .filter(Boolean);
 
-    const method = endpoint.method.toUpperCase();
     const parts = method === "GET" ? segments : [method.toLowerCase(), ...segments];
     const base = parts.length > 0 ? parts.join("-") : method.toLowerCase();
 

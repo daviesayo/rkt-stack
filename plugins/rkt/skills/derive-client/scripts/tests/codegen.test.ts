@@ -103,11 +103,17 @@ test("names a GET command from its path, dropping param segments", () => {
   expect(names.get("get.api.roster.id")).toBe("api-roster");
 });
 
-test("includes the method for non-GET endpoints", () => {
+test("includes the method for HEAD endpoints", () => {
   const names = commandNames([
     ep({ id: "head.api.roster.id", method: "HEAD" }),
   ]);
   expect(names.get("head.api.roster.id")).toBe("head-api-roster");
+});
+
+test("refuses non-GET/HEAD methods in read mode", () => {
+  expect(() =>
+    commandNames([ep({ id: "post.api.roster", method: "POST" })]),
+  ).toThrow(/GET and HEAD only/i);
 });
 
 test("disambiguates colliding names deterministically", () => {
