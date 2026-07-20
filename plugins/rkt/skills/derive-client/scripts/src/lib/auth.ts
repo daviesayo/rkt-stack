@@ -1,4 +1,5 @@
 import type { HarEntry } from "./har";
+import type { AuthSpec } from "./manifest";
 
 export interface CredentialCandidate {
   kind: "cookie" | "bearer" | "csrf";
@@ -197,4 +198,25 @@ function jwtExpiry(token: string): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Run all three passes and split the result: the spec is manifest-safe, the
+ * value is secret. Callers must never merge them.
+ */
+export function analyzeAuth(
+  entries: HarEntry[],
+): { spec: AuthSpec | null; value: string | null } {
+  const primary = detectCredentials(entries)[0];
+  if (!primary) return { spec: null, value: null };
+
+  return {
+    spec: {
+      kind: primary.kind,
+      location: primary.location,
+      mintedBy: traceMintPoint(primary, entries),
+      expiry: detectExpiry(primary, entries),
+    },
+    value: primary.value,
+  };
 }
