@@ -1,4 +1,6 @@
 import { chmod, mkdir, rm, stat } from "node:fs/promises";
+import { validateManifest } from "./manifest-schema";
+import { readSecretMeta } from "./secrets";
 import { profileDir, secretsFile, storageStateFile, secretsDir, sanitizeSite } from "./paths";
 
 export interface AuthStatusInput {
@@ -113,3 +115,52 @@ const defaultLauncher: Launcher = async (site, entryUrl, statePath) => {
     await ctx.close().catch(() => {});
   }
 };
+
+function firstJwtExpiry(expiry: Record<string, string | null>): string | null {
+  for (const v of Object.values(expiry)) if (v) return v;
+  return null;
+}
+
+/**
+ * Handle the lifecycle commands (login, logout, auth status) shared by every
+ * generated client. Returns true when it handled the command, false to let the
+ * caller fall through to endpoint/task dispatch. `manifestPath` is a plain
+ * filesystem path (the caller resolves it), so no URL decoding is needed here.
+ */
+export async function runLifecycle(
+  command: string,
+  sub: string | undefined,
+  manifestPath: string,
+): Promise<boolean> {
+  if (command !== "login" && command !== "logout" && !(command === "auth" && sub === "status")) {
+    return false;
+  }
+  const raw = await import("node:fs/promises").then((fs) => fs.readFile(manifestPath, "utf8"));
+  const manifest = validateManifest(JSON.parse(raw));
+
+  if (command === "login") {
+    const ok = await loginSite(manifest.site, `${manifest.baseUrl}/`);
+    console.error(ok ? "signed in; session saved" : "login could not complete");
+    return true;
+  }
+  if (command === "logout") {
+    const { removed } = await logoutSite(manifest.site);
+    console.error(removed.length ? `removed ${removed.length} session file(s)` : "nothing to remove");
+    return true;
+  }
+  // command === "auth" && sub === "status"
+  const meta = await readSecretMeta(manifest.site);
+  const accessExpiry = meta ? firstJwtExpiry(meta.expiry) : null;
+  let mtime: number | null = null;
+  try {
+    mtime = (await stat(storageStateFile(manifest.site))).mtimeMs;
+  } catch {
+    /* no saved session */
+  }
+  const lines = formatAuthStatus(
+    { identity: null, accessExpiry, refreshWindow: null, storageStateMtime: mtime },
+    Date.now(),
+  );
+  console.log(lines.join("\n"));
+  return true;
+}

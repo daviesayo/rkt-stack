@@ -140,11 +140,13 @@ ${responseMap.join("\n")}
 
   return `${GENERATED_HEADER(manifest)}
 import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { validateManifest } from "../lib/manifest-schema";
 import { createScheduler } from "../lib/scheduler";
 import { reauthViaProfile } from "../lib/reauth";
 import { refreshViaOidc } from "../lib/refresh";
 import { maskHeaders, readSecrets, redactAll, REFRESH_TOKEN_KEY, writeSecret } from "../lib/secrets";
+import { runLifecycle } from "../lib/session";
 import { buildRequest, issue } from "../lib/transport";
 ${typeImport}
 interface CommandSpec {
@@ -175,6 +177,13 @@ ${responseFor}function usage(): never {
 }
 
 async function main() {
+  const handled = await runLifecycle(
+    process.argv[2],
+    process.argv[3],
+    fileURLToPath(new URL("./client.json", import.meta.url)),
+  );
+  if (handled) return;
+
   const commandName = process.argv[2];
   if (!commandName || commandName.startsWith("-")) usage();
 
