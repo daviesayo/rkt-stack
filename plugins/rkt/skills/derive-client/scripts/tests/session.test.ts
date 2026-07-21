@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtemp, mkdir, writeFile, rm, access } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, rm, access, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { formatAuthStatus, logoutSite } from "../src/lib/session";
@@ -55,27 +55,35 @@ test("shows how long ago the browser session was saved", () => {
 });
 
 let root: string;
-const ORIG = process.env.RKT_CLIENTS_ROOT;
+const ORIG_ROOT = process.env.RKT_CLIENTS_ROOT;
+const ORIG_NODE_ENV = process.env.NODE_ENV;
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "rkt-logout-"));
   process.env.RKT_CLIENTS_ROOT = root;
   process.env.NODE_ENV = "test";
 });
 afterEach(async () => {
-  if (ORIG === undefined) delete process.env.RKT_CLIENTS_ROOT;
-  else process.env.RKT_CLIENTS_ROOT = ORIG;
+  if (ORIG_ROOT === undefined) delete process.env.RKT_CLIENTS_ROOT;
+  else process.env.RKT_CLIENTS_ROOT = ORIG_ROOT;
+  if (ORIG_NODE_ENV === undefined) delete process.env.NODE_ENV;
+  else process.env.NODE_ENV = ORIG_NODE_ENV;
   await rm(root, { recursive: true, force: true });
 });
 
 test("logout removes the secrets, storage-state, and identity files that exist", async () => {
+  const { identityCacheFile } = await import("../src/lib/session");
   const { secretsFile, storageStateFile } = await import("../src/lib/paths");
   await mkdir(join(root, "secrets"), { recursive: true });
   await writeFile(secretsFile("s"), "{}");
   await writeFile(storageStateFile("s"), "{}");
+  await writeFile(identityCacheFile("s"), "{}");
   const { removed } = await logoutSite("s");
   expect(removed).toContain(secretsFile("s"));
   expect(removed).toContain(storageStateFile("s"));
+  expect(removed).toContain(identityCacheFile("s"));
   await expect(access(secretsFile("s"))).rejects.toThrow();
+  await expect(access(storageStateFile("s"))).rejects.toThrow();
+  await expect(access(identityCacheFile("s"))).rejects.toThrow();
 });
 
 test("logout is a no-op when nothing is stored", async () => {
@@ -91,12 +99,28 @@ test("login clears the identity cache and delegates to the launcher", async () =
 
   let called = false;
   const ok = await loginSite("s", "https://app.test/", {
-    launch: async () => {
+    launch: async (_site, _url, statePath) => {
       called = true;
+      await writeFile(statePath, "{}");
       return true;
     },
   });
   expect(ok).toBe(true);
   expect(called).toBe(true);
   await expect(access(identityCacheFile("s"))).rejects.toThrow();
+});
+
+test("login creates secrets dir at 0700 and storage state at 0600", async () => {
+  const { loginSite } = await import("../src/lib/session");
+  const { secretsDir, storageStateFile } = await import("../src/lib/paths");
+
+  await loginSite("s", "https://app.test/", {
+    launch: async (_site, _url, statePath) => {
+      await writeFile(statePath, "{}");
+      return true;
+    },
+  });
+
+  expect((await stat(secretsDir())).mode & 0o777).toBe(0o700);
+  expect((await stat(storageStateFile("s"))).mode & 0o777).toBe(0o600);
 });

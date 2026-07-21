@@ -1,4 +1,4 @@
-import { rm, stat } from "node:fs/promises";
+import { chmod, mkdir, rm, stat } from "node:fs/promises";
 import { profileDir, secretsFile, storageStateFile, secretsDir, sanitizeSite } from "./paths";
 
 export interface AuthStatusInput {
@@ -80,7 +80,13 @@ export async function loginSite(
   // Clear identity cache first: signing in as a different user must not leave
   // a stale @me pointing at the previous person.
   await rm(identityCacheFile(site), { force: true }).catch(() => {});
-  return launch(site, entryUrl, storageStateFile(site));
+  const statePath = storageStateFile(site);
+  const dir = secretsDir();
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  await chmod(dir, 0o700);
+  const ok = await launch(site, entryUrl, statePath);
+  if (ok) await chmod(statePath, 0o600);
+  return ok;
 }
 
 const defaultLauncher: Launcher = async (site, entryUrl, statePath) => {
