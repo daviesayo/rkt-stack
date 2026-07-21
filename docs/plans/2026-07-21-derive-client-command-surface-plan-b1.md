@@ -43,7 +43,7 @@ All paths are relative to `plugins/rkt/skills/derive-client/scripts/` unless pre
 - `tests/commands-schema.test.ts`, `tests/tokens.test.ts`, `tests/identity.test.ts`, `tests/join.test.ts`, `tests/drift.test.ts`
 - `tests/fixtures/commands.example.json` — a valid fixture used across tests.
 
-**Modified:** none. B1 adds modules; it changes no existing file. (B2 wires them into codegen and the skill.)
+**Modified:** `plugins/rkt/CHANGELOG.md` only (Task 6, `[Unreleased]` entry). B1 adds new modules and changes no existing *source* file. (B2 wires them into codegen and the skill.)
 
 ---
 
@@ -396,7 +396,7 @@ git commit -m "feat(derive-client): param-token resolver (@me, @today offsets)"
 - Create: `tests/identity.test.ts`
 
 **Interfaces:**
-- Consumes: `IdentitySpec` from `commands-schema`, `identityCacheFile` from `lib/session` (Plan A), `getPath` from `lib/render` (Plan A), `readSecrets` from `lib/secrets`.
+- Consumes: `IdentitySpec` from `commands-schema`, `identityCacheFile` from `lib/session` (Plan A), `getPath` from `lib/render` (Plan A). (No `secrets.ts` dependency: reading the live token expiry is `session.ts`/`auth status`'s job, not identity's.)
 - Produces:
   - `resolveIdentity(site, identity, fetchEndpoint): Promise<{ id: string; display: Record<string, unknown> }>` — reads the on-disk cache, else calls `fetchEndpoint` against `identity.endpoint`, extracts `idField` and `display`, writes the cache (0600), returns it.
   - `whoamiLine(display: Record<string, unknown>, fields: string[]): string` — formats the `whoami` output.
@@ -462,8 +462,10 @@ Expected: FAIL at module resolution for `../src/lib/identity`.
 
 - [ ] **Step 3: Implement**
 
+The identity cache holds a user's own record fields at 0600 in the same `secretsDir()` as credentials, so it uses the **same atomic write the codebase already established** for that threat model (`secrets.ts`: temp file at 0600, then `rename`, plus an explicit `chmod` on the directory because `mkdir`'s mode is ignored when the dir already exists). Writing straight to the final path would leave a prior file's mode in place on overwrite — the exact exposure window `secrets.ts` was written to close.
+
 ```ts
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { IdentitySpec } from "./commands-schema";
 import { identityCacheFile } from "./session";
@@ -484,8 +486,13 @@ export async function resolveIdentity(
   const path = identityCacheFile(site);
   try {
     return JSON.parse(await readFile(path, "utf8")) as IdentityCache;
-  } catch {
-    /* not cached */
+  } catch (err) {
+    // ENOENT is the normal cold-cache path. A corrupt or unreadable cache is
+    // also recoverable (we re-fetch and overwrite), but surface anything that
+    // is not simply "absent" so a real fault is not masked as a cache miss.
+    if ((err as NodeJS.ErrnoException)?.code !== "ENOENT") {
+      console.error(`identity cache unreadable (${(err as Error).message}); re-fetching`);
+    }
   }
 
   const body = await fetchEndpoint(spec.endpoint);
@@ -497,9 +504,20 @@ export async function resolveIdentity(
   for (const f of spec.display) display[f] = getPath(body, f);
   const cache: IdentityCache = { id: String(idRaw), display };
 
-  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  await writeFile(path, JSON.stringify(cache, null, 2), { mode: 0o600 });
-  await chmod(path, 0o600);
+  // Atomic write at 0600, mirroring secrets.ts, so an overwrite never leaves a
+  // prior file's mode in place.
+  const dir = dirname(path);
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  await chmod(dir, 0o700);
+  const tmp = `${path}.${process.pid}.tmp`;
+  try {
+    await writeFile(tmp, JSON.stringify(cache, null, 2), { mode: 0o600 });
+    await chmod(tmp, 0o600);
+    await rename(tmp, path);
+  } catch (err) {
+    await rm(tmp, { force: true });
+    throw err;
+  }
   return cache;
 }
 
@@ -533,7 +551,9 @@ git commit -m "feat(derive-client): identity resolution with on-disk cache"
 
 **Interfaces:**
 - Consumes: `JoinSpec` from `commands-schema`, `getPath` from `lib/render`.
-- Produces: `applyJoins(rows: Record<string, unknown>[], joins: JoinSpec[], lookup: Lookup): Promise<Record<string, unknown>[]>` where `Lookup` is `(endpointId: string, key: string) => Promise<unknown>`. `lookup` is injected (in production it is a scheduler-backed fetch; the scheduler's per-run dedup makes N rows over M targets cost M lookups). Each row is cloned and given `row[as] = { selected fields }`. `onError` governs a failed lookup.
+- Produces: `applyJoins(rows: Record<string, unknown>[], joins: JoinSpec[], lookup: Lookup): Promise<Record<string, unknown>[]>` where `Lookup` is `(endpointId: string, key: string) => Promise<unknown>`. `lookup` is injected (in production it is a scheduler-backed fetch; the scheduler's per-run dedup makes N rows over M targets cost M lookups). Each row is cloned and given `row[as] = { selected fields }`.
+
+**`onError` governs a failed *lookup*, not a missing key.** A row whose join key is absent or null had no reference to resolve, which is not an error: it attaches blank (`{}`) for `blank`/`fail` or the empty string for `key`, and never triggers `fail`. `fail` aborts only when a lookup that *was* attempted rejects (a 4xx/5xx). This distinction is deliberate — a row simply lacking a reference should not abort a whole command — and Task 4 tests both the missing-key path and the `fail`-with-a-real-lookup-failure path so the choice is pinned, not left to interpretation.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -591,6 +611,15 @@ test("a missing key resolves to blank without a lookup", async () => {
   const out = await applyJoins(rows, [join], lookup);
   expect(out[0].client).toEqual({});
   expect(called).toBe(false);
+});
+
+test("a missing key does NOT abort even under onError fail (no lookup was attempted)", async () => {
+  const rows = [{ date: "d1" }]; // no client_id
+  const j = { ...join, onError: "fail" as const };
+  let called = false;
+  const out = await applyJoins(rows, [j], async () => { called = true; return {}; });
+  expect(out[0].client).toEqual({}); // blank, not thrown
+  expect(called).toBe(false); // fail governs failed lookups, not absent references
 });
 ```
 
@@ -837,7 +866,9 @@ git commit -m "docs(derive-client): changelog for the resolver core"
 | `identity` needs an id-free endpoint + `idField` | 1 (schema), 3 (resolution) |
 | `onError` defaults to blank; blank/key/fail | 1 (default), 4 (behavior) |
 | Param tokens: `@`-only, `@@` escape, hard error on unknown | 2 |
-| `@me` lazy + cached; `@today±<n><d\|w\|m\|y>`; local/TZ | 2, 3 (the `@me` cache) |
+| `@today±<n><d\|w\|m\|y>`; local/TZ | 2 |
+| `@me` resolved via identity; on-disk identity cache | 3 |
+| `@me` in-memory per-process memoization (spec text) | **B2**: B1 resolves `@me` through `resolveIdentity`, whose on-disk cache means one disk read per `@me`, not a network call. The spec's per-process *in-memory* memo is a B2 CLI-wiring concern (a single resolver instance per command run), not a B1 module. Flagged, not silently claimed here. |
 | `whoami` reads identity endpoint + display | 3 |
 | Joins dedup lookups (M targets, not N rows) | 4 |
 | Array-valued join key is a validation error | 4 |
