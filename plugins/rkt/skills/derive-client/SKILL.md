@@ -25,9 +25,27 @@ client replays plain HTTP calls.
 
 **UX principle:** All interactive prompts use `AskUserQuestion`. Never bash `read`.
 
-This plan-1 skill covers `read` mode only: it records a session and produces a
-`client.json` endpoint manifest. Auth analysis, code generation, and `full` mode
-arrive in later plans.
+This skill records a session, derives a `client.json` endpoint manifest, and
+generates a standalone typed CLI. It has two design modes for shaping that CLI
+into domain tasks (below). `full` (read + write) mode arrives in a later plan.
+
+## Design modes
+
+The skill's positional argument selects how the command surface is designed,
+the same way `rkt:bootstrap` reads `[preset]`. Infer it from how you were
+invoked; there is no flag.
+
+- **`/derive-client`** (default, Q&A): after deriving and generating, group the
+  endpoints, show them, and ask via `AskUserQuestion` which tasks the user
+  wants. Propose a name, output columns, and redactions per task. Write
+  `commands.json` from the answers, then regenerate.
+- **`/derive-client draft`**: infer a complete `commands.json` without asking.
+  Start from the scaffold (Step 10) so endpoint ids are correct, then refine it
+  (joins, table columns, redactions, an `identity` block) from the endpoint
+  paths and response shapes. Write it for the user to edit, then regenerate.
+
+Both modes end with the same artifacts. `commands.json` is the user's: once it
+exists, regeneration never overwrites it (Step 11).
 
 ## Step 0: Consent gate
 
@@ -251,6 +269,79 @@ re-derive and regenerate; hand edits are overwritten on the next run.
 
 Credentials are never written into `rkt-clients`. Each client reads
 `<rkt-root>/secrets/<site>.json` at runtime.
+
+## Step 10: Shape the command surface
+
+The generated CLI so far has one command per endpoint. Turn it into domain
+tasks by writing a `commands.json` in the site directory
+(`$OUT/<site>/commands.json`).
+
+Scaffold a valid starting point (correct endpoint ids, one JSON command each):
+
+```bash
+RKT_PLUGIN_ROOT="${RKT_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-<installed-rkt-plugin-root>}}"
+SCRIPTS="${RKT_PLUGIN_ROOT}/skills/derive-client/scripts"
+OUT="${HOME}/Documents/Repositories/rkt-clients"
+SITE=<site-slug>
+(cd "$SCRIPTS" && bun src/scaffold-commands.ts \
+  --manifest "$OUT/$SITE/client.json" --out "$OUT/$SITE/commands.json")
+```
+
+Then edit `commands.json`:
+
+- **`identity`** names an **id-free** endpoint (a `/me`-style route needing no
+  id), its `idField` (the field holding the user's id, what `@me` resolves to),
+  and `display` fields for `whoami`. Omit it if the site has no such route;
+  `@me` and `whoami` are then unavailable.
+- Each **command** has a `name`, a `summary`, a `call` (endpoint id + params),
+  optional `join`s, an `output` (`table` with `columns`/`sort`/`rows`, or
+  `json`), and a `redact` list.
+- **Param tokens:** a value beginning with `@` is a token — `@me`, `@today`,
+  `@today±<n><d|w|m|y>`. Escape a literal leading `@` as `@@`. Anything else
+  `@`-prefixed is an error.
+- **`join`** resolves a reference per row: read `key`, look it up against
+  `endpoint` (which must take exactly one path param), attach `select` fields
+  under `as`. `onError` is `blank` (default), `key`, or `fail`.
+- **`output.rows`** is the dotted path to the row array when the response wraps
+  it (e.g. `"data"`); omit it when the response is a bare array or a single
+  object.
+- **`redact`** masks fields by default in every output mode; `--raw` opts out.
+
+At the command line, a task's declared `call.params` can be overridden by
+`--<param> <value>`; only params the command already declares are overridable,
+so give a command every param a user should be able to vary. `--json` (JSON
+instead of a table), `--raw` (disable redaction), and `--limit <n>` are global.
+
+In Q&A mode, drive this by asking the user which tasks they want and proposing
+the shape. In draft mode, infer it. Regenerate when done (Step 11).
+
+## Step 11: Regenerate and read the drift report
+
+Re-run `generate.ts` (Step 9) whenever `commands.json` or the recording
+changes. Regeneration:
+
+- reads `commands.json` and emits a task CLI (`whoami`, `login`, `logout`,
+  `auth status`, and one command per task);
+- **never overwrites `commands.json`**;
+- prints a **drift report** comparing it against the freshly derived
+  `client.json`: `broken` (a command references an endpoint no longer present —
+  regeneration stops until you fix it) and `new` (endpoints no command uses
+  yet). Edit `commands.json` in response.
+
+Use the task CLI:
+
+```bash
+bun "$OUT/<site>/cli.ts"                 # help: session + task commands
+bun "$OUT/<site>/cli.ts" whoami          # the signed-in user (needs identity)
+bun "$OUT/<site>/cli.ts" auth status     # token TTL and session age
+bun "$OUT/<site>/cli.ts" <task>          # a domain task, shaped output
+bun "$OUT/<site>/cli.ts" <task> --json   # JSON instead of a table
+bun "$OUT/<site>/cli.ts" <task> --raw    # disable field redaction
+bun "$OUT/<site>/cli.ts" login           # re-authenticate in a browser, no re-record
+```
+
+Redaction is on by default because the data is real personal information. Only
+`--raw` disables it.
 
 ## Artifacts
 
