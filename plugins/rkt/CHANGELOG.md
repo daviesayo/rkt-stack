@@ -1,19 +1,29 @@
 # Changelog
 
-## [Unreleased]
+## [0.7.0] - 2026-07-21
+
+Task-oriented generated CLIs for `derive-client`: a user-owned `commands.json`
+shapes recorded endpoints into domain commands with joins, param tokens, and
+table/json output. Builds on the session-lifecycle and resolver foundations
+shipped across Plan A and B1.
 
 ### Added
 
-- Command-surface resolver core (internal, not yet surfaced in a CLI): a
-  `commands.json` schema and validator, a param-token resolver (`@me`,
-  `@today` with `±<n><d|w|m|y>` offsets and an `@@` escape), identity
-  resolution with an on-disk cache, a join planner that dedups lookups and
-  honours a per-command `onError` policy, and a drift detector comparing a
-  `commands.json` against a re-derived `client.json`.
+- Task-oriented generated CLIs: a user-owned `commands.json` shapes endpoints
+  into domain commands with param tokens (`@me`, `@today` offsets), joins that
+  dedup lookups and honour a per-command `onError`, table/json output with
+  sort, `--limit`, and field redaction that is on by default (`--raw` opts
+  out). New `whoami`, and `auth status` now names the signed-in user. Two design
+  modes (interactive default, `draft`) and a `scaffold-commands` starting point.
+  Regeneration reads a drift report and never overwrites `commands.json`.
+- Command-surface resolver core: a `commands.json` schema and validator, a
+  param-token resolver (`@me`, `@today` with `±<n><d|w|m|y>` offsets and an
+  `@@` escape), identity resolution with an on-disk cache, a join planner that
+  dedups lookups and honours a per-command `onError` policy, and a drift
+  detector comparing a `commands.json` against a re-derived `client.json`.
 - Generated clients gain session-lifecycle commands: `login` (opens a browser,
-  saves the session), `logout` (clears stored session), and `auth status`
-  (shows a live access-token TTL from the currently stored token). `whoami`
-  follows in the command-surface release.
+  saves the session), `logout` (clears stored session), `auth status` (shows a
+  live access-token TTL and names the signed-in user), and `whoami`.
 - A request scheduler replaces the rate limiter: same human-shaped pacing, plus
   per-run dedup of repeated GETs and 429/503 backoff honouring `Retry-After`.
   This is the foundation the task-command joins build on.
