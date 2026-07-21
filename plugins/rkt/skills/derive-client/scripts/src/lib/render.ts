@@ -50,3 +50,20 @@ export function renderTable(
   const line = (cells: string[]) => cells.map((s, i) => s.padEnd(widths[i])).join("  ");
   return [line(columns), ...rows.map((r) => line(columns.map((c) => cell(r, c))))].join("\n");
 }
+
+/** Return a copy of rows sorted by a dotted column. Numbers compare numerically;
+ *  everything else by locale string. null/undefined sort last. */
+export function sortRows(
+  rows: Record<string, unknown>[],
+  column: string,
+): Record<string, unknown>[] {
+  return [...rows].sort((a, b) => {
+    const x = getPath(a, column);
+    const y = getPath(b, column);
+    if (x == null && y == null) return 0;
+    if (x == null) return 1;
+    if (y == null) return -1;
+    if (typeof x === "number" && typeof y === "number") return x - y;
+    return String(x).localeCompare(String(y));
+  });
+}
