@@ -7,6 +7,8 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { emitCli, emitTypes } from "./lib/codegen";
+import { assertResolvable, validateCommandsFile, type CommandsFile } from "./lib/commands-schema";
+import { detectDrift } from "./lib/drift";
 import { validateManifest } from "./lib/manifest";
 
 export interface GeneratedFiles {
@@ -24,6 +26,8 @@ export interface GeneratedFiles {
  * scheduler.ts imports nothing outside the set.
  * session.ts imports ./paths, ./secrets, ./reauth, ./manifest-schema.
  * render.ts imports nothing outside the set.
+ * commands-schema.ts, tokens.ts, identity.ts, join.ts, runtime.ts, command-runner.ts
+ * support task-CLI emission from a user-owned commands.json.
  * Copying manifest.ts or refresh-detect.ts would drag in the derivation pipeline.
  *
  * If you add a file here, re-run the closure probe: generate into a temp dir,
@@ -39,6 +43,12 @@ const RUNTIME_FILES = [
   "reauth.ts",
   "session.ts",
   "render.ts",
+  "commands-schema.ts",
+  "tokens.ts",
+  "identity.ts",
+  "join.ts",
+  "runtime.ts",
+  "command-runner.ts",
 ];
 
 const COPIED_HEADER = `// Copied from the rkt derive-client skill. Do not edit here.
@@ -112,6 +122,16 @@ async function write(path: string, contents: string, written: string[]): Promise
   written.push(path);
 }
 
+function reportDrift(site: string, drift: ReturnType<typeof detectDrift>): void {
+  if (drift.broken.length === 0 && drift.newSurface.length === 0) {
+    console.error(`No drift: commands.json matches client.json for "${site}".`);
+    return;
+  }
+  console.error(`Drift report for "${site}":`);
+  for (const b of drift.broken) console.error(`  broken   ${b.command} -> ${b.endpoint} (no longer in client.json)`);
+  for (const id of drift.newSurface) console.error(`  new      ${id} (no command references it yet)`);
+}
+
 export async function generateClient(
   manifestPath: string,
   outRoot: string,
@@ -137,7 +157,35 @@ export async function generateClient(
   const siteDir = join(outRoot, manifest.site);
   await write(join(siteDir, "client.json"), `${JSON.stringify(manifest, null, 2)}\n`, written);
   await write(join(siteDir, "types.ts"), emitTypes(manifest), written);
-  await write(join(siteDir, "cli.ts"), emitCli(manifest), written);
+
+  // commands.json is the user's: read it, never write it. Absent => 0.6.0 fallback.
+  let commands: CommandsFile | undefined;
+  try {
+    commands = validateCommandsFile(JSON.parse(await readFile(join(siteDir, "commands.json"), "utf8")));
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw new Error(`commands.json for "${manifest.site}" is invalid: ${(err as Error).message}`);
+    }
+  }
+
+  if (commands) {
+    if (commands.site !== manifest.site) {
+      throw new Error(
+        `commands.json site "${commands.site}" does not match manifest site "${manifest.site}"`,
+      );
+    }
+    const drift = detectDrift(commands, manifest);
+    reportDrift(manifest.site, drift);
+    if (drift.broken.length > 0) {
+      throw new Error(
+        `commands.json references ${drift.broken.length} endpoint(s) no longer in client.json; ` +
+          `edit commands.json and regenerate. client.json was refreshed.`,
+      );
+    }
+    assertResolvable(commands, manifest.endpoints);
+  }
+
+  await write(join(siteDir, "cli.ts"), emitCli(manifest, commands), written);
 
   return { siteDir, written };
 }

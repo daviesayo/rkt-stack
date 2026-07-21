@@ -170,3 +170,45 @@ export function maskHeaders(
   }
   return out;
 }
+
+function maskStringValue(value: string, secret: string): string {
+  if (value === secret) return REDACTED;
+  if (value.includes(secret)) return value.split(secret).join(REDACTED);
+  const bare = secret.replace(/^bearer\s+/i, "");
+  if (bare !== secret && bare.length > 0 && value.includes(bare)) {
+    return value.split(bare).join(REDACTED);
+  }
+  return value;
+}
+
+/**
+ * Return a deep copy of data with credential string values replaced before
+ * serialization. Masks at the value level so JSON.stringify escaping cannot
+ * hide the secret.
+ */
+export function maskSecretValues(
+  data: unknown,
+  secret: Record<string, string> | string | null,
+): unknown {
+  if (secret && typeof secret === "object") {
+    let out = data;
+    for (const v of Object.values(secret).sort((a, b) => b.length - a.length)) {
+      out = maskSecretValues(out, v);
+    }
+    return out;
+  }
+  if (!secret || secret.length === 0) return data;
+
+  const walk = (node: unknown): unknown => {
+    if (typeof node === "string") return maskStringValue(node, secret);
+    if (Array.isArray(node)) return node.map(walk);
+    if (node && typeof node === "object") {
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(node)) out[k] = walk(v);
+      return out;
+    }
+    return node;
+  };
+
+  return walk(data);
+}

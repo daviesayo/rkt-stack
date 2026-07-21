@@ -7,6 +7,7 @@ import { getPath } from "./render";
 interface IdentityCache {
   id: string;
   display: Record<string, unknown>;
+  label: string;
 }
 
 export type FetchEndpoint = (endpointId: string) => Promise<unknown>;
@@ -19,7 +20,8 @@ export async function resolveIdentity(
   const path = identityCacheFile(site);
   try {
     const parsed = JSON.parse(await readFile(path, "utf8")) as IdentityCache;
-    if (typeof parsed.id === "string") return parsed;
+    // Pre-label caches may have id without label; treat as a miss so we refetch and rewrite.
+    if (typeof parsed.id === "string" && typeof parsed.label === "string") return parsed;
   } catch (err) {
     // ENOENT is the normal cold-cache path. A corrupt or unreadable cache is
     // also recoverable (we re-fetch and overwrite), but surface anything that
@@ -36,7 +38,7 @@ export async function resolveIdentity(
   }
   const display: Record<string, unknown> = {};
   for (const f of spec.display) display[f] = getPath(body, f);
-  const cache: IdentityCache = { id: String(idRaw), display };
+  const cache: IdentityCache = { id: String(idRaw), display, label: whoamiLine(display, spec.display) };
 
   // Atomic write at 0600, mirroring secrets.ts, so an overwrite never leaves a
   // prior file's mode in place.

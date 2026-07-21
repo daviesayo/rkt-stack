@@ -62,3 +62,34 @@ test("the cache file is written at 0600", async () => {
   const info = await stat(identityCacheFile("s"));
   expect(info.mode & 0o777).toBe(0o600);
 });
+
+test("stale cache without label is refetched and rewritten with label", async () => {
+  const { mkdir, writeFile, readFile } = await import("node:fs/promises");
+  const { identityCacheFile } = await import("../src/lib/session");
+  const { secretsDir } = await import("../src/lib/paths");
+  await mkdir(secretsDir(), { recursive: true });
+  await writeFile(
+    identityCacheFile("s"),
+    JSON.stringify({ id: "924", display: { first_name: "Ada", email: "ada@x.test" } }),
+    "utf8",
+  );
+  let calls = 0;
+  const fetchEndpoint = async () => {
+    calls++;
+    return { id: 924, first_name: "Ada", email: "ada@x.test" };
+  };
+  const result = await resolveIdentity("s", spec, fetchEndpoint);
+  expect(result.label).toBe("Ada (ada@x.test)");
+  expect(calls).toBe(1);
+  const cached = JSON.parse(await readFile(identityCacheFile("s"), "utf8"));
+  expect(cached.label).toBe("Ada (ada@x.test)");
+});
+
+test("stores a formatted label in the cache", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const { identityCacheFile } = await import("../src/lib/session");
+  const s = { endpoint: "get.me", idField: "id", display: ["first_name", "email"] };
+  await resolveIdentity("s", s, async () => ({ id: 1, first_name: "Ada", email: "ada@x.test" }));
+  const cached = JSON.parse(await readFile(identityCacheFile("s"), "utf8"));
+  expect(cached.label).toBe("Ada (ada@x.test)");
+});

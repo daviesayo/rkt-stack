@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { COMMANDS_SCHEMA_VERSION, validateCommandsFile } from "../src/lib/commands-schema";
+import { assertResolvable, COMMANDS_SCHEMA_VERSION, validateCommandsFile } from "../src/lib/commands-schema";
 
 const valid = () => JSON.parse(require("fs").readFileSync(`${import.meta.dir}/fixtures/commands.example.json`, "utf8"));
 
@@ -72,4 +72,59 @@ test("rejects non-object call.params", () => {
   const cf = valid();
   cf.commands[0].call.params = [];
   expect(() => validateCommandsFile(cf)).toThrow(/call\.params/);
+});
+
+const ep = (id: string, pathParams: number) => ({
+  id,
+  params: Array.from({ length: pathParams }, (_, i) => ({
+    name: i === 0 ? "id" : `id${i + 1}`,
+    in: "path" as const,
+    type: "string" as const,
+  })),
+});
+
+test("passes an optional output.rows path through", () => {
+  const cf = valid();
+  cf.commands[0].output = { kind: "table", columns: ["a"], rows: "data" };
+  expect(validateCommandsFile(cf).commands[0].output.rows).toBe("data");
+});
+
+test("assertResolvable accepts commands whose endpoints all exist", () => {
+  const cf = validateCommandsFile(valid());
+  expect(() =>
+    assertResolvable(cf, [
+      ep("get.api.v1.employees.me", 0),
+      ep("get.scheduling.getShifts", 0),
+      ep("get.api.v1.clients.id", 1),
+    ]),
+  ).not.toThrow();
+});
+
+test("assertResolvable rejects a call endpoint the manifest lacks", () => {
+  const cf = validateCommandsFile(valid());
+  expect(() => assertResolvable(cf, [ep("get.api.v1.employees.me", 0)])).toThrow(
+    /get\.scheduling\.getShifts/,
+  );
+});
+
+test("assertResolvable rejects a join lookup that is not single-path-param", () => {
+  const cf = validateCommandsFile(valid());
+  expect(() =>
+    assertResolvable(cf, [
+      ep("get.api.v1.employees.me", 0),
+      ep("get.scheduling.getShifts", 0),
+      ep("get.api.v1.clients.id", 2), // two path params: ambiguous target for the join key
+    ]),
+  ).toThrow(/exactly one path param/i);
+});
+
+test("assertResolvable rejects an identity endpoint that is not id-free", () => {
+  const cf = validateCommandsFile(valid()); // identity -> get.api.v1.employees.me
+  expect(() =>
+    assertResolvable(cf, [
+      ep("get.api.v1.employees.me", 1), // a path param means it is not the /me-style id-free route
+      ep("get.scheduling.getShifts", 0),
+      ep("get.api.v1.clients.id", 1),
+    ]),
+  ).toThrow(/identity.*id-free|id-free/i);
 });

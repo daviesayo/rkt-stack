@@ -209,3 +209,76 @@ test("emitCli emits renewal imports and param metadata in COMMANDS", () => {
   expect(src).toContain('"required": true');
   expect(src).toContain('"example": "2026-W30"');
 });
+
+const taskManifest = {
+  schemaVersion: 2,
+  site: "example",
+  baseUrl: "https://x.test",
+  recordedAt: "",
+  harSha256: "",
+  userAgent: "UA",
+  clientHints: {},
+  auth: null,
+  authBundle: null,
+  refresh: null,
+  endpoints: [
+    {
+      id: "get.me",
+      method: "GET",
+      pathTemplate: "/me",
+      params: [],
+      responseShape: { type: "unknown" as const },
+      source: "xhr" as const,
+      fragile: false,
+      selectors: null,
+      writeSemantics: null,
+    },
+    {
+      id: "get.shifts",
+      method: "GET",
+      pathTemplate: "/shifts",
+      params: [],
+      responseShape: { type: "unknown" as const },
+      source: "xhr" as const,
+      fragile: false,
+      selectors: null,
+      writeSemantics: null,
+    },
+  ],
+};
+const taskCommands = {
+  schemaVersion: 1,
+  site: "example",
+  identity: { endpoint: "get.me", idField: "id", display: ["first_name", "email"] },
+  commands: [
+    {
+      name: "shifts",
+      summary: "List shifts",
+      call: { endpoint: "get.shifts", params: {} },
+      output: { kind: "table" as const, columns: ["date"] },
+      redact: [],
+    },
+  ],
+};
+
+test("emitCli with commands emits a task CLI that delegates to the runtime", () => {
+  const src = emitCli(taskManifest as never, taskCommands as never);
+  expect(src).toContain('"name": "shifts"');
+  expect(src).toContain("List shifts");
+  expect(src).toContain("runCommand");
+  expect(src).toContain("createCaller");
+  expect(src).toContain('"../lib/command-runner"');
+  expect(src).toContain("whoami");
+});
+
+test("emitCli with an identity-less commands file omits whoami", () => {
+  const src = emitCli(taskManifest as never, { ...taskCommands, identity: undefined } as never);
+  expect(src).toContain("runCommand");
+  expect(src).not.toMatch(/name === "whoami"/);
+});
+
+test("emitCli without commands keeps the endpoint-per-command CLI", () => {
+  const src = emitCli(taskManifest as never);
+  expect(src).toContain("COMMANDS");
+  expect(src).not.toContain("runCommand");
+});
