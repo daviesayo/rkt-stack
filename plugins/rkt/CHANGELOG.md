@@ -1,5 +1,25 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Generated clients gain session-lifecycle commands: `login` (opens a browser,
+  saves the session), `logout` (clears stored session), and `auth status`
+  (shows a live access-token TTL from the currently stored token). `whoami`
+  follows in the command-surface release.
+- A request scheduler replaces the rate limiter: same human-shaped pacing, plus
+  per-run dedup of repeated GETs and 429/503 backoff honouring `Retry-After`.
+  This is the foundation the task-command joins build on.
+- Field-level output redaction (`--raw` to opt out), applied in both table and
+  `--json` output.
+
+### Changed
+
+- `secrets.ts` derives a live per-credential expiry (from a JWT `exp`) so
+  `auth status` reflects the token actually stored now, not the recording-time
+  value.
+
 ## 0.6.0 — 2026-07-20
 
 Completes `derive-client`: record a logged-in session, derive a manifest, and
