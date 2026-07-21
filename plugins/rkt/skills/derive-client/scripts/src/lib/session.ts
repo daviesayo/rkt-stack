@@ -1,3 +1,6 @@
+import { rm, stat } from "node:fs/promises";
+import { profileDir, secretsFile, storageStateFile, secretsDir, sanitizeSite } from "./paths";
+
 export interface AuthStatusInput {
   identity: { name: string } | null;
   accessExpiry: string | null;
@@ -40,3 +43,67 @@ export function formatAuthStatus(input: AuthStatusInput, now: number): string[] 
 
   return lines;
 }
+
+export function identityCacheFile(site: string): string {
+  return `${secretsDir()}/${sanitizeSite(site)}.identity.json`;
+}
+
+export async function logoutSite(site: string): Promise<{ removed: string[] }> {
+  const removed: string[] = [];
+  for (const path of [secretsFile(site), storageStateFile(site), identityCacheFile(site)]) {
+    try {
+      await stat(path);
+      await rm(path, { force: true });
+      removed.push(path);
+    } catch {
+      /* not present */
+    }
+  }
+  return removed.length ? { removed } : { removed: [] };
+}
+
+export interface Launcher {
+  (site: string, entryUrl: string, statePath: string): Promise<boolean>;
+}
+
+/**
+ * Open headed Chrome on the recorded profile, wait for the user to sign in,
+ * save storageState. The launcher is injectable so unit tests never open a
+ * browser; the real launcher is exercised by the live smoke test.
+ */
+export async function loginSite(
+  site: string,
+  entryUrl: string,
+  opts: { launch?: Launcher } = {},
+): Promise<boolean> {
+  const launch = opts.launch ?? defaultLauncher;
+  // Clear identity cache first: signing in as a different user must not leave
+  // a stale @me pointing at the previous person.
+  await rm(identityCacheFile(site), { force: true }).catch(() => {});
+  return launch(site, entryUrl, storageStateFile(site));
+}
+
+const defaultLauncher: Launcher = async (site, entryUrl, statePath) => {
+  let pw: typeof import("playwright");
+  try {
+    pw = await import("playwright");
+  } catch {
+    return false;
+  }
+  const ctx = await pw.chromium.launchPersistentContext(profileDir(site), {
+    channel: "chrome",
+    headless: false,
+  });
+  try {
+    const page = ctx.pages()[0] ?? (await ctx.newPage());
+    await page.goto(entryUrl, { waitUntil: "domcontentloaded" });
+    // Wait until the user has left the identity provider (signed in), capped.
+    await page
+      .waitForURL((u) => !/identity|login|auth|realms/i.test(u.host + u.pathname), { timeout: 300_000 })
+      .catch(() => {});
+    await ctx.storageState({ path: statePath });
+    return true;
+  } finally {
+    await ctx.close().catch(() => {});
+  }
+};
