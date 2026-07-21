@@ -32,10 +32,15 @@ const manifest = {
 };
 
 // A caller whose responses are keyed by endpoint id; records calls for assertions.
-function caller(bodies: Record<string, unknown>, calls: { ep: string; params: Record<string, string> }[] = []): RunnerCaller {
+function caller(
+  bodies: Record<string, unknown>,
+  calls: { ep: string; params: Record<string, string> }[] = [],
+  secret?: Record<string, string> | null,
+): RunnerCaller {
   return {
     call: async (ep, params) => { calls.push({ ep, params }); return { status: 200, body: JSON.stringify(bodies[ep]) }; },
     fetchJson: async (ep) => bodies[ep],
+    secret,
   };
 }
 
@@ -113,6 +118,29 @@ test("@me without an identity block is a clear error", async () => {
     output: { kind: "json" as const }, redact: [],
   };
   await expect(runCommand(cmd, baseOpts(c))).rejects.toThrow(/identity/i);
+});
+
+test("flags.json forces JSON output for table commands", async () => {
+  const c = caller({ "get.shifts": [{ date: "d1" }] });
+  const cmd = {
+    name: "shifts", summary: "",
+    call: { endpoint: "get.shifts", params: {} },
+    output: { kind: "table" as const, columns: ["date"] },
+    redact: [],
+  };
+  const out = await runCommand(cmd, { ...baseOpts(c), flags: { json: true, raw: false } });
+  expect(out.trimStart().startsWith("[")).toBe(true);
+  expect(out).toContain("d1");
+  expect(out).not.toMatch(/^date\s/m);
+});
+
+test("credential values are masked even with raw", async () => {
+  const TOKEN = "super-secret-token-value";
+  const c = caller({ "get.me": { id: 1, token: TOKEN, ssn: "visible-ssn" } }, [], { default: TOKEN });
+  const cmd = { name: "me", summary: "", call: { endpoint: "get.me", params: {} }, output: { kind: "json" as const }, redact: ["ssn"] };
+  const out = await runCommand(cmd, { ...baseOpts(c), flags: { json: false, raw: true } });
+  expect(out).toContain("visible-ssn");
+  expect(out).not.toContain(TOKEN);
 });
 
 test("json output redacts by default and passes raw through", async () => {

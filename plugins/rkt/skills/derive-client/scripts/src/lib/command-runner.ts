@@ -2,12 +2,15 @@ import type { CommandSpec, IdentitySpec } from "./commands-schema";
 import type { ClientManifest } from "./manifest-schema";
 import { applyJoins, type Lookup } from "./join";
 import { resolveIdentity, whoamiLine } from "./identity";
+import { redactAll } from "./secrets";
 import { resolveToken, type TokenContext } from "./tokens";
 import { getPath, renderJson, renderTable, sortRows } from "./render";
 
 export interface RunnerCaller {
   call(endpointId: string, params: Record<string, string>): Promise<{ status: number; body: string }>;
   fetchJson(endpointId: string): Promise<unknown>;
+  /** Credential bundle for always-on output masking; mirrors runtime Caller.secret. */
+  readonly secret?: Record<string, string> | null;
 }
 
 export interface RunFlags {
@@ -100,13 +103,17 @@ export async function runCommand(cmd: CommandSpec, opts: RunOpts): Promise<strin
   }
 
   const redact = cmd.redact ?? [];
+  const secrets = caller.secret ?? null;
+  const mask = (text: string) => redactAll(text, secrets);
 
-  if (cmd.output.kind === "json") {
+  const useJson = cmd.output.kind === "json" || flags.json;
+
+  if (useJson) {
     let data = parsed;
     if (typeof flags.limit === "number" && Array.isArray(data)) {
       data = (data as unknown[]).slice(0, flags.limit);
     }
-    return renderJson(data, { redact, raw: flags.raw });
+    return mask(renderJson(data, { redact, raw: flags.raw }));
   }
 
   let rows = extractRows(parsed, cmd.output.rows);
@@ -122,5 +129,5 @@ export async function runCommand(cmd: CommandSpec, opts: RunOpts): Promise<strin
   }
   if (cmd.output.sort) rows = sortRows(rows, cmd.output.sort);
   if (typeof flags.limit === "number") rows = rows.slice(0, flags.limit);
-  return renderTable(rows, cmd.output.columns ?? [], { redact, raw: flags.raw });
+  return mask(renderTable(rows, cmd.output.columns ?? [], { redact, raw: flags.raw }));
 }
