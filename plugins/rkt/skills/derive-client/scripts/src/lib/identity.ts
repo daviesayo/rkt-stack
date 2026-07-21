@@ -20,7 +20,8 @@ export async function resolveIdentity(
   const path = identityCacheFile(site);
   try {
     const parsed = JSON.parse(await readFile(path, "utf8")) as IdentityCache;
-    if (typeof parsed.id === "string") return parsed;
+    // Pre-label caches may have id without label; treat as a miss so we refetch and rewrite.
+    if (typeof parsed.id === "string" && typeof parsed.label === "string") return parsed;
   } catch (err) {
     // ENOENT is the normal cold-cache path. A corrupt or unreadable cache is
     // also recoverable (we re-fetch and overwrite), but surface anything that
