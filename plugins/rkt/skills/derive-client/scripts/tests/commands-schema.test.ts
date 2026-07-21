@@ -37,3 +37,39 @@ test("defaults onError to blank when omitted", () => {
 test("rejects a non-array commands field", () => {
   expect(() => validateCommandsFile({ schemaVersion: 1, site: "x", commands: {} })).toThrow(/commands/i);
 });
+
+test("rejects non-string join select elements", () => {
+  const cf = valid();
+  cf.commands[0].join[0].select = [42];
+  expect(() => validateCommandsFile(cf)).toThrow(/join\[\]\.select\[0\]/);
+});
+
+test("rejects non-string output columns", () => {
+  const cf = valid();
+  cf.commands[0].output.columns = ["date", null];
+  expect(() => validateCommandsFile(cf)).toThrow(/output\.columns\[1\]/);
+});
+
+test("rejects non-string identity display elements", () => {
+  const cf = valid();
+  cf.identity.display = [123];
+  expect(() => validateCommandsFile(cf)).toThrow(/identity\.display\[0\]/);
+});
+
+test("rejects non-string redact elements", () => {
+  const cf = valid();
+  cf.commands[0].redact = [false];
+  expect(() => validateCommandsFile(cf)).toThrow(/redact\[0\]/);
+});
+
+test("rejects non-string call.params values", () => {
+  const cf = valid();
+  cf.commands[0].call.params = { start: 123 };
+  expect(() => validateCommandsFile(cf)).toThrow(/call\.params\.start/);
+});
+
+test("rejects non-object call.params", () => {
+  const cf = valid();
+  cf.commands[0].call.params = [];
+  expect(() => validateCommandsFile(cf)).toThrow(/call\.params/);
+});
