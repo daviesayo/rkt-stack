@@ -1,3 +1,4 @@
+import type { CommandsFile } from "./commands-schema";
 import type { ClientManifest, JsonShape, ManifestEndpoint } from "./manifest-schema";
 
 const GENERATED_HEADER = (manifest: ClientManifest) =>
@@ -101,7 +102,7 @@ export function emitTypes(manifest: ClientManifest): string {
   return `${GENERATED_HEADER(manifest)}\n${blocks.join("\n")}`;
 }
 
-export function emitCli(manifest: ClientManifest): string {
+export function emitCli(manifest: ClientManifest, commands?: CommandsFile): string {
   for (const endpoint of manifest.endpoints) {
     if (!READ_METHODS.has(endpoint.method.toUpperCase())) {
       throw new Error(
@@ -109,7 +110,11 @@ export function emitCli(manifest: ClientManifest): string {
       );
     }
   }
+  if (commands) return emitTaskCli(manifest, commands);
+  return emitEndpointCli(manifest);
+}
 
+function emitEndpointCli(manifest: ClientManifest): string {
   const names = commandNames(manifest.endpoints);
   const commands = manifest.endpoints.map((endpoint) => ({
     command: names.get(endpoint.id)!,
@@ -315,6 +320,118 @@ if (import.meta.main) {
     console.error((err as Error).message);
     process.exit(1);
   }
+}
+`;
+}
+
+function emitTaskCli(manifest: ClientManifest, commands: CommandsFile): string {
+  const hasIdentity = !!commands.identity;
+  const identityLiteral = hasIdentity ? JSON.stringify(commands.identity) : "undefined";
+  const whoamiImport = hasIdentity ? ", runWhoami" : "";
+  const whoamiDispatch = hasIdentity
+    ? `
+  if (name === "whoami") {
+    console.log(await runWhoami(SITE, IDENTITY, caller));
+    return;
+  }
+`
+    : "";
+  return `${GENERATED_HEADER(manifest)}
+import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+import { validateManifest } from "../lib/manifest-schema";
+import { createScheduler } from "../lib/scheduler";
+import { createCaller } from "../lib/runtime";
+import { runCommand${whoamiImport} } from "../lib/command-runner";
+import type { CommandSpec, IdentitySpec } from "../lib/commands-schema";
+import { readSecrets } from "../lib/secrets";
+import { runLifecycle } from "../lib/session";
+
+const COMMANDS: CommandSpec[] = ${JSON.stringify(commands.commands, null, 2)};
+const IDENTITY: IdentitySpec | undefined = ${identityLiteral};
+const SITE = ${JSON.stringify(manifest.site)};
+
+function hasFlag(name: string): boolean {
+  return process.argv.includes(\`--\${name}\`);
+}
+function flagValue(name: string): string | undefined {
+  const i = process.argv.indexOf(\`--\${name}\`);
+  return i === -1 ? undefined : process.argv[i + 1];
+}
+
+function usage(): never {
+  console.error("usage: bun cli.ts <command> [--param value ...] [--json] [--raw] [--limit n]");
+  console.error("");
+  console.error("session:");
+  console.error("  login                    sign in and save the session");
+  console.error("  logout                   remove the saved session and secrets");
+  console.error("  auth status              show token TTL and session age");
+  if (IDENTITY) console.error("  whoami                   show the signed-in user");
+  console.error("");
+  console.error("commands:");
+  for (const c of COMMANDS) console.error(\`  \${c.name.padEnd(22)} \${c.summary}\`);
+  process.exit(1);
+}
+
+async function main() {
+  const manifestPath = fileURLToPath(new URL("./client.json", import.meta.url));
+  if (await runLifecycle(process.argv[2], process.argv[3], manifestPath)) return;
+
+  const name = process.argv[2];
+  if (!name || name.startsWith("-")) usage();
+
+  const manifest = validateManifest(JSON.parse(await readFile(manifestPath, "utf8")));
+  const secret = await readSecrets(manifest.site);
+  // Same pre-flight the manual and fallback CLIs carry: a clear "run login"
+  // beats a confusing 401 when the site needs auth but nothing is stored.
+  if (manifest.auth && !secret) {
+    console.error(\`no stored credential for "\${manifest.site}". Run: bun cli.ts login\`);
+    process.exit(1);
+  }
+  const scheduler = createScheduler();
+  const caller = createCaller(manifest, scheduler, secret);
+${whoamiDispatch}
+  const cmd = COMMANDS.find((c) => c.name === name);
+  if (!cmd) {
+    console.error(\`unknown command: \${name}\`);
+    usage();
+  }
+
+  // Override declared params from --name value; global flags are never treated as params.
+  const overrideParams: Record<string, string> = {};
+  for (const key of Object.keys(cmd.call.params ?? {})) {
+    const v = flagValue(key);
+    if (v !== undefined) overrideParams[key] = v;
+  }
+
+  const limitRaw = flagValue("limit");
+  const limitNum = limitRaw !== undefined ? Number(limitRaw) : NaN;
+  const flags = {
+    json: hasFlag("json"),
+    raw: hasFlag("raw"),
+    // Ignore a non-numeric --limit rather than silently slicing to an empty result.
+    limit: Number.isFinite(limitNum) ? limitNum : undefined,
+  };
+  // --json forces JSON output of the primary response (redaction still applies).
+  const toRun = flags.json ? { ...cmd, output: { ...cmd.output, kind: "json" as const } } : cmd;
+
+  const out = await runCommand(toRun, {
+    manifest,
+    site: SITE,
+    caller,
+    identity: IDENTITY,
+    flags,
+    now: new Date(),
+    overrideParams,
+  });
+  console.log(out);
+}
+
+if (import.meta.main) {
+  main().catch((err) => {
+    console.error((err as Error).message);
+    process.exit(1);
+  });
 }
 `;
 }
