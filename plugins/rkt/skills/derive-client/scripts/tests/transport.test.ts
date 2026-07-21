@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import type { ClientManifest, ManifestEndpoint } from "../src/lib/manifest";
+import { createScheduler } from "../src/lib/scheduler";
 import { buildRequest, issue } from "../src/lib/transport";
 
 const endpoint: ManifestEndpoint = {
@@ -128,25 +129,23 @@ test("allows http loopback when credentials are attached", () => {
   expect(built.url).toBe("http://localhost:3000/api/items/1");
 });
 
-test("issue refuses non-GET/HEAD before calling fetch", async () => {
-  const originalFetch = globalThis.fetch;
-  let fetchCalled = false;
-  globalThis.fetch = (() => {
-    fetchCalled = true;
-    throw new Error("fetch should not be called");
-  }) as unknown as typeof fetch;
+test("issue calls the scheduler and returns status and body", async () => {
+  const scheduler = createScheduler({
+    minDelayMs: 0,
+    maxDelayMs: 0,
+    fetchImpl: (async () => new Response('{"ok":true}', { status: 200 })) as unknown as typeof fetch,
+  });
+  const built = { url: "https://x.test/api", method: "GET", headers: {} };
+  const { status, body } = await issue(built, scheduler);
+  expect(status).toBe(200);
+  expect(body).toBe('{"ok":true}');
+});
 
-  try {
-    const built = {
-      url: "https://x.test/api/items/1",
-      method: "POST",
-      headers: { accept: "application/json" },
-    };
-    await expect(issue(built, (fn) => fn())).rejects.toThrow(/GET and HEAD only/i);
-    expect(fetchCalled).toBe(false);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
+test("issue still refuses a non-read method", async () => {
+  const scheduler = createScheduler({ minDelayMs: 0, maxDelayMs: 0 });
+  await expect(
+    issue({ url: "https://x.test/api", method: "DELETE", headers: {} }, scheduler),
+  ).rejects.toThrow(/GET and HEAD only/i);
 });
 
 test("supplies recorded values for params the API requires", () => {

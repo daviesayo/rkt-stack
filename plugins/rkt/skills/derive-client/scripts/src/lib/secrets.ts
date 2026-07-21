@@ -56,6 +56,44 @@ export async function readSecrets(site: string): Promise<Record<string, string> 
   }
 }
 
+/** Decode a JWT exp claim to an ISO timestamp, or null if the value is not a JWT. */
+function jwtExpiry(value: string): string | null {
+  const bare = value.replace(/^bearer\s+/i, "");
+  const parts = bare.split(".");
+  if (parts.length !== 3) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
+    if (typeof payload?.exp !== "number") return null;
+    return new Date(payload.exp * 1000).toISOString();
+  } catch {
+    return null;
+  }
+}
+
+export interface SecretMeta {
+  values: Record<string, string>;
+  storedAt: string | null;
+  expiry: Record<string, string | null>;
+}
+
+export async function readSecretMeta(site: string): Promise<SecretMeta | null> {
+  try {
+    const body = JSON.parse(await readFile(secretsFile(site), "utf8")) as SecretBody;
+    const values =
+      body.values && typeof body.values === "object"
+        ? body.values
+        : typeof body.value === "string"
+          ? { default: body.value }
+          : null;
+    if (!values) return null;
+    const expiry: Record<string, string | null> = {};
+    for (const [k, v] of Object.entries(values)) expiry[k] = jwtExpiry(v);
+    return { values, storedAt: body.storedAt ?? null, expiry };
+  } catch {
+    return null;
+  }
+}
+
 /** Single-credential accessor, kept for callers that only need one value. */
 export async function readSecret(site: string): Promise<string | null> {
   const all = await readSecrets(site);

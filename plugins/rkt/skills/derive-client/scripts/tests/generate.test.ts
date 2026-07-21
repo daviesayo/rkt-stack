@@ -4,6 +4,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { generateClient } from "../src/generate";
 
+const EXPECTED_RUNTIME = [
+  "paths.ts",
+  "manifest-schema.ts",
+  "secrets.ts",
+  "scheduler.ts",
+  "transport.ts",
+  "refresh.ts",
+  "reauth.ts",
+  "session.ts",
+  "render.ts",
+];
+
 let workRoot: string;
 let manifestPath: string;
 
@@ -58,11 +70,12 @@ test("scaffolds the repo with a gitignore covering secrets and recordings", asyn
 test("copies the shared runtime into lib/", async () => {
   const out = join(workRoot, "clients-b");
   await generateClient(manifestPath, out);
-  for (const f of ["paths.ts", "manifest-schema.ts", "secrets.ts", "ratelimit.ts", "transport.ts", "refresh.ts", "reauth.ts"]) {
+  for (const f of EXPECTED_RUNTIME) {
     const src = await readFile(join(out, "lib", f), "utf8");
     expect(src.length).toBeGreaterThan(0);
     expect(src).toMatch(/GENERATED|copied/i);
   }
+  await expect(readFile(join(out, "lib", "ratelimit.ts"), "utf8")).rejects.toThrow();
 });
 
 test("writes the site directory with client.json, types.ts and cli.ts", async () => {
@@ -86,11 +99,25 @@ test("is idempotent: a second run produces identical bytes", async () => {
 test("every runtime file in the copied set is present", async () => {
   const out = join(workRoot, "clients-e");
   const { written } = await generateClient(manifestPath, out);
-  for (const f of ["paths.ts", "manifest-schema.ts", "secrets.ts", "ratelimit.ts", "transport.ts", "refresh.ts", "reauth.ts"]) {
+  for (const f of EXPECTED_RUNTIME) {
     expect(written.some((p) => p.endsWith(join("lib", f)))).toBe(true);
   }
   // manifest.ts pulls in the derivation pipeline; it must NOT be copied.
   expect(written.some((p) => p.endsWith(join("lib", "manifest.ts")))).toBe(false);
+  expect(written.some((p) => p.endsWith(join("lib", "ratelimit.ts")))).toBe(false);
+});
+
+test("a generated client answers auth status without a commands.json", async () => {
+  const out = join(workRoot, "clients-lifecycle");
+  await generateClient(manifestPath, out);
+  const proc = Bun.spawn(["bun", join(out, "example", "cli.ts"), "auth", "status"], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const text = await new Response(proc.stdout).text();
+  expect(await proc.exited).toBe(0);
+  expect(text).toMatch(/Access token/);
+  expect(text).toMatch(/Refresh window\s+unknown/);
 });
 
 test("refuses a manifest with an unsupported schema version", async () => {

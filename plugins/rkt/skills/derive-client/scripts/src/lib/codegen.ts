@@ -140,11 +140,13 @@ ${responseMap.join("\n")}
 
   return `${GENERATED_HEADER(manifest)}
 import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { validateManifest } from "../lib/manifest-schema";
-import { createLimiter } from "../lib/ratelimit";
+import { createScheduler } from "../lib/scheduler";
 import { reauthViaProfile } from "../lib/reauth";
 import { refreshViaOidc } from "../lib/refresh";
 import { maskHeaders, readSecrets, redactAll, REFRESH_TOKEN_KEY, writeSecret } from "../lib/secrets";
+import { runLifecycle } from "../lib/session";
 import { buildRequest, issue } from "../lib/transport";
 ${typeImport}
 interface CommandSpec {
@@ -175,6 +177,13 @@ ${responseFor}function usage(): never {
 }
 
 async function main() {
+  const handled = await runLifecycle(
+    process.argv[2],
+    process.argv[3],
+    fileURLToPath(new URL("./client.json", import.meta.url)),
+  );
+  if (handled) return;
+
   const commandName = process.argv[2];
   if (!commandName || commandName.startsWith("-")) usage();
 
@@ -231,8 +240,8 @@ async function main() {
     return;
   }
 
-  const limiter = createLimiter();
-  let { status, body } = await issue(built, limiter);
+  const scheduler = createScheduler();
+  let { status, body } = await issue(built, scheduler);
 
   // A 401 on a derived client almost always means "stale", not "wrong".
   // Renew and retry once before reporting failure. Tiers run cheapest first:
@@ -285,7 +294,7 @@ async function main() {
     if (renewedValues) {
       await writeSecret(manifest.site, renewedValues);
       built = buildRequest(manifest, endpoint, params, renewedValues);
-      ({ status, body } = await issue(built, limiter));
+      ({ status, body } = await issue(built, scheduler));
     }
   }
 

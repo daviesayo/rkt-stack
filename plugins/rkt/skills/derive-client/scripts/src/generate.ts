@@ -21,6 +21,9 @@ export interface GeneratedFiles {
  * refresh.ts re-exports RefreshSpec and implements OIDC renewal without har.ts.
  * reauth.ts depends on paths.ts and playwright (dev-time only for browser tier).
  * transport.ts imports manifest-schema type-only; secrets.ts imports paths.ts.
+ * scheduler.ts imports nothing outside the set.
+ * session.ts imports ./paths, ./secrets, ./reauth, ./manifest-schema.
+ * render.ts imports nothing outside the set.
  * Copying manifest.ts or refresh-detect.ts would drag in the derivation pipeline.
  *
  * If you add a file here, re-run the closure probe: generate into a temp dir,
@@ -30,10 +33,12 @@ const RUNTIME_FILES = [
   "paths.ts",
   "manifest-schema.ts",
   "secrets.ts",
-  "ratelimit.ts",
+  "scheduler.ts",
   "transport.ts",
   "refresh.ts",
   "reauth.ts",
+  "session.ts",
+  "render.ts",
 ];
 
 const COPIED_HEADER = `// Copied from the rkt derive-client skill. Do not edit here.
