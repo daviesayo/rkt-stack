@@ -115,7 +115,7 @@ test("a generated client answers auth status without a commands.json", async () 
     stderr: "pipe",
   });
   const text = await new Response(proc.stdout).text();
-  await proc.exited;
+  expect(await proc.exited).toBe(0);
   expect(text).toMatch(/Access token/);
   expect(text).toMatch(/Refresh window\s+unknown/);
 });
