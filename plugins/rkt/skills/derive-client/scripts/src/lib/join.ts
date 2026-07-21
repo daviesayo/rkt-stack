@@ -3,6 +3,18 @@ import { getPath } from "./render";
 
 export type Lookup = (endpointId: string, key: string) => Promise<unknown>;
 
+function setPath(obj: Record<string, unknown>, dottedPath: string, value: unknown): void {
+  const keys = dottedPath.split(".");
+  let cur = obj;
+  for (let i = 0; i < keys.length - 1; i++) {
+    const key = keys[i];
+    const next = cur[key];
+    if (!next || typeof next !== "object") cur[key] = {};
+    cur = cur[key] as Record<string, unknown>;
+  }
+  cur[keys[keys.length - 1]] = value;
+}
+
 async function resolveOne(
   keyValue: string,
   join: JoinSpec,
@@ -16,7 +28,7 @@ async function resolveOne(
   }
   const body = await p;
   const picked: Record<string, unknown> = {};
-  for (const f of join.select) picked[f] = getPath(body, f);
+  for (const f of join.select) setPath(picked, f, getPath(body, f));
   return picked;
 }
 

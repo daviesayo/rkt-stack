@@ -42,6 +42,19 @@ test("throws a clear error when the id field is absent", async () => {
   await expect(resolveIdentity("s", spec, fetchEndpoint)).rejects.toThrow(/idField 'id'/i);
 });
 
+test("invalid cache shape is treated as a miss and re-fetched", async () => {
+  const { mkdir, writeFile } = await import("node:fs/promises");
+  const { identityCacheFile } = await import("../src/lib/session");
+  const { secretsDir } = await import("../src/lib/paths");
+  await mkdir(secretsDir(), { recursive: true });
+  await writeFile(identityCacheFile("s"), JSON.stringify({}), "utf8");
+  let calls = 0;
+  const fetchEndpoint = async () => { calls++; return { id: 42, first_name: "Bob" }; };
+  const result = await resolveIdentity("s", spec, fetchEndpoint);
+  expect(result.id).toBe("42");
+  expect(calls).toBe(1);
+});
+
 test("the cache file is written at 0600", async () => {
   const { stat } = await import("node:fs/promises");
   const { identityCacheFile } = await import("../src/lib/session");

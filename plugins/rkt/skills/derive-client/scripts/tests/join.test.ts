@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { applyJoins } from "../src/lib/join";
+import { getPath } from "../src/lib/render";
 
 const join = { key: "client_id", endpoint: "get.clients.id", select: ["name"], as: "client", onError: "blank" as const };
 
@@ -51,6 +52,14 @@ test("a missing key resolves to blank without a lookup", async () => {
   const out = await applyJoins(rows, [join], lookup);
   expect(out[0].client).toEqual({});
   expect(called).toBe(false);
+});
+
+test("dotted select fields nest so getPath can read them back", async () => {
+  const rows = [{ client_id: 1 }];
+  const j = { key: "client_id", endpoint: "get.clients.id", select: ["address.city"], as: "client", onError: "blank" as const };
+  const lookup = async () => ({ address: { city: "Sydney" } });
+  const out = await applyJoins(rows, [j], lookup);
+  expect(getPath(out[0], "client.address.city")).toBe("Sydney");
 });
 
 test("a missing key does NOT abort even under onError fail (no lookup was attempted)", async () => {

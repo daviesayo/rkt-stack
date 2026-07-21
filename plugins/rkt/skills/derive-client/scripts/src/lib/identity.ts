@@ -18,7 +18,8 @@ export async function resolveIdentity(
 ): Promise<IdentityCache> {
   const path = identityCacheFile(site);
   try {
-    return JSON.parse(await readFile(path, "utf8")) as IdentityCache;
+    const parsed = JSON.parse(await readFile(path, "utf8")) as IdentityCache;
+    if (typeof parsed.id === "string") return parsed;
   } catch (err) {
     // ENOENT is the normal cold-cache path. A corrupt or unreadable cache is
     // also recoverable (we re-fetch and overwrite), but surface anything that
