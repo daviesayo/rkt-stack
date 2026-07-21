@@ -2,7 +2,14 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { chmod, mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readSecret, redact, maskHeaders, writeSecret } from "../src/lib/secrets";
+import {
+  readSecret,
+  readSecretMeta,
+  readSecrets,
+  redact,
+  maskHeaders,
+  writeSecret,
+} from "../src/lib/secrets";
 
 let testRoot: string;
 const ORIGINAL_ROOT = process.env.RKT_CLIENTS_ROOT;
@@ -82,4 +89,33 @@ test("maskHeaders redacts cookie values before JSON escaping can hide them", () 
   const serialized = JSON.stringify(masked, null, 2);
   expect(serialized).not.toContain(secret);
   expect(serialized).toContain("[REDACTED]");
+});
+
+function jwt(payload: Record<string, unknown>): string {
+  const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url");
+  return `${b64({ alg: "HS256" })}.${b64(payload)}.sig`;
+}
+
+test("readSecretMeta decodes a JWT value's expiry", async () => {
+  const exp = Math.floor(Date.parse("2026-08-01T00:00:00Z") / 1000);
+  await writeSecret("metatest", { "cookie:token": jwt({ exp }) });
+  const meta = await readSecretMeta("metatest");
+  expect(meta?.expiry["cookie:token"]).toBe("2026-08-01T00:00:00.000Z");
+});
+
+test("readSecretMeta reports null expiry for a non-JWT value", async () => {
+  await writeSecret("metatest2", { "cookie:sid": "opaquevalue" });
+  const meta = await readSecretMeta("metatest2");
+  expect(meta?.expiry["cookie:sid"]).toBeNull();
+});
+
+test("readSecretMeta exposes storedAt", async () => {
+  await writeSecret("metatest3", { "cookie:sid": "opaquevalue" });
+  const meta = await readSecretMeta("metatest3");
+  expect(typeof meta?.storedAt).toBe("string");
+});
+
+test("readSecrets still returns just the values for existing callers", async () => {
+  await writeSecret("metatest4", { "cookie:sid": "opaquevalue" });
+  expect(await readSecrets("metatest4")).toEqual({ "cookie:sid": "opaquevalue" });
 });
