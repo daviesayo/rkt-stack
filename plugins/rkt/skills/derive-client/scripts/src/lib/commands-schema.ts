@@ -1,3 +1,5 @@
+import type { ManifestEndpoint } from "./manifest-schema";
+
 export const COMMANDS_SCHEMA_VERSION = 1;
 
 export interface IdentitySpec {
@@ -18,6 +20,7 @@ export interface CommandOutput {
   kind: "table" | "json";
   columns?: string[];
   sort?: string;
+  rows?: string;
 }
 
 export interface CommandSpec {
@@ -84,6 +87,12 @@ function validateCommand(c: unknown): CommandSpec {
   if (output.kind === "table" && !Array.isArray(output.columns)) fail(`${o.name}.output.columns`, "required for a table");
   const columns =
     output.kind === "table" ? validateStringArray(output.columns, `${o.name}.output.columns`) : output.columns;
+  const rows =
+    output.rows === undefined
+      ? undefined
+      : typeof output.rows === "string"
+        ? output.rows
+        : fail(`${o.name}.output.rows`, "must be a string");
   const join = Array.isArray(o.join) ? o.join.map((j) => validateJoin(j, o.name!)) : undefined;
   const redact = Array.isArray(o.redact) ? validateStringArray(o.redact, `${o.name}.redact`) : [];
   return {
@@ -91,7 +100,7 @@ function validateCommand(c: unknown): CommandSpec {
     summary: o.summary,
     call: { endpoint: o.call.endpoint, params: validateParams(o.call.params, o.name) },
     join,
-    output: { ...output, columns },
+    output: { ...output, columns, rows },
     redact,
   };
 }
@@ -112,4 +121,43 @@ export function validateCommandsFile(value: unknown): CommandsFile {
     identity = { endpoint: i.endpoint, idField: i.idField, display };
   }
   return { schemaVersion: o.schemaVersion, site: o.site, identity, commands: o.commands.map(validateCommand) };
+}
+
+export function assertResolvable(
+  commands: CommandsFile,
+  endpoints: Pick<ManifestEndpoint, "id" | "params">[],
+): void {
+  const byId = new Map(endpoints.map((e) => [e.id, e]));
+  const need = (cmd: string, endpoint: string): Pick<ManifestEndpoint, "id" | "params"> => {
+    const ep = byId.get(endpoint);
+    if (!ep) {
+      throw new Error(
+        `commands.json: ${cmd} references endpoint '${endpoint}', which is not in client.json`,
+      );
+    }
+    return ep;
+  };
+
+  if (commands.identity) {
+    const idEp = need("identity", commands.identity.endpoint);
+    if (idEp.params.some((p) => p.in === "path")) {
+      throw new Error(
+        `commands.json: identity endpoint '${commands.identity.endpoint}' must be id-free ` +
+          `(a /me-style route with no path params), but it takes a path param`,
+      );
+    }
+  }
+  for (const c of commands.commands) {
+    need(c.name, c.call.endpoint);
+    for (const j of c.join ?? []) {
+      const ep = need(c.name, j.endpoint);
+      const pathParams = ep.params.filter((p) => p.in === "path");
+      if (pathParams.length !== 1) {
+        throw new Error(
+          `commands.json: ${c.name}.join lookup '${j.endpoint}' must have exactly one path param ` +
+            `to receive the join key, but has ${pathParams.length}`,
+        );
+      }
+    }
+  }
 }
