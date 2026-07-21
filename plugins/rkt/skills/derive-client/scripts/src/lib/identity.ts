@@ -7,6 +7,7 @@ import { getPath } from "./render";
 interface IdentityCache {
   id: string;
   display: Record<string, unknown>;
+  label: string;
 }
 
 export type FetchEndpoint = (endpointId: string) => Promise<unknown>;
@@ -36,7 +37,7 @@ export async function resolveIdentity(
   }
   const display: Record<string, unknown> = {};
   for (const f of spec.display) display[f] = getPath(body, f);
-  const cache: IdentityCache = { id: String(idRaw), display };
+  const cache: IdentityCache = { id: String(idRaw), display, label: whoamiLine(display, spec.display) };
 
   // Atomic write at 0600, mirroring secrets.ts, so an overwrite never leaves a
   // prior file's mode in place.

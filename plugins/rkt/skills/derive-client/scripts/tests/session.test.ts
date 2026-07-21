@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtemp, mkdir, writeFile, rm, access, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { formatAuthStatus, logoutSite } from "../src/lib/session";
+import { formatAuthStatus, logoutSite, readIdentityLabel } from "../src/lib/session";
 
 const NOW = Date.parse("2026-07-21T12:00:00Z");
 
@@ -123,4 +123,15 @@ test("login creates secrets dir at 0700 and storage state at 0600", async () => 
 
   expect((await stat(secretsDir())).mode & 0o777).toBe(0o700);
   expect((await stat(storageStateFile("s"))).mode & 0o777).toBe(0o600);
+});
+
+test("readIdentityLabel returns the cached label, or null when absent", async () => {
+  const { writeFile, mkdir, chmod } = await import("node:fs/promises");
+  const { identityCacheFile } = await import("../src/lib/session");
+  const { secretsDir } = await import("../src/lib/paths");
+  expect(await readIdentityLabel("nobody")).toBeNull();
+  await mkdir(secretsDir(), { recursive: true, mode: 0o700 });
+  await chmod(secretsDir(), 0o700);
+  await writeFile(identityCacheFile("someone"), JSON.stringify({ id: "1", display: {}, label: "Ada (ada@x.test)" }), { mode: 0o600 });
+  expect(await readIdentityLabel("someone")).toBe("Ada (ada@x.test)");
 });

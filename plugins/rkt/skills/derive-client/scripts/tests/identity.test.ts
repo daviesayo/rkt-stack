@@ -62,3 +62,12 @@ test("the cache file is written at 0600", async () => {
   const info = await stat(identityCacheFile("s"));
   expect(info.mode & 0o777).toBe(0o600);
 });
+
+test("stores a formatted label in the cache", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const { identityCacheFile } = await import("../src/lib/session");
+  const s = { endpoint: "get.me", idField: "id", display: ["first_name", "email"] };
+  await resolveIdentity("s", s, async () => ({ id: 1, first_name: "Ada", email: "ada@x.test" }));
+  const cached = JSON.parse(await readFile(identityCacheFile("s"), "utf8"));
+  expect(cached.label).toBe("Ada (ada@x.test)");
+});

@@ -1,4 +1,4 @@
-import { chmod, mkdir, rm, stat } from "node:fs/promises";
+import { chmod, mkdir, readFile, rm, stat } from "node:fs/promises";
 import { validateManifest } from "./manifest-schema";
 import { readSecretMeta } from "./secrets";
 import { profileDir, secretsFile, storageStateFile, secretsDir, sanitizeSite } from "./paths";
@@ -48,6 +48,17 @@ export function formatAuthStatus(input: AuthStatusInput, now: number): string[] 
 
 export function identityCacheFile(site: string): string {
   return `${secretsDir()}/${sanitizeSite(site)}.identity.json`;
+}
+
+/** The formatted "Name (email)" label whoami wrote, or null before whoami has run. */
+export async function readIdentityLabel(site: string): Promise<string | null> {
+  try {
+    const raw = await readFile(identityCacheFile(site), "utf8");
+    const c = JSON.parse(raw) as { label?: string };
+    return typeof c.label === "string" ? c.label : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function logoutSite(site: string): Promise<{ removed: string[] }> {
@@ -157,8 +168,9 @@ export async function runLifecycle(
   } catch {
     /* no saved session */
   }
+  const label = await readIdentityLabel(manifest.site);
   const lines = formatAuthStatus(
-    { identity: null, accessExpiry, refreshWindow: null, storageStateMtime: mtime },
+    { identity: label ? { name: label } : null, accessExpiry, refreshWindow: null, storageStateMtime: mtime },
     Date.now(),
   );
   console.log(lines.join("\n"));
