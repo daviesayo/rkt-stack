@@ -1,4 +1,5 @@
 import type { ClientManifest, ManifestEndpoint } from "./manifest-schema";
+import type { Scheduler } from "./scheduler";
 
 export interface BuiltRequest {
   url: string;
@@ -114,16 +115,17 @@ export function buildRequest(
 
 export async function issue(
   built: BuiltRequest,
-  limit: <T>(fn: () => Promise<T>) => Promise<T>,
+  scheduler: Scheduler,
 ): Promise<{ status: number; body: string }> {
   if (!READ_METHODS.has(built.method.toUpperCase())) {
     throw new Error(
       `refusing ${built.method} ${built.url}: read mode issues GET and HEAD only`,
     );
   }
-
-  return limit(async () => {
-    const res = await fetch(built.url, { method: built.method, headers: built.headers });
-    return { status: res.status, body: await res.text() };
+  const { status, body } = await scheduler.run({
+    url: built.url,
+    method: built.method,
+    headers: built.headers,
   });
+  return { status, body };
 }

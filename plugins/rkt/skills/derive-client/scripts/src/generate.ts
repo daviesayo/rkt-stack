@@ -30,7 +30,7 @@ const RUNTIME_FILES = [
   "paths.ts",
   "manifest-schema.ts",
   "secrets.ts",
-  "ratelimit.ts",
+  "scheduler.ts",
   "transport.ts",
   "refresh.ts",
   "reauth.ts",

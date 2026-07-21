@@ -141,7 +141,7 @@ ${responseMap.join("\n")}
   return `${GENERATED_HEADER(manifest)}
 import { readFile } from "node:fs/promises";
 import { validateManifest } from "../lib/manifest-schema";
-import { createLimiter } from "../lib/ratelimit";
+import { createScheduler } from "../lib/scheduler";
 import { reauthViaProfile } from "../lib/reauth";
 import { refreshViaOidc } from "../lib/refresh";
 import { maskHeaders, readSecrets, redactAll, REFRESH_TOKEN_KEY, writeSecret } from "../lib/secrets";
@@ -231,8 +231,8 @@ async function main() {
     return;
   }
 
-  const limiter = createLimiter();
-  let { status, body } = await issue(built, limiter);
+  const scheduler = createScheduler();
+  let { status, body } = await issue(built, scheduler);
 
   // A 401 on a derived client almost always means "stale", not "wrong".
   // Renew and retry once before reporting failure. Tiers run cheapest first:
@@ -285,7 +285,7 @@ async function main() {
     if (renewedValues) {
       await writeSecret(manifest.site, renewedValues);
       built = buildRequest(manifest, endpoint, params, renewedValues);
-      ({ status, body } = await issue(built, limiter));
+      ({ status, body } = await issue(built, scheduler));
     }
   }
 

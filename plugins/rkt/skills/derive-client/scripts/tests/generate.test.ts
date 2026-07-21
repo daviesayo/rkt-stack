@@ -58,7 +58,7 @@ test("scaffolds the repo with a gitignore covering secrets and recordings", asyn
 test("copies the shared runtime into lib/", async () => {
   const out = join(workRoot, "clients-b");
   await generateClient(manifestPath, out);
-  for (const f of ["paths.ts", "manifest-schema.ts", "secrets.ts", "ratelimit.ts", "transport.ts", "refresh.ts", "reauth.ts"]) {
+  for (const f of ["paths.ts", "manifest-schema.ts", "secrets.ts", "scheduler.ts", "transport.ts", "refresh.ts", "reauth.ts"]) {
     const src = await readFile(join(out, "lib", f), "utf8");
     expect(src.length).toBeGreaterThan(0);
     expect(src).toMatch(/GENERATED|copied/i);
@@ -86,7 +86,7 @@ test("is idempotent: a second run produces identical bytes", async () => {
 test("every runtime file in the copied set is present", async () => {
   const out = join(workRoot, "clients-e");
   const { written } = await generateClient(manifestPath, out);
-  for (const f of ["paths.ts", "manifest-schema.ts", "secrets.ts", "ratelimit.ts", "transport.ts", "refresh.ts", "reauth.ts"]) {
+  for (const f of ["paths.ts", "manifest-schema.ts", "secrets.ts", "scheduler.ts", "transport.ts", "refresh.ts", "reauth.ts"]) {
     expect(written.some((p) => p.endsWith(join("lib", f)))).toBe(true);
   }
   // manifest.ts pulls in the derivation pipeline; it must NOT be copied.
