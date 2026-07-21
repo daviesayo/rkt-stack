@@ -99,10 +99,10 @@ test("login clears the identity cache and delegates to the launcher", async () =
 
   let called = false;
   const ok = await loginSite("s", "https://app.test/", {
-    launch: async (_site, _url, statePath) => {
+    launch: async ({ statePath }) => {
       called = true;
       await writeFile(statePath, "{}");
-      return true;
+      return { values: {} };
     },
   });
   expect(ok).toBe(true);
@@ -115,14 +115,67 @@ test("login creates secrets dir at 0700 and storage state at 0600", async () => 
   const { secretsDir, storageStateFile } = await import("../src/lib/paths");
 
   await loginSite("s", "https://app.test/", {
-    launch: async (_site, _url, statePath) => {
+    launch: async ({ statePath }) => {
       await writeFile(statePath, "{}");
-      return true;
+      return { values: {} };
     },
   });
 
   expect((await stat(secretsDir())).mode & 0o777).toBe(0o700);
   expect((await stat(storageStateFile("s"))).mode & 0o777).toBe(0o600);
+});
+
+test("login writes the harvested credential bundle so the very next command authenticates", async () => {
+  const { loginSite } = await import("../src/lib/session");
+  const { readSecrets } = await import("../src/lib/secrets");
+  const ok = await loginSite("s", "https://app.test/", {
+    wanted: [
+      { location: "cookie:sid", kind: "cookie" },
+      { location: "x-csrf-token", kind: "csrf" },
+    ],
+    launch: async ({ statePath }) => {
+      await writeFile(statePath, "{}");
+      return { values: { "cookie:sid": "abc", "x-csrf-token": "tok" } };
+    },
+  });
+  expect(ok).toBe(true);
+  expect(await readSecrets("s")).toEqual({ "cookie:sid": "abc", "x-csrf-token": "tok" });
+});
+
+test("login returns false and writes no secret when the launcher cannot complete", async () => {
+  const { loginSite } = await import("../src/lib/session");
+  const { readSecrets } = await import("../src/lib/secrets");
+  const ok = await loginSite("s", "https://app.test/", { launch: async () => null });
+  expect(ok).toBe(false);
+  expect(await readSecrets("s")).toBeNull();
+});
+
+test("runLifecycle login hands the launcher the manifest's wanted creds and api host", async () => {
+  const { runLifecycle } = await import("../src/lib/session");
+  const manifest = {
+    schemaVersion: 2, site: "s", baseUrl: "https://api.example.test", recordedAt: "", harSha256: "",
+    userAgent: "", clientHints: {}, auth: null,
+    authBundle: {
+      credentials: [
+        { location: "cookie:sid", kind: "cookie", mintedBy: null, expiry: null },
+        { location: "x-csrf-token", kind: "csrf", mintedBy: null, expiry: null },
+      ],
+      earliestExpiry: null,
+    },
+    refresh: null, endpoints: [],
+  };
+  const mpath = join(root, "client.json");
+  await writeFile(mpath, JSON.stringify(manifest));
+  let seen: { wanted: Array<{ location: string }>; apiHost: string | null } | undefined;
+  await runLifecycle("login", undefined, mpath, {
+    launch: async (args) => {
+      seen = args;
+      await writeFile(args.statePath, "{}");
+      return { values: {} };
+    },
+  });
+  expect(seen?.apiHost).toBe("api.example.test");
+  expect(seen?.wanted.map((w) => w.location).sort()).toEqual(["cookie:sid", "x-csrf-token"]);
 });
 
 test("readIdentityLabel returns the cached label, or null when absent", async () => {
