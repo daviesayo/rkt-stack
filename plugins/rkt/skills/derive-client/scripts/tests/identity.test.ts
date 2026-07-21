@@ -5,15 +5,18 @@ import { join } from "node:path";
 import { resolveIdentity, whoamiLine } from "../src/lib/identity";
 
 let root: string;
-const ORIG = process.env.RKT_CLIENTS_ROOT;
+const ORIG_ROOT = process.env.RKT_CLIENTS_ROOT;
+const ORIG_NODE_ENV = process.env.NODE_ENV;
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "rkt-id-"));
   process.env.RKT_CLIENTS_ROOT = root;
   process.env.NODE_ENV = "test";
 });
 afterEach(async () => {
-  if (ORIG === undefined) delete process.env.RKT_CLIENTS_ROOT;
-  else process.env.RKT_CLIENTS_ROOT = ORIG;
+  if (ORIG_ROOT === undefined) delete process.env.RKT_CLIENTS_ROOT;
+  else process.env.RKT_CLIENTS_ROOT = ORIG_ROOT;
+  if (ORIG_NODE_ENV === undefined) delete process.env.NODE_ENV;
+  else process.env.NODE_ENV = ORIG_NODE_ENV;
   await rm(root, { recursive: true, force: true });
 });
 
