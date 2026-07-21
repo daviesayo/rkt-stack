@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "site": "example",
+  "identity": { "endpoint": "get.api.v1.employees.me", "idField": "id", "display": ["first_name", "email"] },
+  "commands": [
+    {
+      "name": "shifts",
+      "summary": "List your upcoming shifts",
+      "call": { "endpoint": "get.scheduling.getShifts", "params": { "start": "@today", "end": "@today+14d" } },
+      "join": [
+        { "key": "client_id", "endpoint": "get.api.v1.clients.id", "select": ["name"], "as": "client", "onError": "blank" }
+      ],
+      "output": { "kind": "table", "columns": ["date", "client.name", "address"], "sort": "date" },
+      "redact": ["address"]
+    }
+  ]
+}
