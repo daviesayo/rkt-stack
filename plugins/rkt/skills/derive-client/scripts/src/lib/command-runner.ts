@@ -2,7 +2,7 @@ import type { CommandSpec, IdentitySpec } from "./commands-schema";
 import type { ClientManifest } from "./manifest-schema";
 import { applyJoins, type Lookup } from "./join";
 import { resolveIdentity, whoamiLine } from "./identity";
-import { redactAll } from "./secrets";
+import { maskSecretValues, redactAll } from "./secrets";
 import { resolveToken, type TokenContext } from "./tokens";
 import { getPath, renderJson, renderTable, sortRows } from "./render";
 
@@ -113,6 +113,7 @@ export async function runCommand(cmd: CommandSpec, opts: RunOpts): Promise<strin
     if (typeof flags.limit === "number" && Array.isArray(data)) {
       data = (data as unknown[]).slice(0, flags.limit);
     }
+    data = maskSecretValues(data, secrets);
     return mask(renderJson(data, { redact, raw: flags.raw }));
   }
 

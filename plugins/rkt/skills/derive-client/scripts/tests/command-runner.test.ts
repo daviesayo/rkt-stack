@@ -143,6 +143,16 @@ test("credential values are masked even with raw", async () => {
   expect(out).not.toContain(TOKEN);
 });
 
+test("json output masks secrets with quote and backslash before serialization", async () => {
+  const TOKEN = 'va"lue\\tail';
+  const c = caller({ "get.me": { id: 1, token: TOKEN } }, [], { default: TOKEN });
+  const cmd = { name: "me", summary: "", call: { endpoint: "get.me", params: {} }, output: { kind: "json" as const }, redact: [] };
+  const out = await runCommand(cmd, { ...baseOpts(c), flags: { json: false, raw: true } });
+  expect(out).not.toContain(TOKEN);
+  expect(out).not.toContain('va\\"lue');
+  expect(out).toContain("[REDACTED]");
+});
+
 test("json output redacts by default and passes raw through", async () => {
   const c = caller({ "get.me": { id: 1, ssn: "secret" } });
   const cmd = { name: "me", summary: "", call: { endpoint: "get.me", params: {} }, output: { kind: "json" as const }, redact: ["ssn"] };

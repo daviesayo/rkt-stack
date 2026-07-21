@@ -8,6 +8,7 @@ import {
   readSecrets,
   redact,
   maskHeaders,
+  maskSecretValues,
   writeSecret,
 } from "../src/lib/secrets";
 
@@ -88,6 +89,16 @@ test("maskHeaders redacts cookie values before JSON escaping can hide them", () 
   expect(masked.cookie).toBe("sessionid=[REDACTED]");
   const serialized = JSON.stringify(masked, null, 2);
   expect(serialized).not.toContain(secret);
+  expect(serialized).toContain("[REDACTED]");
+});
+
+test("maskSecretValues redacts nested strings before JSON escaping can hide them", () => {
+  const secret = 'va"lue\\tail';
+  const masked = maskSecretValues({ token: secret, nested: { note: `prefix ${secret} suffix` } }, secret);
+  expect(masked).toEqual({ token: "[REDACTED]", nested: { note: "prefix [REDACTED] suffix" } });
+  const serialized = JSON.stringify(masked, null, 2);
+  expect(serialized).not.toContain(secret);
+  expect(serialized).not.toContain('va\\"lue');
   expect(serialized).toContain("[REDACTED]");
 });
 
