@@ -48,10 +48,13 @@ All paths are relative to `plugins/rkt/skills/derive-client/scripts/` unless pre
 - `src/lib/codegen.ts` — emitted `cli.ts` uses the scheduler; emit the lifecycle commands.
 - `src/lib/secrets.ts` — store and read a per-credential `expiry`; expose `storedAt`.
 - `src/generate.ts` — `RUNTIME_FILES` gains the three new files and drops `ratelimit.ts`; emit lifecycle commands when no `commands.json` exists.
-- `tests/generate.test.ts`, `tests/manifest.test.ts`, `tests/transport.test.ts`, `tests/refresh.test.ts` — adapt to the new scheduler and allowlist.
+- `tests/generate.test.ts`, `tests/transport.test.ts` — adapt to the new scheduler and allowlist.
 - `plugins/rkt/CHANGELOG.md` — `## [Unreleased]` entries.
 
-`ratelimit.ts` is deleted at the end of Task 2 once no caller references it.
+**Deleted:**
+- `src/lib/ratelimit.ts` and `tests/ratelimit.test.ts` — both in Task 3. The limiter's concerns move to `scheduler.ts`/`tests/scheduler.test.ts`. `tests/ratelimit.test.ts` imports `createLimiter` from the deleted module, so it must be removed in the same task or `bun test` and `tsc` fail at module resolution.
+
+Note: `tests/refresh.test.ts` and `tests/manifest.test.ts` are **not** modified. `refresh.test.ts` imports only `applyCredentials` and `reauthViaProfile` (no limiter, no `issue`-with-thunk). `manifest.test.ts`'s import-closure test lists `./ratelimit` as an allowed import for `manifest-schema.ts`, but `manifest-schema.ts` has no runtime imports so that branch never executes; leave it.
 
 ---
 
@@ -243,48 +246,71 @@ git commit -m "feat(derive-client): add request scheduler with pacing and dedup"
 - Modify: `tests/scheduler.test.ts`
 
 **Interfaces:**
-- Adds `maxRetries?: number` (default 3) to `SchedulerOptions`. Behavior only; the `Scheduler` shape is unchanged.
+- Adds `maxRetries?: number` (default 3) and `sleepImpl?: (ms: number) => Promise<void>` to `SchedulerOptions`. The sleep seam lets tests assert backoff *durations* without waiting on the wall clock; production defaults to a real `setTimeout`. The `Scheduler` shape is unchanged.
 
-On a 429 or 503, the scheduler waits and retries the same request up to `maxRetries` times. Wait is `Retry-After` seconds when the header is present and numeric, else an exponential backoff (500ms, 1000ms, 2000ms). A failed request is not cached, so a later call may retry cleanly.
+On a 429 or 503, the scheduler waits and retries the same request up to `maxRetries` times. Wait is `Retry-After` seconds when the header is present and numeric, else exponential backoff (500ms, 1000ms, 2000ms). A failed request is not cached, so a later call may retry cleanly.
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `tests/scheduler.test.ts`:
+The `sleepImpl` seam records requested delays so the tests assert the backoff schedule and run instantly. Append to `tests/scheduler.test.ts`:
 
 ```ts
-test("retries on 503 then succeeds, honoring exponential backoff", async () => {
+test("retries a 503 with exponential backoff, then succeeds", async () => {
   let calls = 0;
-  const flaky = async () => {
-    calls++;
-    return calls < 3
-      ? new Response("busy", { status: 503 })
-      : new Response("{}", { status: 200 });
-  };
-  const s = createScheduler({ minDelayMs: 0, maxDelayMs: 0, maxRetries: 3, fetchImpl: flaky as typeof fetch });
+  const flaky = async () =>
+    ++calls < 3 ? new Response("busy", { status: 503 }) : new Response("{}", { status: 200 });
+  const slept: number[] = [];
+  const s = createScheduler({
+    minDelayMs: 0, maxDelayMs: 0, maxRetries: 3,
+    fetchImpl: flaky as typeof fetch,
+    sleepImpl: async (ms) => { slept.push(ms); },
+  });
   const r = await s.run({ url: "https://x.test/a", method: "GET", headers: {} });
   expect(r.status).toBe(200);
   expect(calls).toBe(3);
+  // Two retries: 500ms then 1000ms. Asserted, so the name is not a lie.
+  expect(slept).toEqual([500, 1000]);
 });
 
-test("honors a numeric Retry-After header", async () => {
+test("honors a numeric Retry-After header over the exponential schedule", async () => {
   let calls = 0;
-  const flaky = async () => {
-    calls++;
-    return calls < 2
-      ? new Response("slow", { status: 429, headers: { "retry-after": "0" } })
+  const flaky = async () =>
+    ++calls < 2
+      ? new Response("slow", { status: 429, headers: { "retry-after": "3" } })
       : new Response("{}", { status: 200 });
-  };
-  const s = createScheduler({ minDelayMs: 0, maxDelayMs: 0, fetchImpl: flaky as typeof fetch });
+  const slept: number[] = [];
+  const s = createScheduler({
+    minDelayMs: 0, maxDelayMs: 0,
+    fetchImpl: flaky as typeof fetch,
+    sleepImpl: async (ms) => { slept.push(ms); },
+  });
   const r = await s.run({ url: "https://x.test/a", method: "GET", headers: {} });
   expect(r.status).toBe(200);
   expect(calls).toBe(2);
+  expect(slept).toEqual([3000]); // Retry-After seconds, not the 500ms default
 });
 
 test("gives up after maxRetries and returns the last error response", async () => {
   const always503 = async () => new Response("busy", { status: 503 });
-  const s = createScheduler({ minDelayMs: 0, maxDelayMs: 0, maxRetries: 2, fetchImpl: always503 as typeof fetch });
+  const s = createScheduler({
+    minDelayMs: 0, maxDelayMs: 0, maxRetries: 2,
+    fetchImpl: always503 as typeof fetch,
+    sleepImpl: async () => {},
+  });
   const r = await s.run({ url: "https://x.test/a", method: "GET", headers: {} });
   expect(r.status).toBe(503);
+});
+
+test("caches a response that succeeded after retries", async () => {
+  let calls = 0;
+  const flaky = async () =>
+    ++calls < 2 ? new Response("busy", { status: 503 }) : new Response("{}", { status: 200 });
+  const s = createScheduler({
+    minDelayMs: 0, maxDelayMs: 0, fetchImpl: flaky as typeof fetch, sleepImpl: async () => {},
+  });
+  await s.run({ url: "https://x.test/a", method: "GET", headers: {} }); // 503 then 200 => calls 2
+  await s.run({ url: "https://x.test/a", method: "GET", headers: {} }); // served from cache
+  expect(calls).toBe(2); // no third fetch
 });
 
 test("does not cache a failed response", async () => {
@@ -308,7 +334,7 @@ Expected: FAIL — retries are not implemented; the 503 tests see `calls === 1`.
 
 - [ ] **Step 3: Update the implementation**
 
-Add to `SchedulerOptions`: `maxRetries?: number;`. In `createScheduler`, read `const maxRetries = options.maxRetries ?? 3;`. Replace the fetch section of `once` with a retry loop, and remove the cache entry on final failure:
+Add to `SchedulerOptions`: `maxRetries?: number;` and `sleepImpl?: (ms: number) => Promise<void>;`. In `createScheduler`, read `const maxRetries = options.maxRetries ?? 3;` and `const sleep = options.sleepImpl ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));`. Replace the fetch section of `once` with a retry loop that uses `sleep`:
 
 ```ts
   const RETRYABLE = new Set([429, 503]);
@@ -322,13 +348,13 @@ Add to `SchedulerOptions`: `maxRetries?: number;`. In `createScheduler`, read `c
       if (!RETRYABLE.has(res.status) || attempt >= maxRetries) return out;
 
       const retryAfter = Number(headers["retry-after"]);
-      const waitMs = Number.isFinite(retryAfter)
-        ? retryAfter * 1000
-        : 500 * 2 ** attempt;
-      if (waitMs > 0) await new Promise((r) => setTimeout(r, waitMs));
+      const waitMs = Number.isFinite(retryAfter) ? retryAfter * 1000 : 500 * 2 ** attempt;
+      if (waitMs > 0) await sleep(waitMs);
     }
   }
 ```
+
+Note the `Retry-After` parse: `Number("")` is `0` and `Number.isFinite(0)` is true, so a present-but-empty header yields a 0ms wait, not the exponential default. That is intentional (an explicit "retry now"); an absent header is `undefined` → `Number(undefined)` is `NaN` → falls to exponential.
 
 In `once`, call `await fetchWithBackoff(req)` in place of the inline fetch. After the whole `run` resolves, evict a non-2xx cached entry so a retry is possible:
 
@@ -434,19 +460,20 @@ Change the import `import { createLimiter } from "./lib/ratelimit";` to `import 
 
 The emitted `cli.ts` string imports and uses the limiter. Change the emitted import from `import { createLimiter } from "../lib/ratelimit";` to `import { createScheduler } from "../lib/scheduler";`, the emitted `const limiter = createLimiter();` to `const scheduler = createScheduler();`, and both emitted `issue(built, limiter)` to `issue(built, scheduler)`. These are inside the template string; update the literal text.
 
-- [ ] **Step 6: Delete the old limiter and confirm nothing references it**
+- [ ] **Step 6: Delete the old limiter AND its orphaned test, then confirm nothing references it**
 
 ```bash
 cd plugins/rkt/skills/derive-client/scripts
-rm src/lib/ratelimit.ts
-grep -rn "ratelimit\|createLimiter" src/ && echo "STILL REFERENCED" || echo "clean"
+rm src/lib/ratelimit.ts tests/ratelimit.test.ts
+# grep src AND tests: the orphaned test would otherwise fail module resolution.
+grep -rn "ratelimit\|createLimiter" src/ tests/ && echo "STILL REFERENCED" || echo "clean"
 ```
-Expected: `clean`.
+Expected: `clean`. `tests/ratelimit.test.ts` imports `createLimiter` from the module just deleted; leaving it makes Step 7 fail at module resolution. Its five cases (pacing, serialization, first-call-not-delayed) are already covered by `tests/scheduler.test.ts` from Tasks 1-2, so nothing is lost.
 
 - [ ] **Step 7: Run tests and typecheck**
 
 Run: `cd plugins/rkt/skills/derive-client/scripts && bun test && bunx tsc --noEmit`
-Expected: PASS, silent typecheck. `tests/refresh.test.ts` references the old limiter in its bundle-application tests — if it fails to compile, update its scheduler usage the same way (construct `createScheduler`, drop `createLimiter`).
+Expected: PASS, silent typecheck. `tests/refresh.test.ts` does NOT reference the limiter (only `applyCredentials` and `reauthViaProfile`), so it needs no change; if it fails, something else regressed.
 
 - [ ] **Step 8: Commit**
 
@@ -668,15 +695,19 @@ function humanDuration(ms: number): string {
   const s = Math.floor(ms / 1000);
   if (s < 60) return `${s}s`;
   const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ${s % 60}s`;
+  if (m < 60) return s % 60 === 0 ? `${m}m` : `${m}m ${s % 60}s`;
   const h = Math.floor(m / 60);
-  return `${h}h ${m % 60}m`;
+  // Drop a trailing "0m" so exactly-N-hour durations read "2h", matching the
+  // spec's sample output, not "2h 0m".
+  return m % 60 === 0 ? `${h}h` : `${h}h ${m % 60}m`;
 }
 
 export function formatAuthStatus(input: AuthStatusInput, now: number): string[] {
   const lines: string[] = [];
 
-  lines.push(input.identity ? `Signed in as ${input.identity.name}` : "Signed in as   unknown (run whoami)");
+  lines.push(
+    input.identity ? `Signed in as ${input.identity.name}` : "Signed in as unknown (run whoami)",
+  );
 
   if (!input.accessExpiry) {
     lines.push("Access token     unknown");
@@ -687,11 +718,11 @@ export function formatAuthStatus(input: AuthStatusInput, now: number): string[] 
 
   lines.push("Refresh window   unknown");
 
-  if (input.storageStateMtime == null) {
-    lines.push("Browser session  none saved");
-  } else {
-    lines.push(`Browser session saved ${humanDuration(now - input.storageStateMtime)} ago`);
-  }
+  lines.push(
+    input.storageStateMtime == null
+      ? "Browser session  none saved"
+      : `Browser session saved ${humanDuration(now - input.storageStateMtime)} ago`,
+  );
 
   return lines;
 }
@@ -1017,16 +1048,17 @@ git commit -m "feat(derive-client): add table/json rendering with field redactio
 **Files:**
 - Modify: `src/generate.ts`
 - Modify: `src/lib/codegen.ts`
-- Create: `src/session.ts` (emitted lifecycle CLI, copied into generated clients)
-- Modify: `tests/generate.test.ts`, `tests/manifest.test.ts`
+- Modify: `tests/generate.test.ts`
+
+No `src/session.ts` file is created — `runLifecycle` lives in `src/lib/session.ts` (Task 6/Step 4 above), which `RUNTIME_FILES` already copies.
 
 **Interfaces:**
 - Consumes: everything above.
 - Produces: generated clients whose `lib/` contains `scheduler.ts`, `session.ts`, `render.ts` (and no `ratelimit.ts`), and a `cli.ts` that dispatches `login`, `logout`, `auth status` before the endpoint/task commands. No `commands.json` is required.
 
-- [ ] **Step 1: Update the RUNTIME_FILES test first**
+- [ ] **Step 1: Update every RUNTIME_FILES assertion in `tests/generate.test.ts`**
 
-In `tests/generate.test.ts`, the test that asserts the copied set (and any closure-probe test) currently lists `ratelimit.ts`. Change the expected set to:
+`tests/generate.test.ts` pins the runtime set in **two** places (a "copies the runtime" test and an "every file present" test). Update **both**. The expected set is:
 
 ```ts
 const EXPECTED_RUNTIME = [
@@ -1042,7 +1074,7 @@ const EXPECTED_RUNTIME = [
 ];
 ```
 
-Assert each is copied and that `ratelimit.ts` is NOT copied. In `tests/manifest.test.ts`, the import-closure test that allows `manifest-schema.ts` to import `./ratelimit` must drop `ratelimit` from the allowed set (manifest-schema does not import it anyway; confirm and adjust the allowed list).
+Assert each is copied and that `ratelimit.ts` is NOT copied. **Do not touch `tests/manifest.test.ts`**: its import-closure test lists `./ratelimit` as an allowed import for `manifest-schema.ts`, but `manifest-schema.ts` has no runtime imports, so that branch never runs and the entry is inert. Leaving it avoids churn for no behavior change.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -1051,22 +1083,41 @@ Expected: FAIL — the generator still copies the old set.
 
 - [ ] **Step 3: Update the allowlist**
 
-In `src/generate.ts`, set `RUNTIME_FILES` to the array above (drop `ratelimit.ts`, add `scheduler.ts`, `session.ts`, `render.ts`). Add a closure note in the comment: session.ts imports paths/secrets/reauth; render.ts imports nothing outside the set.
+In `src/generate.ts`, set `RUNTIME_FILES` to the array above (drop `ratelimit.ts`, add `scheduler.ts`, `session.ts`, `render.ts`). Update the closure-note comment: `scheduler.ts` imports nothing outside the set; `session.ts` imports `./paths`, `./secrets`, `./reauth`, `./manifest-schema`; `render.ts` imports nothing outside the set. Run the Task-1-style closure probe over the new set to confirm it resolves standalone before moving on.
 
-- [ ] **Step 4: Emit the lifecycle CLI**
+- [ ] **Step 4: Add `runLifecycle` to `src/lib/session.ts`**
 
-Create `src/session.ts` as the emitted lifecycle entry. It is copied into the generated client and imported by `cli.ts`. It reads the manifest for `baseUrl` and site, gathers `auth status` inputs, and dispatches:
+`runLifecycle` goes **into `src/lib/session.ts`**, not a separate `src/session.ts` entry file. This is the fix for a layout trap: the generator writes `lib/` to `<outRoot>/lib/` and the CLI entry to `<outRoot>/<site>/cli.ts`, so the emitted `cli.ts` imports `../lib/...`. A separate `src/session.ts` copied verbatim would use `./lib/...` (correct in the skill's `src/`, since `tsconfig.json` includes `src/`) but resolve to a nonexistent `<site>/lib/` in the generated client. A `lib/` file sidesteps this entirely: `session.ts` sits in `lib/` in both layouts, so its `./manifest-schema`, `./paths`, `./secrets` imports resolve unchanged, and it is already copied by `RUNTIME_FILES`.
+
+Append to `src/lib/session.ts`:
 
 ```ts
-/** Lifecycle commands shared by every generated client: login, logout, auth status. */
 import { stat } from "node:fs/promises";
-import { validateManifest } from "./lib/manifest-schema";
-import { storageStateFile } from "./lib/paths";
-import { readSecretMeta } from "./lib/secrets";
-import { formatAuthStatus, loginSite, logoutSite } from "./lib/session";
+import { validateManifest } from "./manifest-schema";
+import { readSecretMeta } from "./secrets";
+// storageStateFile is already imported at the top of this file.
 
-export async function runLifecycle(command: string, sub: string | undefined, manifestPath: string): Promise<boolean> {
-  const manifest = validateManifest(JSON.parse(await Bun.file(manifestPath).text()));
+function firstJwtExpiry(expiry: Record<string, string | null>): string | null {
+  for (const v of Object.values(expiry)) if (v) return v;
+  return null;
+}
+
+/**
+ * Handle the lifecycle commands (login, logout, auth status) shared by every
+ * generated client. Returns true when it handled the command, false to let the
+ * caller fall through to endpoint/task dispatch. `manifestPath` is a plain
+ * filesystem path (the caller resolves it), so no URL decoding is needed here.
+ */
+export async function runLifecycle(
+  command: string,
+  sub: string | undefined,
+  manifestPath: string,
+): Promise<boolean> {
+  if (command !== "login" && command !== "logout" && !(command === "auth" && sub === "status")) {
+    return false;
+  }
+  const raw = await import("node:fs/promises").then((fs) => fs.readFile(manifestPath, "utf8"));
+  const manifest = validateManifest(JSON.parse(raw));
 
   if (command === "login") {
     const ok = await loginSite(manifest.site, `${manifest.baseUrl}/`);
@@ -1078,35 +1129,38 @@ export async function runLifecycle(command: string, sub: string | undefined, man
     console.error(removed.length ? `removed ${removed.length} session file(s)` : "nothing to remove");
     return true;
   }
-  if (command === "auth" && sub === "status") {
-    const meta = await readSecretMeta(manifest.site);
-    const accessExpiry = meta ? firstJwtExpiry(meta.expiry) : null;
-    let mtime: number | null = null;
-    try { mtime = (await stat(storageStateFile(manifest.site))).mtimeMs; } catch { /* none */ }
-    const lines = formatAuthStatus(
-      { identity: null, accessExpiry, refreshWindow: null, storageStateMtime: mtime },
-      Date.now(),
-    );
-    console.log(lines.join("\n"));
-    return true;
+  // command === "auth" && sub === "status"
+  const meta = await readSecretMeta(manifest.site);
+  const accessExpiry = meta ? firstJwtExpiry(meta.expiry) : null;
+  let mtime: number | null = null;
+  try {
+    mtime = (await stat(storageStateFile(manifest.site))).mtimeMs;
+  } catch {
+    /* no saved session */
   }
-  return false; // not a lifecycle command
-}
-
-function firstJwtExpiry(expiry: Record<string, string | null>): string | null {
-  for (const v of Object.values(expiry)) if (v) return v;
-  return null;
+  const lines = formatAuthStatus(
+    { identity: null, accessExpiry, refreshWindow: null, storageStateMtime: mtime },
+    Date.now(),
+  );
+  console.log(lines.join("\n"));
+  return true;
 }
 ```
 
-`src/session.ts` is a CLI entry sitting beside `cli.ts` in the generated client, not a `lib/` file, so it is NOT added to `RUNTIME_FILES`. Instead, in `generate.ts`, after the step that writes the generated `cli.ts` into `<site>/cli.ts`, add an explicit copy of `src/session.ts` to `<site>/session.ts` — read the skill's `src/session.ts` and write it verbatim to the site directory, exactly as `cli.ts` is emitted. Its `./lib/...` imports resolve unchanged because the generated client's layout mirrors `src/` (both have a sibling `lib/`). Confirm the generated `cli.ts` calls `runLifecycle` before its own command dispatch:
+There is no `src/session.ts` and no extra copy step in `generate.ts`; `RUNTIME_FILES` already carries `session.ts`.
 
-In `src/lib/codegen.ts`, at the top of the emitted `main()`, insert before endpoint dispatch:
+Wire the emitted `cli.ts` to call it. In `src/lib/codegen.ts`, add to the emitted import block `import { runLifecycle } from "../lib/session";`, and at the very top of the emitted `main()` (before manifest load and command dispatch), insert:
 
 ```ts
-  const handled = await runLifecycle(process.argv[2], process.argv[3], new URL("./client.json", import.meta.url).pathname);
+  const handled = await runLifecycle(
+    process.argv[2],
+    process.argv[3],
+    fileURLToPath(new URL("./client.json", import.meta.url)),
+  );
   if (handled) return;
 ```
+
+Also add `import { fileURLToPath } from "node:url";` to the emitted import block. **`fileURLToPath`, not `.pathname`**: `.pathname` leaves `%20` and other reserved characters percent-encoded, so a client directory containing a space would make the manifest read fail. `fileURLToPath` decodes correctly. (The emitted code elsewhere already passes a `URL` object straight to `readFile`, which is also safe; `runLifecycle` takes a string, so decode here.)
 
 and add the emitted import `import { runLifecycle } from "./session";`.
 
@@ -1223,7 +1277,10 @@ git commit -m "docs(derive-client): changelog for the runtime foundation"
 | login (headed, saves session), logout (clears three files incl. identity cache) | 6 |
 | identity cache path defined and cleared on login/logout | 6 |
 | render: table, json, redaction by default in both, --raw opt-out | 7 |
-| RUNTIME_FILES gains the three files, drops ratelimit; test copies updated | 8 |
+| RUNTIME_FILES gains scheduler/session/render, drops ratelimit; both test lists updated | 8 |
+| `runLifecycle` in lib/session.ts (not a separate entry) so imports resolve in both layouts | 6/Step 4, wired in 8 |
+| manifest path resolved with `fileURLToPath`, not percent-encoded `.pathname` | 8 |
+| orphaned `tests/ratelimit.test.ts` deleted with the module | 3 |
 | generated client works with NO commands.json (0.6.0 back-compat) | 8 |
 | lifecycle commands dispatched before endpoint/task commands | 8 |
 | live smoke; no version bump | 9 |
@@ -1234,4 +1291,4 @@ git commit -m "docs(derive-client): changelog for the runtime foundation"
 
 1. **Scheduler dedup lifetime.** The cache lives for the scheduler instance. `call.ts` and each generated command construct a fresh scheduler per invocation, so dedup is per-run as intended. If a future long-lived process reuses one scheduler across unrelated commands, stale reads are possible — out of scope here, noted.
 2. **`waitForURL` heuristic in `login`.** The default launcher decides "signed in" by the URL leaving identity-looking hosts. A site whose post-login URL still contains `auth` would mis-time. The launcher is injectable and the live smoke test is the check; if it mistimes on the real site, tighten the predicate there rather than guessing now.
-3. **Emitted `session.ts` import paths.** The generated layout mirrors `src/`, so `./lib/...` imports resolve, but Task 8 Step 4 must be verified by the subprocess test in Step 5, not assumed.
+3. **`runLifecycle` lives in `lib/session.ts`, not a separate entry file.** This was a deliberate fix for a layout trap: `lib/` files use `./`-relative imports that resolve identically in the skill's `src/` and the generated `<outRoot>/lib/`, whereas a `<site>/session.ts` copied verbatim would break. The subprocess test in Task 8 Step 5 (`auth status` with no `commands.json`) is the check that the wiring resolves; do not assume it.
