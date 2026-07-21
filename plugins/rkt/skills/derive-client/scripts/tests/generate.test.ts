@@ -14,6 +14,12 @@ const EXPECTED_RUNTIME = [
   "reauth.ts",
   "session.ts",
   "render.ts",
+  "commands-schema.ts",
+  "tokens.ts",
+  "identity.ts",
+  "join.ts",
+  "runtime.ts",
+  "command-runner.ts",
 ];
 
 let workRoot: string;
@@ -130,6 +136,60 @@ test("refuses a manifest whose site contains path separators", async () => {
   const bad = join(workRoot, "bad-site.json");
   await writeFile(bad, JSON.stringify({ ...MANIFEST, site: "../escape" }));
   await expect(generateClient(bad, join(workRoot, "clients-g"))).rejects.toThrow(/path segment/i);
+});
+
+test("emits a task CLI from commands.json and never overwrites it", async () => {
+  const out = join(workRoot, "clients-cmds");
+  await generateClient(manifestPath, out); // creates site dir "example"
+  const cmdsPath = join(out, "example", "commands.json");
+  const commands = {
+    schemaVersion: 1,
+    site: "example",
+    commands: [
+      {
+        name: "roster",
+        summary: "the roster",
+        call: { endpoint: "get.api.roster.id", params: { id: "1" } },
+        output: { kind: "json" },
+        redact: [],
+      },
+    ],
+  };
+  await writeFile(cmdsPath, JSON.stringify(commands) + "\n");
+  await generateClient(manifestPath, out);
+  const cli = await readFile(join(out, "example", "cli.ts"), "utf8");
+  expect(cli).toContain('"roster"'); // task name, not the endpoint-per-command name
+  // commands.json is byte-for-byte preserved
+  expect(await readFile(cmdsPath, "utf8")).toBe(JSON.stringify(commands) + "\n");
+});
+
+test("refuses a malformed commands.json rather than falling back", async () => {
+  const out = join(workRoot, "clients-badcmds");
+  await generateClient(manifestPath, out);
+  await writeFile(join(out, "example", "commands.json"), "{ not json");
+  await expect(generateClient(manifestPath, out)).rejects.toThrow();
+});
+
+test("stops CLI emission and refreshes client.json when a command references a dead endpoint", async () => {
+  const out = join(workRoot, "clients-drift");
+  await generateClient(manifestPath, out);
+  const commands = {
+    schemaVersion: 1,
+    site: "example",
+    commands: [
+      {
+        name: "gone",
+        summary: "",
+        call: { endpoint: "get.nope", params: {} },
+        output: { kind: "json" },
+        redact: [],
+      },
+    ],
+  };
+  await writeFile(join(out, "example", "commands.json"), JSON.stringify(commands));
+  await expect(generateClient(manifestPath, out)).rejects.toThrow(/get\.nope|no longer in client\.json/i);
+  // client.json still refreshed
+  expect(JSON.parse(await readFile(join(out, "example", "client.json"), "utf8")).site).toBe("example");
 });
 
 test("generated client typechecks with tsc --noEmit", async () => {
