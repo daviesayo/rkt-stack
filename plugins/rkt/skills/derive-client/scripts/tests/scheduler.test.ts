@@ -57,3 +57,74 @@ test("spaces successive distinct calls by at least the minimum", async () => {
   await s.run({ url: "https://x.test/3", method: "GET", headers: {} });
   expect(Date.now() - start).toBeGreaterThanOrEqual(75);
 });
+
+test("retries a 503 with exponential backoff, then succeeds", async () => {
+  let calls = 0;
+  const flaky = async () =>
+    ++calls < 3 ? new Response("busy", { status: 503 }) : new Response("{}", { status: 200 });
+  const slept: number[] = [];
+  const s = createScheduler({
+    minDelayMs: 0, maxDelayMs: 0, maxRetries: 3,
+    fetchImpl: flaky as typeof fetch,
+    sleepImpl: async (ms) => { slept.push(ms); },
+  });
+  const r = await s.run({ url: "https://x.test/a", method: "GET", headers: {} });
+  expect(r.status).toBe(200);
+  expect(calls).toBe(3);
+  // Two retries: 500ms then 1000ms. Asserted, so the name is not a lie.
+  expect(slept).toEqual([500, 1000]);
+});
+
+test("honors a numeric Retry-After header over the exponential schedule", async () => {
+  let calls = 0;
+  const flaky = async () =>
+    ++calls < 2
+      ? new Response("slow", { status: 429, headers: { "retry-after": "3" } })
+      : new Response("{}", { status: 200 });
+  const slept: number[] = [];
+  const s = createScheduler({
+    minDelayMs: 0, maxDelayMs: 0,
+    fetchImpl: flaky as typeof fetch,
+    sleepImpl: async (ms) => { slept.push(ms); },
+  });
+  const r = await s.run({ url: "https://x.test/a", method: "GET", headers: {} });
+  expect(r.status).toBe(200);
+  expect(calls).toBe(2);
+  expect(slept).toEqual([3000]); // Retry-After seconds, not the 500ms default
+});
+
+test("gives up after maxRetries and returns the last error response", async () => {
+  const always503 = async () => new Response("busy", { status: 503 });
+  const s = createScheduler({
+    minDelayMs: 0, maxDelayMs: 0, maxRetries: 2,
+    fetchImpl: always503 as typeof fetch,
+    sleepImpl: async () => {},
+  });
+  const r = await s.run({ url: "https://x.test/a", method: "GET", headers: {} });
+  expect(r.status).toBe(503);
+});
+
+test("caches a response that succeeded after retries", async () => {
+  let calls = 0;
+  const flaky = async () =>
+    ++calls < 2 ? new Response("busy", { status: 503 }) : new Response("{}", { status: 200 });
+  const s = createScheduler({
+    minDelayMs: 0, maxDelayMs: 0, fetchImpl: flaky as typeof fetch, sleepImpl: async () => {},
+  });
+  await s.run({ url: "https://x.test/a", method: "GET", headers: {} }); // 503 then 200 => calls 2
+  await s.run({ url: "https://x.test/a", method: "GET", headers: {} }); // served from cache
+  expect(calls).toBe(2); // no third fetch
+});
+
+test("does not cache a failed response", async () => {
+  let calls = 0;
+  const recovering = async () => {
+    calls++;
+    return calls === 1 ? new Response("busy", { status: 503 }) : new Response("{}", { status: 200 });
+  };
+  const s = createScheduler({ minDelayMs: 0, maxDelayMs: 0, maxRetries: 0, fetchImpl: recovering as typeof fetch });
+  const first = await s.run({ url: "https://x.test/a", method: "GET", headers: {} });
+  expect(first.status).toBe(503);
+  const second = await s.run({ url: "https://x.test/a", method: "GET", headers: {} });
+  expect(second.status).toBe(200); // not served from cache
+});

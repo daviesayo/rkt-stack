@@ -1,7 +1,9 @@
 export interface SchedulerOptions {
   minDelayMs?: number;
   maxDelayMs?: number;
+  maxRetries?: number;
   fetchImpl?: typeof fetch;
+  sleepImpl?: (ms: number) => Promise<void>;
 }
 
 export interface SchedulerResponse {
@@ -31,11 +33,29 @@ const CACHEABLE = new Set(["GET", "HEAD"]);
 export function createScheduler(options: SchedulerOptions = {}): Scheduler {
   const min = options.minDelayMs ?? 400;
   const max = Math.max(options.maxDelayMs ?? 1300, min);
+  const maxRetries = options.maxRetries ?? 3;
   const doFetch = options.fetchImpl ?? fetch;
+  const sleep = options.sleepImpl ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
 
   let tail: Promise<unknown> = Promise.resolve();
   let first = true;
   const cache = new Map<string, Promise<SchedulerResponse>>();
+
+  const RETRYABLE = new Set([429, 503]);
+
+  async function fetchWithBackoff(req: SchedulerRequest): Promise<SchedulerResponse> {
+    for (let attempt = 0; ; attempt++) {
+      const res = await doFetch(req.url, { method: req.method, headers: req.headers });
+      const headers: Record<string, string> = {};
+      res.headers.forEach((v, k) => (headers[k] = v));
+      const out = { status: res.status, body: await res.text(), headers };
+      if (!RETRYABLE.has(res.status) || attempt >= maxRetries) return out;
+
+      const retryAfter = Number(headers["retry-after"]);
+      const waitMs = Number.isFinite(retryAfter) ? retryAfter * 1000 : 500 * 2 ** attempt;
+      if (waitMs > 0) await sleep(waitMs);
+    }
+  }
 
   function once(req: SchedulerRequest): Promise<SchedulerResponse> {
     const run = tail.then(async () => {
@@ -45,12 +65,12 @@ export function createScheduler(options: SchedulerOptions = {}): Scheduler {
         const delay = min + Math.floor(Math.random() * (max - min + 1));
         if (delay > 0) await new Promise((r) => setTimeout(r, delay));
       }
-      const res = await doFetch(req.url, { method: req.method, headers: req.headers });
-      const headers: Record<string, string> = {};
-      res.headers.forEach((v, k) => (headers[k] = v));
-      return { status: res.status, body: await res.text(), headers };
+      return fetchWithBackoff(req);
     });
     tail = run.catch(() => undefined);
+    run.then((r) => {
+      if (r.status < 200 || r.status >= 300) cache.delete(req.url);
+    }).catch(() => cache.delete(req.url));
     return run;
   }
 
