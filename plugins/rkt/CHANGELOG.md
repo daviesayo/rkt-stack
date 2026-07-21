@@ -23,7 +23,14 @@ shipped across Plan A and B1.
   detector comparing a `commands.json` against a re-derived `client.json`.
 - Generated clients gain session-lifecycle commands: `login` (opens a browser,
   saves the session), `logout` (clears stored session), `auth status` (shows a
-  live access-token TTL and names the signed-in user), and `whoami`.
+  live access-token TTL and names the signed-in user), and `whoami`. `login` is
+  self-sufficient: it harvests the full credential bundle (cookie creds by
+  polling the jar, header creds such as `x-csrf-token` from live requests, and
+  the OIDC refresh token from the token-endpoint response) and writes it, so the
+  next command authenticates without a re-record. `auth status` shows a real
+  refresh window when the stored refresh token is a JWT (its own `exp`),
+  falling back to `unknown` for opaque tokens and `does not expire` for offline
+  tokens.
 - A request scheduler replaces the rate limiter: same human-shaped pacing, plus
   per-run dedup of repeated GETs and 429/503 backoff honouring `Retry-After`.
   This is the foundation the task-command joins build on.

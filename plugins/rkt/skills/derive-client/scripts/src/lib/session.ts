@@ -1,13 +1,35 @@
 import { chmod, mkdir, readFile, rm, stat } from "node:fs/promises";
 import { validateManifest } from "./manifest-schema";
-import { readSecretMeta, writeSecret } from "./secrets";
+import { readSecretMeta, writeSecret, REFRESH_TOKEN_KEY, type SecretMeta } from "./secrets";
 import { profileDir, secretsFile, storageStateFile, secretsDir, sanitizeSite } from "./paths";
 
 export interface AuthStatusInput {
   identity: { name: string } | null;
   accessExpiry: string | null;
-  refreshWindow: null;
+  /** ISO expiry of the current refresh token (its own JWT exp), or null if not derivable. */
+  refreshWindow: string | null;
   storageStateMtime: number | null;
+}
+
+/**
+ * Split the stored expiries into the access-credential's and the refresh
+ * token's. The refresh token is keyed separately, so the access line must never
+ * accidentally show the refresh token's expiry (or vice versa).
+ */
+export function deriveExpiries(
+  meta: SecretMeta | null,
+): { accessExpiry: string | null; refreshExpiry: string | null } {
+  if (!meta) return { accessExpiry: null, refreshExpiry: null };
+  const refreshExpiry = meta.expiry[REFRESH_TOKEN_KEY] ?? null;
+  let accessExpiry: string | null = null;
+  for (const [location, expiry] of Object.entries(meta.expiry)) {
+    if (location === REFRESH_TOKEN_KEY) continue;
+    if (expiry) {
+      accessExpiry = expiry;
+      break;
+    }
+  }
+  return { accessExpiry, refreshExpiry };
 }
 
 function humanDuration(ms: number): string {
@@ -35,7 +57,18 @@ export function formatAuthStatus(input: AuthStatusInput, now: number): string[] 
     lines.push(delta <= 0 ? "Access token     expired" : `Access token     expires in ${humanDuration(delta)}`);
   }
 
-  lines.push("Refresh window   unknown");
+  if (!input.refreshWindow) {
+    lines.push("Refresh window   unknown");
+  } else {
+    const t = Date.parse(input.refreshWindow);
+    if (t <= 0) {
+      // A JWT exp of 0 is a Keycloak offline token: it does not expire.
+      lines.push("Refresh window   does not expire");
+    } else {
+      const delta = t - now;
+      lines.push(delta <= 0 ? "Refresh window   expired" : `Refresh window   ${humanDuration(delta)} left`);
+    }
+  }
 
   lines.push(
     input.storageStateMtime == null
@@ -89,6 +122,8 @@ export interface LauncherArgs {
   wanted: WantedCredential[];
   /** Only requests to this host are trusted to carry header credentials. */
   apiHost: string | null;
+  /** OIDC token endpoint whose response body carries the refresh token, or null. */
+  tokenEndpoint: string | null;
 }
 
 /** location -> value, ready for writeSecret. */
@@ -111,7 +146,12 @@ export interface Launcher {
 export async function loginSite(
   site: string,
   entryUrl: string,
-  opts: { launch?: Launcher; wanted?: WantedCredential[]; apiHost?: string | null } = {},
+  opts: {
+    launch?: Launcher;
+    wanted?: WantedCredential[];
+    apiHost?: string | null;
+    tokenEndpoint?: string | null;
+  } = {},
 ): Promise<boolean> {
   const launch = opts.launch ?? defaultLauncher;
   // Clear identity cache first: signing in as a different user must not leave
@@ -127,6 +167,7 @@ export async function loginSite(
     statePath,
     wanted: opts.wanted ?? [],
     apiHost: opts.apiHost ?? null,
+    tokenEndpoint: opts.tokenEndpoint ?? null,
   });
   if (!result) return false;
   await chmod(statePath, 0o600).catch(() => {});
@@ -136,7 +177,7 @@ export async function loginSite(
   return true;
 }
 
-const defaultLauncher: Launcher = async ({ site, entryUrl, statePath, wanted, apiHost }) => {
+const defaultLauncher: Launcher = async ({ site, entryUrl, statePath, wanted, apiHost, tokenEndpoint }) => {
   let pw: typeof import("playwright");
   try {
     pw = await import("playwright");
@@ -177,6 +218,26 @@ const defaultLauncher: Launcher = async ({ site, entryUrl, statePath, wanted, ap
       });
     }
 
+    // The OIDC refresh token lives in the token-endpoint RESPONSE body, not a
+    // cookie or request header. Capturing it lets a login-bootstrapped client
+    // renew via the cheap OIDC-refresh tier (not just headless browser re-auth),
+    // and lets `auth status` show a real refresh window from the token's exp.
+    let observedRefresh: string | null = null;
+    if (tokenEndpoint) {
+      ctx.on("response", (res) => {
+        if (!res.url().startsWith(tokenEndpoint)) return;
+        pending.push(
+          res
+            .json()
+            .then((body: unknown) => {
+              const rt = (body as { refresh_token?: unknown })?.refresh_token;
+              if (typeof rt === "string" && rt.length > 0) observedRefresh = rt;
+            })
+            .catch(() => {}),
+        );
+      });
+    }
+
     const page = ctx.pages()[0] ?? (await ctx.newPage());
     await page.goto(entryUrl, { waitUntil: "domcontentloaded" });
     // Wait until the user has left the identity provider (signed in), capped.
@@ -209,16 +270,13 @@ const defaultLauncher: Launcher = async ({ site, entryUrl, statePath, wanted, ap
     await Promise.allSettled(pending);
     await ctx.storageState({ path: statePath });
 
-    return { values: { ...observedHeaders, ...cookieValues } };
+    const values: Record<string, string> = { ...observedHeaders, ...cookieValues };
+    if (observedRefresh) values[REFRESH_TOKEN_KEY] = observedRefresh;
+    return { values };
   } finally {
     await ctx.close().catch(() => {});
   }
 };
-
-function firstJwtExpiry(expiry: Record<string, string | null>): string | null {
-  for (const v of Object.values(expiry)) if (v) return v;
-  return null;
-}
 
 /**
  * Handle the lifecycle commands (login, logout, auth status) shared by every
@@ -247,10 +305,12 @@ export async function runLifecycle(
     } catch {
       /* leave null: no host filter, harvest headers from any request */
     }
+    const tokenEndpoint = manifest.refresh?.kind === "oidc" ? manifest.refresh.tokenEndpoint : null;
     const ok = await loginSite(manifest.site, `${manifest.baseUrl}/`, {
       launch: opts.launch,
       wanted,
       apiHost,
+      tokenEndpoint,
     });
     console.error(ok ? "signed in; session saved" : "login could not complete");
     return true;
@@ -262,7 +322,7 @@ export async function runLifecycle(
   }
   // command === "auth" && sub === "status"
   const meta = await readSecretMeta(manifest.site);
-  const accessExpiry = meta ? firstJwtExpiry(meta.expiry) : null;
+  const { accessExpiry, refreshExpiry } = deriveExpiries(meta);
   let mtime: number | null = null;
   try {
     mtime = (await stat(storageStateFile(manifest.site))).mtimeMs;
@@ -271,7 +331,7 @@ export async function runLifecycle(
   }
   const label = await readIdentityLabel(manifest.site);
   const lines = formatAuthStatus(
-    { identity: label ? { name: label } : null, accessExpiry, refreshWindow: null, storageStateMtime: mtime },
+    { identity: label ? { name: label } : null, accessExpiry, refreshWindow: refreshExpiry, storageStateMtime: mtime },
     Date.now(),
   );
   console.log(lines.join("\n"));

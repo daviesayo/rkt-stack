@@ -30,12 +30,64 @@ test("prints unknown for a missing access expiry", () => {
   expect(lines.some((l) => /Access token\s+unknown/.test(l))).toBe(true);
 });
 
-test("refresh window is always unknown in Plan A", () => {
+test("refresh window is unknown when there is no refresh-token expiry", () => {
   const lines = formatAuthStatus(
     { identity: null, accessExpiry: null, refreshWindow: null, storageStateMtime: null },
     NOW,
   );
   expect(lines.some((l) => /Refresh window\s+unknown/.test(l))).toBe(true);
+});
+
+test("refresh window shows a countdown from the refresh token's own expiry", () => {
+  const lines = formatAuthStatus(
+    { identity: null, accessExpiry: null, refreshWindow: "2026-07-21T13:00:00Z", storageStateMtime: null },
+    NOW,
+  );
+  expect(lines.some((l) => /Refresh window\s+1h left/.test(l))).toBe(true);
+});
+
+test("refresh window says expired once the refresh token is past", () => {
+  const lines = formatAuthStatus(
+    { identity: null, accessExpiry: null, refreshWindow: "2026-07-21T11:00:00Z", storageStateMtime: null },
+    NOW,
+  );
+  expect(lines.some((l) => /Refresh window\s+expired/.test(l))).toBe(true);
+});
+
+test("refresh window says does not expire for an offline (exp:0) token", () => {
+  const lines = formatAuthStatus(
+    { identity: null, accessExpiry: null, refreshWindow: "1970-01-01T00:00:00.000Z", storageStateMtime: null },
+    NOW,
+  );
+  expect(lines.some((l) => /Refresh window\s+does not expire/.test(l))).toBe(true);
+});
+
+test("deriveExpiries separates the access-credential expiry from the refresh token's", async () => {
+  const { deriveExpiries } = await import("../src/lib/session");
+  const meta = {
+    values: {},
+    storedAt: null,
+    expiry: { "cookie:tok": "2026-07-21T12:05:00Z", "@refresh_token": "2026-07-21T13:00:00Z" },
+  };
+  expect(deriveExpiries(meta)).toEqual({
+    accessExpiry: "2026-07-21T12:05:00Z",
+    refreshExpiry: "2026-07-21T13:00:00Z",
+  });
+});
+
+test("deriveExpiries never treats the refresh token as the access expiry", async () => {
+  const { deriveExpiries } = await import("../src/lib/session");
+  const meta = {
+    values: {},
+    storedAt: null,
+    expiry: { "@refresh_token": "2026-07-21T13:00:00Z", "cookie:sid": null },
+  };
+  expect(deriveExpiries(meta)).toEqual({ accessExpiry: null, refreshExpiry: "2026-07-21T13:00:00Z" });
+});
+
+test("deriveExpiries is all-null when nothing is stored", async () => {
+  const { deriveExpiries } = await import("../src/lib/session");
+  expect(deriveExpiries(null)).toEqual({ accessExpiry: null, refreshExpiry: null });
 });
 
 test("identity line prompts whoami when identity is null", () => {
@@ -148,6 +200,46 @@ test("login returns false and writes no secret when the launcher cannot complete
   const ok = await loginSite("s", "https://app.test/", { launch: async () => null });
   expect(ok).toBe(false);
   expect(await readSecrets("s")).toBeNull();
+});
+
+test("login stores a harvested refresh token under the reserved key", async () => {
+  const { loginSite } = await import("../src/lib/session");
+  const { readSecrets, REFRESH_TOKEN_KEY } = await import("../src/lib/secrets");
+  await loginSite("s", "https://app.test/", {
+    launch: async ({ statePath }) => {
+      await writeFile(statePath, "{}");
+      return { values: { "cookie:sid": "abc", [REFRESH_TOKEN_KEY]: "rt-value" } };
+    },
+  });
+  expect((await readSecrets("s"))?.[REFRESH_TOKEN_KEY]).toBe("rt-value");
+});
+
+test("runLifecycle login hands the launcher the OIDC token endpoint to harvest the refresh token", async () => {
+  const { runLifecycle } = await import("../src/lib/session");
+  const manifest = {
+    schemaVersion: 2, site: "s", baseUrl: "https://api.example.test", recordedAt: "", harSha256: "",
+    userAgent: "", clientHints: {}, auth: null,
+    authBundle: {
+      credentials: [{ location: "cookie:sid", kind: "cookie", mintedBy: null, expiry: null }],
+      earliestExpiry: null,
+    },
+    refresh: {
+      kind: "oidc", tokenEndpoint: "https://idp/realms/x/protocol/openid-connect/token",
+      clientId: "public", accessTokenCookie: null, expiresIn: 300, refreshExpiresIn: 3600,
+    },
+    endpoints: [],
+  };
+  const mpath = join(root, "client.json");
+  await writeFile(mpath, JSON.stringify(manifest));
+  let seen: { tokenEndpoint: string | null } | undefined;
+  await runLifecycle("login", undefined, mpath, {
+    launch: async (args) => {
+      seen = args;
+      await writeFile(args.statePath, "{}");
+      return { values: {} };
+    },
+  });
+  expect(seen?.tokenEndpoint).toBe("https://idp/realms/x/protocol/openid-connect/token");
 });
 
 test("runLifecycle login hands the launcher the manifest's wanted creds and api host", async () => {
