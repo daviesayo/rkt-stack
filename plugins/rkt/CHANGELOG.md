@@ -4,6 +4,12 @@
 
 ### Added
 
+- Command-surface resolver core (internal, not yet surfaced in a CLI): a
+  `commands.json` schema and validator, a param-token resolver (`@me`,
+  `@today` with `±<n><d|w|m|y>` offsets and an `@@` escape), identity
+  resolution with an on-disk cache, a join planner that dedups lookups and
+  honours a per-command `onError` policy, and a drift detector comparing a
+  `commands.json` against a re-derived `client.json`.
 - Generated clients gain session-lifecycle commands: `login` (opens a browser,
   saves the session), `logout` (clears stored session), and `auth status`
   (shows a live access-token TTL from the currently stored token). `whoami`
