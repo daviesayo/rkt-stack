@@ -133,7 +133,7 @@ test("issue calls the scheduler and returns status and body", async () => {
   const scheduler = createScheduler({
     minDelayMs: 0,
     maxDelayMs: 0,
-    fetchImpl: (async () => new Response('{"ok":true}', { status: 200 })) as typeof fetch,
+    fetchImpl: (async () => new Response('{"ok":true}', { status: 200 })) as unknown as typeof fetch,
   });
   const built = { url: "https://x.test/api", method: "GET", headers: {} };
   const { status, body } = await issue(built, scheduler);

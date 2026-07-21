@@ -9,7 +9,7 @@ function fakeFetch(log: string[], status = 200) {
 }
 
 test("runs a request and returns status, body, headers", async () => {
-  const s = createScheduler({ minDelayMs: 0, maxDelayMs: 0, fetchImpl: fakeFetch([]) as typeof fetch });
+  const s = createScheduler({ minDelayMs: 0, maxDelayMs: 0, fetchImpl: fakeFetch([]) as unknown as typeof fetch });
   const r = await s.run({ url: "https://x.test/a", method: "GET", headers: {} });
   expect(r.status).toBe(200);
   expect(r.body).toBe("{}");
@@ -18,7 +18,7 @@ test("runs a request and returns status, body, headers", async () => {
 
 test("dedups identical GETs within its lifetime", async () => {
   const log: string[] = [];
-  const s = createScheduler({ minDelayMs: 0, maxDelayMs: 0, fetchImpl: fakeFetch(log) as typeof fetch });
+  const s = createScheduler({ minDelayMs: 0, maxDelayMs: 0, fetchImpl: fakeFetch(log) as unknown as typeof fetch });
   await s.run({ url: "https://x.test/a", method: "GET", headers: {} });
   await s.run({ url: "https://x.test/a", method: "GET", headers: {} });
   await s.run({ url: "https://x.test/b", method: "GET", headers: {} });
@@ -27,7 +27,7 @@ test("dedups identical GETs within its lifetime", async () => {
 
 test("does not dedup non-GET methods", async () => {
   const log: string[] = [];
-  const s = createScheduler({ minDelayMs: 0, maxDelayMs: 0, fetchImpl: fakeFetch(log) as typeof fetch });
+  const s = createScheduler({ minDelayMs: 0, maxDelayMs: 0, fetchImpl: fakeFetch(log) as unknown as typeof fetch });
   await s.run({ url: "https://x.test/a", method: "HEAD", headers: {} });
   await s.run({ url: "https://x.test/a", method: "HEAD", headers: {} });
   // HEAD is cacheable too; but a POST would not be. Assert HEAD dedups, POST does not.
@@ -44,13 +44,13 @@ test("serializes: never two fetches in flight at once", async () => {
     active--;
     return new Response("{}", { status: 200 });
   };
-  const s = createScheduler({ minDelayMs: 0, maxDelayMs: 0, fetchImpl: slow as typeof fetch });
+  const s = createScheduler({ minDelayMs: 0, maxDelayMs: 0, fetchImpl: slow as unknown as typeof fetch });
   await Promise.all([1, 2, 3, 4].map((n) => s.run({ url: `https://x.test/${n}`, method: "GET", headers: {} })));
   expect(maxActive).toBe(1);
 });
 
 test("spaces successive distinct calls by at least the minimum", async () => {
-  const s = createScheduler({ minDelayMs: 40, maxDelayMs: 45, fetchImpl: fakeFetch([]) as typeof fetch });
+  const s = createScheduler({ minDelayMs: 40, maxDelayMs: 45, fetchImpl: fakeFetch([]) as unknown as typeof fetch });
   const start = Date.now();
   await s.run({ url: "https://x.test/1", method: "GET", headers: {} });
   await s.run({ url: "https://x.test/2", method: "GET", headers: {} });
@@ -65,7 +65,7 @@ test("retries a 503 with exponential backoff, then succeeds", async () => {
   const slept: number[] = [];
   const s = createScheduler({
     minDelayMs: 0, maxDelayMs: 0, maxRetries: 3,
-    fetchImpl: flaky as typeof fetch,
+    fetchImpl: flaky as unknown as typeof fetch,
     sleepImpl: async (ms) => { slept.push(ms); },
   });
   const r = await s.run({ url: "https://x.test/a", method: "GET", headers: {} });
@@ -84,7 +84,7 @@ test("honors a numeric Retry-After header over the exponential schedule", async 
   const slept: number[] = [];
   const s = createScheduler({
     minDelayMs: 0, maxDelayMs: 0,
-    fetchImpl: flaky as typeof fetch,
+    fetchImpl: flaky as unknown as typeof fetch,
     sleepImpl: async (ms) => { slept.push(ms); },
   });
   const r = await s.run({ url: "https://x.test/a", method: "GET", headers: {} });
@@ -97,7 +97,7 @@ test("gives up after maxRetries and returns the last error response", async () =
   const always503 = async () => new Response("busy", { status: 503 });
   const s = createScheduler({
     minDelayMs: 0, maxDelayMs: 0, maxRetries: 2,
-    fetchImpl: always503 as typeof fetch,
+    fetchImpl: always503 as unknown as typeof fetch,
     sleepImpl: async () => {},
   });
   const r = await s.run({ url: "https://x.test/a", method: "GET", headers: {} });
@@ -109,7 +109,7 @@ test("caches a response that succeeded after retries", async () => {
   const flaky = async () =>
     ++calls < 2 ? new Response("busy", { status: 503 }) : new Response("{}", { status: 200 });
   const s = createScheduler({
-    minDelayMs: 0, maxDelayMs: 0, fetchImpl: flaky as typeof fetch, sleepImpl: async () => {},
+    minDelayMs: 0, maxDelayMs: 0, fetchImpl: flaky as unknown as typeof fetch, sleepImpl: async () => {},
   });
   await s.run({ url: "https://x.test/a", method: "GET", headers: {} }); // 503 then 200 => calls 2
   await s.run({ url: "https://x.test/a", method: "GET", headers: {} }); // served from cache
@@ -122,7 +122,7 @@ test("does not cache a failed response", async () => {
     calls++;
     return calls === 1 ? new Response("busy", { status: 503 }) : new Response("{}", { status: 200 });
   };
-  const s = createScheduler({ minDelayMs: 0, maxDelayMs: 0, maxRetries: 0, fetchImpl: recovering as typeof fetch });
+  const s = createScheduler({ minDelayMs: 0, maxDelayMs: 0, maxRetries: 0, fetchImpl: recovering as unknown as typeof fetch });
   const first = await s.run({ url: "https://x.test/a", method: "GET", headers: {} });
   expect(first.status).toBe(503);
   const second = await s.run({ url: "https://x.test/a", method: "GET", headers: {} });
