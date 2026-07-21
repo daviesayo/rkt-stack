@@ -170,6 +170,28 @@ test("refuses a malformed commands.json rather than falling back", async () => {
   await expect(generateClient(manifestPath, out)).rejects.toThrow();
 });
 
+test("refuses commands.json whose site does not match the manifest", async () => {
+  const out = join(workRoot, "clients-site-mismatch");
+  await generateClient(manifestPath, out);
+  const commands = {
+    schemaVersion: 1,
+    site: "other-site",
+    commands: [
+      {
+        name: "roster",
+        summary: "the roster",
+        call: { endpoint: "get.api.roster.id", params: { id: "1" } },
+        output: { kind: "json" },
+        redact: [],
+      },
+    ],
+  };
+  await writeFile(join(out, "example", "commands.json"), JSON.stringify(commands));
+  await expect(generateClient(manifestPath, out)).rejects.toThrow(
+    /commands\.json site "other-site" does not match manifest site "example"/,
+  );
+});
+
 test("stops CLI emission and refreshes client.json when a command references a dead endpoint", async () => {
   const out = join(workRoot, "clients-drift");
   await generateClient(manifestPath, out);

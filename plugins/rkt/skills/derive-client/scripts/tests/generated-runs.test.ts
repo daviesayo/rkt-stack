@@ -1,8 +1,26 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { generateClient } from "../src/generate";
+
+async function getFreePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const probe = createServer();
+    probe.listen(0, "127.0.0.1", () => {
+      const addr = probe.address();
+      if (typeof addr !== "object" || addr === null) {
+        probe.close();
+        reject(new Error("failed to allocate free port"));
+        return;
+      }
+      const port = addr.port;
+      probe.close((err) => (err ? reject(err) : resolve(port)));
+    });
+    probe.on("error", reject);
+  });
+}
 
 let workRoot: string;
 let outRoot: string;
@@ -82,8 +100,10 @@ test("an unknown command exits non-zero and lists the valid ones", async () => {
 });
 
 test("a generated task CLI runs commands, joins, redacts, and answers whoami", async () => {
+  const port = await getFreePort();
   const server = Bun.serve({
-    port: 0,
+    port,
+    hostname: "127.0.0.1",
     fetch(req) {
       const url = new URL(req.url);
       if (url.pathname === "/me") return Response.json({ id: 5, first_name: "Ada", email: "ada@x.test" });

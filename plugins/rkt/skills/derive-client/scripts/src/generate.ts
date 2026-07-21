@@ -169,6 +169,11 @@ export async function generateClient(
   }
 
   if (commands) {
+    if (commands.site !== manifest.site) {
+      throw new Error(
+        `commands.json site "${commands.site}" does not match manifest site "${manifest.site}"`,
+      );
+    }
     const drift = detectDrift(commands, manifest);
     reportDrift(manifest.site, drift);
     if (drift.broken.length > 0) {
