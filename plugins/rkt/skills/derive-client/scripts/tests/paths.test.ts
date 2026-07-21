@@ -31,23 +31,23 @@ test("rktRoot is absolute and under the home directory", () => {
 
 test("paths are rooted, never cwd-relative", () => {
   for (const p of [
-    profileDir("alayacare"),
-    recordingDir("alayacare", "20260720T120000Z"),
-    secretsFile("alayacare"),
+    profileDir("example-care"),
+    recordingDir("example-care", "20260720T120000Z"),
+    secretsFile("example-care"),
   ]) {
     expect(p.startsWith(`${homedir()}/.rkt-clients/`)).toBe(true);
   }
 });
 
 test("recordingDir nests site and timestamp", () => {
-  expect(recordingDir("alayacare", "20260720T120000Z")).toBe(
-    `${homedir()}/.rkt-clients/recordings/alayacare/20260720T120000Z`,
+  expect(recordingDir("example-care", "20260720T120000Z")).toBe(
+    `${homedir()}/.rkt-clients/recordings/example-care/20260720T120000Z`,
   );
 });
 
 test("sanitizeSite strips path traversal and unsafe characters", () => {
   expect(sanitizeSite("../../etc/passwd")).toBe("etc-passwd");
-  expect(sanitizeSite("Alaya Care.com")).toBe("alaya-care-com");
+  expect(sanitizeSite("Example Care.com")).toBe("example-care-com");
   expect(sanitizeSite("a/b")).toBe("a-b");
 });
 
@@ -94,5 +94,5 @@ test("an empty override falls back to the home default", () => {
 test("derived paths follow the override", () => {
   process.env.RKT_CLIENTS_ROOT = "/tmp/rkt-test-root";
   expect(secretsDir()).toBe("/tmp/rkt-test-root/secrets");
-  expect(secretsFile("alayacare")).toBe("/tmp/rkt-test-root/secrets/alayacare.json");
+  expect(secretsFile("example-care")).toBe("/tmp/rkt-test-root/secrets/example-care.json");
 });
