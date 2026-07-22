@@ -18,11 +18,19 @@ param**. Two real recorded clients prove the gap:
 | luma | `get.user.profile` | required query param (`?username=usr-…`) | no |
 
 The current auto-detector only matches endpoint ids ending in `.me`, so it
-found neither. The current `Caller.fetchJson(id)` sends no params, and
-`assertResolvable` only rejects *path* params, so a required *query* param on
-the identity endpoint is silently dropped and the call returns the wrong data
-(during a real luma run it returned a stranger's public profile). This is a
-URL-shape lottery, not a luma quirk. The fix must be generic.
+found neither. Worse, the mechanism is not merely missing but silently
+*wrong*: `assertResolvable` only rejects *path* params, so a query-param
+identity endpoint is never blocked; and `buildRequest` (transport.ts:98) fills
+a required query param from its **recorded example**
+(`params[p.name] ?? (p.required ? p.example : undefined)`), where that example
+is just whatever profile the recording happened to visit (`synthesize.ts`
+marks a single-sample query param `required`, so its example is always used).
+So identity silently reflects the recorded id with no way to override it with
+the operator's own, verified id. During a real luma run the recording had
+landed on a stranger's public profile, so the example, and therefore `whoami`,
+was that stranger. This is a URL-shape-plus-poisoned-example problem, not a
+luma quirk: there is no explicit place to pin the operator's own id and no
+check that the captured id is actually theirs. The fix must be generic.
 
 ## Goal
 
@@ -56,15 +64,29 @@ export interface IdentitySpec {
 }
 ```
 
-- `validateCommandsFile`: when `identity` is present, if `identity.params` is
-  present it must be an object of string→string (reuse the existing param
-  validation shape). Absent `params` stays valid (back-compat: AlayaCare's
-  block is unchanged).
+- `validateCommandsFile`: when `identity` is present, validate `identity.params`
+  (if present) as an object of string→string, AND carry it through the identity
+  reconstruction. The current code rebuilds identity as a whitelist
+  (`identity = { endpoint, idField, display }`, commands-schema.ts:121) and does
+  NOT spread the input, so `params` is dropped unless the reconstruction adds
+  `params: i.params`. This is load-bearing: miss it and codegen emits identity
+  with no params and `whoami` silently regresses. Do not reuse the command-scoped
+  `validateParams` verbatim for this: its error labels are hardcoded to
+  `.call.params` (commands-schema.ts:60,63) and would print
+  `identity.call.params.x`; validate identity params under an `identity.params`
+  label instead. Absent `params` stays valid (back-compat).
 - `assertResolvable`: replace the "identity endpoint must have no path param"
   check with: **every required param of the identity endpoint (path or query)
-  must be a key in `identity.params`.** A path-literal endpoint (AlayaCare) has
-  no params, so it still passes. Luma's required `username` must appear in
-  `params`. Error message names the missing param(s).
+  must be a key in `identity.params`.** Rationale: the recorded `example` is
+  untrustworthy (it is whatever profile the recording visited, possibly a
+  stranger's), so identity must not silently depend on it — the operator's own id
+  must be pinned explicitly. A path-literal endpoint (AlayaCare's
+  `get.api.v1.employees.924`, where `924` is a baked literal segment with no
+  params) still passes unchanged; note this back-compat holds only because the id
+  is a literal, if it were a path *param* the CURRENT rule
+  (commands-schema.ts:143) already rejects it, so no client regresses. Luma's
+  required `username` must now appear in `params`. Error message names the missing
+  param(s).
 
   ```ts
   if (commands.identity) {
@@ -81,8 +103,10 @@ export interface IdentitySpec {
   }
   ```
 
-The generated `cli.ts` embeds `IDENTITY` as `JSON.stringify(commands.identity)`,
-so `params` flows into the generated client with no codegen change.
+The generated `cli.ts` embeds `IDENTITY` as `JSON.stringify(commands.identity)`
+(codegen.ts:338/360), so `params` flows into the generated client with no codegen
+change, but ONLY once `validateCommandsFile` carries `params` through (above):
+the object codegen serializes is the validator's reconstruction, not the raw file.
 
 ### 2. The identity call passes `params`
 
@@ -100,11 +124,14 @@ so `params` flows into the generated client with no codegen change.
   export type FetchEndpoint = (endpointId: string, params?: Record<string, string>) => Promise<unknown>;
   ```
   `resolveIdentity` calls `fetchEndpoint(spec.endpoint, spec.params ?? {})`.
-- `command-runner.ts`: both call sites (`runWhoami` and the `@me` memo) pass the
-  identity spec's params:
+- `command-runner.ts`: this file declares its OWN caller interface
+  `RunnerCaller` (command-runner.ts:11) whose `fetchJson(endpointId: string)`
+  must be widened to `fetchJson(endpointId: string, params?: Record<string,string>)`
+  too, or the closures below fail `tsc` (TS2554, expected 1 got 2). Both call
+  sites (`runWhoami` at :56 and the `@me` memo at :46) then pass params:
   `resolveIdentity(site, identity, (id, p) => caller.fetchJson(id, p))`.
-  The `spec.params` is applied inside `resolveIdentity`, so the closure just
-  forwards whatever it is handed.
+  `spec.params` is applied inside `resolveIdentity`, so the closure just forwards
+  whatever it is handed.
 
 `@me` still resolves to `getPath(identityResponse, idField)` — unchanged.
 
@@ -120,9 +147,10 @@ have, within that user object: at least one name-ish field
 (`name | full_name | display_name | first_name`) OR `email`, AND an id-ish
 field (`api_id | id | uuid | user_id | username`).
 
-Score a candidate:
-- `+3` path matches `/(^|/)(me|self|current|viewer|whoami)(/|$)/`
-- `+1` path matches `/(^|/)(user|profile|account|employee|member)(/|$)/`
+Score a candidate (the path regexes run against the endpoint's `pathTemplate`,
+NOT the dotted `id`):
+- `+3` `pathTemplate` matches `/(^|/)(me|self|current|viewer|whoami)(/|$)/`
+- `+1` `pathTemplate` matches `/(^|/)(user|profile|account|employee|member)(/|$)/`
 - `+2` no required params (a true id-free `/me`)
 - `+1` user object is the response root (not nested)
 
@@ -130,16 +158,34 @@ Pick the highest score; tie-break by fewest required params, then manifest
 order (deterministic — same manifest always yields the same pick). If no
 candidate qualifies, emit no `identity` (skill then tells the operator).
 
-Seed the block from the winner:
+Seed the block from the winner (field-name matches are case-insensitive,
+first-present-wins in the listed order, so two runs pick identically):
 - `endpoint` = winner id
-- `idField` = `<userPath>`+ first present of `api_id | id | uuid | user_id`
-- `display` = `<userPath>`+ name field, plus `<userPath>email` when present
-- `params` = for each **required** param, the recorded `example` value if the
-  manifest has one, else `""` (a blank the operator/agent must fill, surfaced by
-  the mandatory verify in part 4)
+- `idField` = `<userPath>` + first present of
+  `api_id | id | uuid | user_id | username` (includes `username`, so the id-ish
+  detection set and the seeding set agree — a candidate whose only id-ish field
+  is `username` still yields a usable `idField`)
+- `display` = `<userPath>` + first present of
+  `name | full_name | display_name | first_name`, plus `<userPath>email` when
+  present
+- `params` = for each **required** param, the recorded `example` value when the
+  manifest has one. Seeding the example is deliberate: it surfaces the captured
+  id in `commands.json` where the operator can verify or replace it, instead of
+  `buildRequest` using it silently — strictly more transparent than today, never
+  a regression. When a required param has NO example (rare, since `synthesize`
+  only marks a param required when every sample carried it), seed `""` as a
+  visible "fill this in" placeholder; the call then fails loudly (empty value)
+  until the operator sets it, caught by the mandatory verify (part 4). Failing
+  loud is intentional: never ship an identity that guesses.
 
 `<userPath>` is `""` when the user object is the response root, else e.g.
 `"user."`.
+
+**Scope limit (documented):** `getPath` (render.ts) walks dotted object paths
+only, with no array-bracket syntax, and the ranker inspects object roots and
+object properties, so a `/me` that returns a bare array (`[{…}]`) is not
+detected and that client keeps no identity. Acceptable for now, noted so it is
+not a surprise.
 
 ### 4. Skill: deterministic capture + mandatory verify
 
@@ -156,8 +202,9 @@ Seed the block from the winner:
   take the scaffolder's detected identity, and if it needs a param, confirm the
   seeded value is **your** id (matches your profile URL), not a placeholder or a
   stranger's.
-- **Verify (Step 11):** mandatory — after regenerating, run `whoami` and confirm
-  it prints the operator's real name/email. If it prints a stranger, a blank, or
+- **Verify (a mandatory new sub-step of the existing Step 11, "Regenerate and
+  read the drift report"):** after regenerating, run `whoami` and confirm it
+  prints the operator's real name/email. If it prints a stranger, a blank, or
   errors, the identity is wrong: fix `identity.params` (or re-record the correct
   profile) and repeat. Do not declare identity done without this check. This is
   the guard that would have caught the David-Tesler regression immediately.
@@ -168,8 +215,9 @@ Seed the block from the winner:
 2. `resolveIdentity` cache-miss → `fetchEndpoint("get.user.profile", {username: "usr-<you>"})`.
 3. `caller.fetchJson` → `call("get.user.profile", {username: "usr-<you>"})` →
    `buildRequest` appends `?username=usr-<you>` → live GET.
-4. `getPath(body, "user.api_id")` → id; `display` = `user.name`, `user.username`.
-5. `whoamiLine` prints `Ada Lovelace (ada)`. Cached at 0600.
+4. `getPath(body, "user.api_id")` → id; `display` = `["user.name"]` (luma's
+   profile user object carries no `email`, so name only).
+5. `whoamiLine` prints `Ada Lovelace`. Cached at 0600.
 
 ## Error handling
 
