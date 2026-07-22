@@ -3,7 +3,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { RunnerCaller } from "../src/lib/command-runner";
-import { makeResolveMe, runCommand, runWhoami } from "../src/lib/command-runner";
+import { finishRun, makeResolveMe, runCommand, runWhoami } from "../src/lib/command-runner";
+import { CliError } from "../src/lib/overflow";
 
 let root: string;
 const ORIG_ROOT = process.env.RKT_CLIENTS_ROOT;
@@ -59,7 +60,7 @@ test("renders a table, joining and redacting", async () => {
     output: { kind: "table" as const, columns: ["date", "client.name", "address"], sort: "date" },
     redact: ["address"],
   };
-  const out = await runCommand(cmd, baseOpts(c));
+  const out = (await runCommand(cmd, baseOpts(c))).rendered;
   const lines = out.split("\n");
   expect(lines[0]).toMatch(/date\s+client\.name\s+address/);
   expect(lines[1]).toContain("d1"); // sorted ascending
@@ -85,7 +86,7 @@ test("locates rows via output.rows", async () => {
     name: "shifts", summary: "", call: { endpoint: "get.shifts", params: {} },
     output: { kind: "table" as const, columns: ["date"], rows: "data" }, redact: [],
   };
-  const out = await runCommand(cmd, baseOpts(c));
+  const out = (await runCommand(cmd, baseOpts(c))).rendered;
   expect(out).toContain("d1");
 });
 
@@ -128,7 +129,7 @@ test("flags.json forces JSON output for table commands", async () => {
     output: { kind: "table" as const, columns: ["date"] },
     redact: [],
   };
-  const out = await runCommand(cmd, { ...baseOpts(c), flags: { json: true, raw: false } });
+  const out = (await runCommand(cmd, { ...baseOpts(c), flags: { json: true, raw: false } })).rendered;
   expect(out.trimStart().startsWith("[")).toBe(true);
   expect(out).toContain("d1");
   expect(out).not.toMatch(/^date\s/m);
@@ -138,7 +139,7 @@ test("credential values are masked even with raw", async () => {
   const TOKEN = "super-secret-token-value";
   const c = caller({ "get.me": { id: 1, token: TOKEN, ssn: "visible-ssn" } }, [], { default: TOKEN });
   const cmd = { name: "me", summary: "", call: { endpoint: "get.me", params: {} }, output: { kind: "json" as const }, redact: ["ssn"] };
-  const out = await runCommand(cmd, { ...baseOpts(c), flags: { json: false, raw: true } });
+  const out = (await runCommand(cmd, { ...baseOpts(c), flags: { json: false, raw: true } })).rendered;
   expect(out).toContain("visible-ssn");
   expect(out).not.toContain(TOKEN);
 });
@@ -147,7 +148,7 @@ test("json output masks secrets with quote and backslash before serialization", 
   const TOKEN = 'va"lue\\tail';
   const c = caller({ "get.me": { id: 1, token: TOKEN } }, [], { default: TOKEN });
   const cmd = { name: "me", summary: "", call: { endpoint: "get.me", params: {} }, output: { kind: "json" as const }, redact: [] };
-  const out = await runCommand(cmd, { ...baseOpts(c), flags: { json: false, raw: true } });
+  const out = (await runCommand(cmd, { ...baseOpts(c), flags: { json: false, raw: true } })).rendered;
   expect(out).not.toContain(TOKEN);
   expect(out).not.toContain('va\\"lue');
   expect(out).toContain("[REDACTED]");
@@ -156,10 +157,65 @@ test("json output masks secrets with quote and backslash before serialization", 
 test("json output redacts by default and passes raw through", async () => {
   const c = caller({ "get.me": { id: 1, ssn: "secret" } });
   const cmd = { name: "me", summary: "", call: { endpoint: "get.me", params: {} }, output: { kind: "json" as const }, redact: ["ssn"] };
-  const masked = await runCommand(cmd, baseOpts(c));
+  const masked = (await runCommand(cmd, baseOpts(c))).rendered;
   expect(masked).toContain("[REDACTED]");
-  const raw = await runCommand(cmd, { ...baseOpts(c), flags: { json: false, raw: true } });
+  const raw = (await runCommand(cmd, { ...baseOpts(c), flags: { json: false, raw: true } })).rendered;
   expect(raw).toContain("secret");
+});
+
+test("runCommand returns rowCount and fullPayload for table output", async () => {
+  const c = caller({ "get.shifts": [{ id: "a" }, { id: "b" }] });
+  const cmd = {
+    name: "items", summary: "s",
+    call: { endpoint: "get.shifts", params: {} },
+    output: { kind: "table" as const, columns: ["id"] },
+  };
+  const r = await runCommand(cmd, baseOpts(c));
+  expect(r.rowCount).toBe(2);
+  expect(JSON.parse(r.fullPayload)).toEqual([{ id: "a" }, { id: "b" }]);
+});
+
+test("HTTP >=400 throws CliError with a hint", async () => {
+  const c: RunnerCaller = {
+    call: async () => ({ status: 500, body: "oops" }),
+    fetchJson: async () => ({}),
+  };
+  const cmd = {
+    name: "items", summary: "s",
+    call: { endpoint: "get.shifts", params: {} },
+    output: { kind: "json" as const },
+  };
+  await expect(runCommand(cmd, baseOpts(c))).rejects.toThrow(CliError);
+});
+
+test("finishRun passes small results through untouched, no spill", async () => {
+  const r = { rendered: "id\na\n", rowCount: 1, fullPayload: `[{"id":"a"}]` };
+  const done = await finishRun("example", "items", r, { full: false, now: new Date() });
+  expect(done.stdout).toBe("id\na\n");
+  expect(done.spillPath).toBeUndefined();
+  expect(done.size).toEqual({ rows: 1 });
+});
+
+test("finishRun caps oversize results and spills the full payload", async () => {
+  const rows = Array.from({ length: 500 }, (_, i) => ({ id: String(i) }));
+  const r = {
+    rendered: rows.map((x) => x.id).join("\n"),
+    rowCount: 500,
+    fullPayload: JSON.stringify(rows),
+  };
+  const done = await finishRun("example", "items", r, { full: false, now: new Date() });
+  expect(done.spillPath).toBeDefined();
+  expect(done.hint).toContain("--limit");
+  expect(await Bun.file(done.spillPath!).text()).toBe(JSON.stringify(rows));
+  expect(done.stdout.split("\n").length).toBeLessThanOrEqual(201);
+});
+
+test("finishRun with full=true never caps or spills", async () => {
+  const rows = Array.from({ length: 500 }, (_, i) => ({ id: String(i) }));
+  const r = { rendered: "big", rowCount: 500, fullPayload: JSON.stringify(rows) };
+  const done = await finishRun("example", "items", r, { full: true, now: new Date() });
+  expect(done.stdout).toBe("big");
+  expect(done.spillPath).toBeUndefined();
 });
 
 test("runWhoami formats the identity display", async () => {

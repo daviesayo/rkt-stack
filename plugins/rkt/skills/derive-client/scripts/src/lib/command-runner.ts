@@ -2,6 +2,7 @@ import type { CommandSpec, IdentitySpec } from "./commands-schema";
 import type { ClientManifest } from "./manifest-schema";
 import { applyJoins, type Lookup } from "./join";
 import { resolveIdentity, whoamiLine } from "./identity";
+import { capText, CliError, MAX_BYTES, MAX_ROWS, writeSpill } from "./overflow";
 import { maskSecretValues, redactAll } from "./secrets";
 import { resolveToken, type TokenContext } from "./tokens";
 import { getPath, renderJson, renderTable, sortRows } from "./render";
@@ -17,6 +18,12 @@ export interface RunFlags {
   json: boolean;
   raw: boolean;
   limit?: number;
+}
+
+export interface RunResult {
+  rendered: string;
+  rowCount?: number;
+  fullPayload: string;
 }
 
 export interface RunOpts {
@@ -84,7 +91,7 @@ async function resolveParams(
   return out;
 }
 
-export async function runCommand(cmd: CommandSpec, opts: RunOpts): Promise<string> {
+export async function runCommand(cmd: CommandSpec, opts: RunOpts): Promise<RunResult> {
   const { manifest, site, caller, identity, flags, now } = opts;
   const ctx: TokenContext = {
     resolveMe: makeResolveMe(site, identity, caller),
@@ -94,7 +101,23 @@ export async function runCommand(cmd: CommandSpec, opts: RunOpts): Promise<strin
   const params = await resolveParams(merged, ctx, now);
 
   const { status, body } = await caller.call(cmd.call.endpoint, params);
-  if (status >= 400) throw new Error(`HTTP ${status} from ${cmd.call.endpoint}`);
+  if (status >= 400) {
+    const redactedBody = redactAll(body, caller.secret ?? null);
+    const spill = await writeSpill(site, cmd.name, redactedBody, now).catch(() => undefined);
+    const head = redactedBody.slice(0, 2000);
+    let hint: string;
+    let exitCode = 1;
+    if (status === 401) {
+      // createCaller already ran its renewal tiers and still got 401: exhausted.
+      hint = "run: login  (then check: auth status)";
+      exitCode = 4;
+    } else if (status === 403) {
+      hint = `the session may lack permission for this resource; if the whole client fails, try: login${spill ? `. full body: ${spill}` : ""}`;
+    } else {
+      hint = `${spill ? `full body: ${spill}. ` : ""}re-run with --dry-run to inspect the request`;
+    }
+    throw new CliError(`HTTP ${status} from ${cmd.call.endpoint}\n${head}`, hint, exitCode);
+  }
   let parsed: unknown;
   try {
     parsed = JSON.parse(body);
@@ -114,7 +137,9 @@ export async function runCommand(cmd: CommandSpec, opts: RunOpts): Promise<strin
       data = (data as unknown[]).slice(0, flags.limit);
     }
     data = maskSecretValues(data, secrets);
-    return mask(renderJson(data, { redact, raw: flags.raw }));
+    const rendered = mask(renderJson(data, { redact, raw: flags.raw }));
+    const rowCount = Array.isArray(data) ? (data as unknown[]).length : undefined;
+    return { rendered, rowCount, fullPayload: rendered };
   }
 
   let rows = extractRows(parsed, cmd.output.rows);
@@ -130,5 +155,47 @@ export async function runCommand(cmd: CommandSpec, opts: RunOpts): Promise<strin
   }
   if (cmd.output.sort) rows = sortRows(rows, cmd.output.sort);
   if (typeof flags.limit === "number") rows = rows.slice(0, flags.limit);
-  return mask(renderTable(rows, cmd.output.columns ?? [], { redact, raw: flags.raw }));
+  const rendered = mask(renderTable(rows, cmd.output.columns ?? [], { redact, raw: flags.raw }));
+  const fullPayload = mask(renderJson(rows, { redact, raw: flags.raw }));
+  return { rendered, rowCount: rows.length, fullPayload };
+}
+
+/** Apply overflow caps to a finished run; spill the full payload when capped. */
+export async function finishRun(
+  site: string,
+  command: string,
+  result: RunResult,
+  opts: { full: boolean; now: Date },
+): Promise<{
+  stdout: string;
+  size: { rows: number } | { bytes: number };
+  spillPath?: string;
+  hint?: string;
+}> {
+  const size =
+    result.rowCount !== undefined
+      ? { rows: result.rowCount }
+      : { bytes: Buffer.byteLength(result.rendered) };
+  if (opts.full) return { stdout: result.rendered, size };
+
+  let text = result.rendered;
+  let capped = false;
+  if (result.rowCount !== undefined && result.rowCount > MAX_ROWS) {
+    // Row-capping rendered text: keep the first MAX_ROWS + header line for tables.
+    const lines = text.split("\n");
+    text = lines.slice(0, MAX_ROWS + 1).join("\n");
+    capped = true;
+  }
+  const byteCap = capText(text, MAX_BYTES);
+  text = byteCap.text;
+  capped = capped || byteCap.capped;
+
+  if (!capped) return { stdout: result.rendered, size };
+  const spillPath = await writeSpill(site, command, result.fullPayload, opts.now);
+  return {
+    stdout: text,
+    size,
+    spillPath,
+    hint: `narrow with --limit or a declared --<param>, or: jq . ${spillPath}`,
+  };
 }

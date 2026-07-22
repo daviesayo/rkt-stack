@@ -437,7 +437,7 @@ ${whoamiDispatch}
     now: new Date(),
     overrideParams,
   });
-  console.log(out);
+  console.log(out.rendered);
 }
 
 if (import.meta.main) {
