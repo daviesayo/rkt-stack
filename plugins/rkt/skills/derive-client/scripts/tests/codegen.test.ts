@@ -336,3 +336,30 @@ test("task CLI help lists install and uninstall in its session block", () => {
   expect(src).toContain("install [--name <x>]");
   expect(src).toContain("uninstall");
 });
+
+test("endpoint CLI treats help/--help/-h as an explicit help request that exits 0", () => {
+  const src = emitCli(manifestWith([ep({})]));
+  expect(src).toContain("function usage(exitCode = 1)");
+  expect(src).toContain('commandName === "help"');
+  expect(src).toContain("usage(0)");
+});
+
+test("task CLI treats help/--help/-h as an explicit help request that exits 0", () => {
+  const commands: CommandsFile = {
+    schemaVersion: 1,
+    site: "example",
+    commands: [
+      {
+        name: "roster",
+        summary: "List roster entries",
+        call: { endpoint: "get.api.roster.id", params: {} },
+        output: { kind: "json" },
+        redact: [],
+      },
+    ],
+  };
+  const src = emitCli(manifestWith([ep({})]), commands);
+  expect(src).toContain("function usage(exitCode = 1)");
+  expect(src).toContain('name === "help"');
+  expect(src).toContain("usage(0)");
+});

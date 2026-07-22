@@ -170,7 +170,7 @@ interface CommandSpec {
 
 const COMMANDS: CommandSpec[] = ${JSON.stringify(commands, null, 2)};
 
-${responseFor}function usage(): never {
+${responseFor}function usage(exitCode = 1): never {
   console.error("usage: bun cli.ts <command> [--param value ...] [--dry-run]");
   console.error("");
   console.error("session:");
@@ -179,13 +179,14 @@ ${responseFor}function usage(): never {
   console.error("  auth status                  show token TTL and session age");
   console.error("  install [--name <x>]         symlink this CLI onto your PATH");
   console.error("  uninstall                    remove the PATH launcher (keeps the client)");
+  console.error("  help                         show this message");
   console.error("");
   console.error("commands:");
   for (const c of COMMANDS) {
     const params = c.params.map((p) => \`--\${p.name} <\${p.type}>\`).join(" ");
     console.error(\`  \${c.command.padEnd(28)} \${c.method} \${c.pathTemplate} \${params}\`);
   }
-  process.exit(1);
+  process.exit(exitCode);
 }
 
 async function main() {
@@ -197,6 +198,7 @@ async function main() {
   if (handled) return;
 
   const commandName = process.argv[2];
+  if (commandName === "help" || commandName === "--help" || commandName === "-h") usage(0);
   if (!commandName || commandName.startsWith("-")) usage();
 
   const command = COMMANDS.find((c) => c.command === commandName);
@@ -366,7 +368,7 @@ function flagValue(name: string): string | undefined {
   return i === -1 ? undefined : process.argv[i + 1];
 }
 
-function usage(): never {
+function usage(exitCode = 1): never {
   console.error("usage: bun cli.ts <command> [--param value ...] [--json] [--raw] [--limit n]");
   console.error("");
   console.error("session:");
@@ -376,10 +378,11 @@ function usage(): never {
   if (IDENTITY) console.error("  whoami                   show the signed-in user");
   console.error("  install [--name <x>]     symlink this CLI onto your PATH");
   console.error("  uninstall                remove the PATH launcher (keeps the client)");
+  console.error("  help                     show this message");
   console.error("");
   console.error("commands:");
   for (const c of COMMANDS) console.error(\`  \${c.name.padEnd(22)} \${c.summary}\`);
-  process.exit(1);
+  process.exit(exitCode);
 }
 
 async function main() {
@@ -387,6 +390,7 @@ async function main() {
   if (await runLifecycle(process.argv[2], process.argv[3], manifestPath)) return;
 
   const name = process.argv[2];
+  if (name === "help" || name === "--help" || name === "-h") usage(0);
   if (!name || name.startsWith("-")) usage();
 
   const manifest = validateManifest(JSON.parse(await readFile(manifestPath, "utf8")));

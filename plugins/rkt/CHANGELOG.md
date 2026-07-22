@@ -1,5 +1,22 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **derive-client: `help` command.** Generated CLIs now respond to `help`,
+  `--help`, and `-h` with the usage listing and a `0` exit, and list `help`
+  among the session commands. Before, only a bare invocation or an unknown
+  command printed usage (and always with a non-zero exit).
+
+### Changed
+
+- **derive-client skill spells out identity/`whoami` wiring.** The recording
+  step now tells the operator to visit the account/profile page so a `/me`-style
+  endpoint is captured, and the command-surface step instructs wiring the
+  `identity` block by default (verifying the scaffolder's guessed endpoint)
+  instead of leaving `whoami` unwired.
+
 ## [0.8.0] - 2026-07-22
 
 Native install for `derive-client` clients, plus a client-naming prompt. A
