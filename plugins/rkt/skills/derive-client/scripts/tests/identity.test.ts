@@ -93,3 +93,16 @@ test("stores a formatted label in the cache", async () => {
   const cached = JSON.parse(await readFile(identityCacheFile("s"), "utf8"));
   expect(cached.label).toBe("Ada (ada@x.test)");
 });
+
+test("resolveIdentity passes spec.params to the fetch and reads nested idField", async () => {
+  let seenParams: unknown;
+  const s = { endpoint: "get.user.profile", params: { username: "usr-me" }, idField: "user.api_id", display: ["user.name"] };
+  const fetchEndpoint = async (_id: string, params?: Record<string, string>) => {
+    seenParams = params;
+    return { user: { api_id: "usr-me", name: "Ada" } };
+  };
+  const r = await resolveIdentity("s", s, fetchEndpoint);
+  expect(seenParams).toEqual({ username: "usr-me" });
+  expect(r.id).toBe("usr-me");
+  expect(r.display["user.name"]).toBe("Ada");
+});

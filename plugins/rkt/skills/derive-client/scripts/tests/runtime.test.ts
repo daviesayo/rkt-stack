@@ -117,3 +117,22 @@ test("fetchJson throws a clear error on a non-2xx", async () => {
   const caller = createCaller(baseManifest(), sched, null, { writeSecret: async () => {} });
   await expect(caller.fetchJson("get.data")).rejects.toThrow(/HTTP 500/);
 });
+
+test("fetchJson forwards params into the request URL", async () => {
+  const seen: string[] = [];
+  const sched: Scheduler = {
+    run: async (req) => { seen.push(req.url); return { status: 200, body: "{}", headers: {} }; },
+  };
+  const m = baseManifest();
+  m.endpoints = [
+    {
+      id: "get.user.profile", method: "GET", pathTemplate: "/user/profile",
+      params: [{ name: "username", in: "query", type: "string", required: true }],
+      responseShape: { type: "unknown" as const }, source: "xhr" as const,
+      fragile: false, selectors: null, writeSemantics: null,
+    },
+  ] as typeof m.endpoints;
+  const caller = createCaller(m, sched, { authorization: "Bearer x" });
+  await caller.fetchJson("get.user.profile", { username: "usr-me" });
+  expect(seen[0]).toContain("username=usr-me");
+});
