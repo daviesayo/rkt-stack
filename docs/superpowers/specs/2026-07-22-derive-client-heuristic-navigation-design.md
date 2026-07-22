@@ -135,9 +135,11 @@ After every command, one line on **stderr**:
   footer carries the path. A stderr hint line suggests: narrow with `--limit`
   or a declared `--<param>`, or query the spill file with `jq`.
 - **What spills:** the same logical data stdout is showing, in JSON form. For
-  task-CLI table commands that is the shaped rows (post-join, post-sort,
-  post-redaction — identical to what `--json` would print uncapped). For
-  `--json` mode, the same. For the endpoint CLI, the raw redacted body text.
+  task-CLI table commands that is the shaped rows (post-extraction, post-join,
+  post-sort, post-redaction) as JSON. For `--json` mode, the rendered JSON
+  itself (which serializes the whole parsed response, not extracted rows — so
+  table-mode and json-mode spills legitimately differ for commands with
+  `output.rows` or joins). For the endpoint CLI, the raw redacted body text.
   With `--raw`, the spill is unredacted like stdout; that is the only path to
   an unredacted file on disk, mirroring the existing stdout contract.
 - New global flag `--full` (task CLI only) disables the cap: complete payload
@@ -182,9 +184,9 @@ Fixture: a manifest + commands.json pair and a local stub HTTP server.
 3. Unknown command → suggestion + exit 2.
 4. Footer format on success and on failure (stderr only; stdout untouched).
 5. Oversized fixture response → truncated stdout, spill file exists under the
-   redirected root, spill content equals uncapped `--json` output (task CLI),
-   spill is redacted, footer carries the path; `--full` emits everything and
-   writes no spill.
+   redirected root, spill content is the shaped rows as JSON (table mode) or
+   the rendered JSON (json mode), spill is redacted, footer carries the path;
+   `--full` emits everything and writes no spill.
 6. `--json` output under the cap still parses with `jq .` and byte-matches
    today's output (backward compatibility).
 7. Prune keeps the 20 newest spill files.

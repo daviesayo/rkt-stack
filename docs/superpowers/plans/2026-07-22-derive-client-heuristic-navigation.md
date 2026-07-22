@@ -28,6 +28,7 @@
 **Files:**
 - Create: `plugins/rkt/skills/derive-client/scripts/src/lib/overflow.ts`
 - Modify: `plugins/rkt/skills/derive-client/scripts/src/lib/paths.ts` (append after `secretsFile`)
+- Modify: `plugins/rkt/skills/derive-client/scripts/src/generate.ts` — add `"overflow.ts"` to the explicit `RUNTIME_FILES` array (~lines 36-52). **This must land in this task**: Task 2 makes `command-runner.ts` (a copied runtime file) import `./overflow`; if `overflow.ts` is not copied into generated clients' `lib/`, `generated-runs.test.ts` (which spawns generated CLIs and runs `tsc --noEmit`) goes red from Task 2 until Task 6.
 - Test: `plugins/rkt/skills/derive-client/scripts/tests/overflow.test.ts`
 
 **Interfaces:**
@@ -203,12 +204,12 @@ export function footer(opts: {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `cd plugins/rkt/skills/derive-client/scripts && bun test tests/overflow.test.ts`
-Expected: PASS (6 tests). Also run `bun test tests/paths.test.ts` — Expected: PASS (no regression).
+Expected: PASS (6 tests). Also run `bun test tests/paths.test.ts tests/generate.test.ts tests/generated-runs.test.ts` — Expected: PASS (no regression; `overflow.ts` now copied into generated `lib/`).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add plugins/rkt/skills/derive-client/scripts/src/lib/overflow.ts plugins/rkt/skills/derive-client/scripts/src/lib/paths.ts plugins/rkt/skills/derive-client/scripts/tests/overflow.test.ts
+git add plugins/rkt/skills/derive-client/scripts/src/lib/overflow.ts plugins/rkt/skills/derive-client/scripts/src/lib/paths.ts plugins/rkt/skills/derive-client/scripts/src/generate.ts plugins/rkt/skills/derive-client/scripts/tests/overflow.test.ts
 git commit -m "feat(derive-client): CliError, outDir, spill/footer/cap helpers
 
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
@@ -226,7 +227,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 **Interfaces:**
 - Consumes: `CliError`, `MAX_BYTES`, `MAX_ROWS`, `capText`, `writeSpill` from `./overflow` (Task 1 signatures).
 - Produces:
-  - `interface RunResult { rendered: string; rowCount?: number; fullPayload: string }` — `rendered` is exactly the string `runCommand` returned before this change **when under caps**; `fullPayload` is the redacted JSON serialization of the shaped data (what `--json` prints uncapped); `rowCount` present only when the shaped result is an array of rows.
+  - `interface RunResult { rendered: string; rowCount?: number; fullPayload: string }` — `rendered` is exactly the string `runCommand` returned before this change **when under caps**; `fullPayload` is the redacted JSON serialization of the data stdout is showing: in json mode the rendered JSON itself (whole parsed response), in table mode the shaped rows (post-extraction/join/sort) as JSON. These legitimately differ for commands with `output.rows` or joins — do not try to make them equal. `rowCount` present only when the shaped result is an array of rows.
   - `runCommand(cmd, opts): Promise<RunResult>` (same `RunOpts`).
   - `finishRun(site: string, command: string, result: RunResult, opts: { full: boolean; now: Date }): Promise<{ stdout: string; size: { rows: number } | { bytes: number }; spillPath?: string; hint?: string }>` — applies row cap (200, only when `rowCount` defined and no `--full`) and byte cap (50 KB); on cap, spills `fullPayload` and sets `hint` to `narrow with --limit or a declared --<param>, or: jq . <spillPath>`.
   - `runCommand` HTTP failure changes from `throw new Error(\`HTTP ${status} ...\`)` to `throw new CliError(...)` with the redacted body head and a spill of the full redacted body (see step code).
@@ -318,18 +319,25 @@ Replace `if (status >= 400) throw new Error(\`HTTP ${status} from ${cmd.call.end
 
 ```ts
   if (status >= 400) {
-    const redactedBody = redactAll(maskSecretValues(body, caller.secret ?? null) as string ?? body, caller.secret ?? null);
+    const redactedBody = redactAll(body, caller.secret ?? null);
     const spill = await writeSpill(opts.site, cmd.name, redactedBody, now).catch(() => undefined);
     const head = redactedBody.slice(0, 2000);
-    const hint =
-      status === 403
-        ? `the session may lack permission for this resource; if the whole client fails, try: login${spill ? `\nfull body: ${spill}` : ""}`
-        : `inspect the response body${spill ? ` at ${spill}` : ""}; re-run with --dry-run to inspect the request`;
-    throw new CliError(`HTTP ${status} from ${cmd.call.endpoint}\n${head}`, hint, 1);
+    let hint: string;
+    let exitCode = 1;
+    if (status === 401) {
+      // createCaller already ran its renewal tiers and still got 401: exhausted.
+      hint = "run: login  (then check: auth status)";
+      exitCode = 4;
+    } else if (status === 403) {
+      hint = `the session may lack permission for this resource; if the whole client fails, try: login${spill ? `. full body: ${spill}` : ""}`;
+    } else {
+      hint = `${spill ? `full body: ${spill}. ` : ""}re-run with --dry-run to inspect the request`;
+    }
+    throw new CliError(`HTTP ${status} from ${cmd.call.endpoint}\n${head}`, hint, exitCode);
   }
 ```
 
-(Note: `maskSecretValues` operates on parsed data in the existing code; for a raw string body just use `redactAll(body, caller.secret ?? null)` — match the endpoint CLI's existing `redactAll(body, secret)` pattern. Keep it simple: `const redactedBody = redactAll(body, caller.secret ?? null);`.)
+**Verify the exhaustion premise first:** read `runtime.ts` `call()` (~lines 60-91). It attempts 401 renewal internally and *returns* the still-401 response rather than throwing — so a 401 reaching this handler is post-renewal, and exit 4 here is correct. If that ever changes (renewal moved out of `createCaller`), move the exit-4 mapping to wherever the last tier actually gives up.
 
 In the JSON branch, replace the final `return mask(renderJson(...))` with:
 
@@ -396,7 +404,7 @@ export async function finishRun(
 - [ ] **Step 4: Run all lib tests**
 
 Run: `cd plugins/rkt/skills/derive-client/scripts && bun test tests/command-runner.test.ts tests/overflow.test.ts && bun test`
-Expected: command-runner + overflow PASS. Full `bun test` will FAIL in `codegen`/`generated-runs` if they consume `runCommand`'s old string return — fix those call sites in this task only if they are *library* call sites; generated-template call sites are Task 4/5. `grep -rn "runCommand" src/ tests/` and update `src/` consumers (there should be none besides codegen templates, which emit source text and don't execute it — but `generated-runs.test.ts` executes generated CLIs, which will still compile against the old template until Task 4; if it breaks here, that means the template string references `runCommand` output as string — leave the template compiling by NOT changing its usage until Task 4, which is possible because templates are strings; if the template's generated code now type-errors at runtime under bun, fix minimally in the template: `(await runCommand(...)).rendered`).
+Expected: command-runner + overflow PASS. Then run the full `bun test`: `generated-runs.test.ts` executes generated CLIs whose emitted code (`emitTaskCli` template) still does `console.log(await runCommand(...))` — now an object, and `tsc --noEmit` will also flag it. Make the **minimal** template fix in `emitTaskCli` here: `console.log((await runCommand(...)).rendered);` — nothing more; the full template rework is Task 4. Re-run `bun test` — Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
@@ -426,18 +434,20 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 - [ ] **Step 1: Write failing tests**
 
-In `tests/runtime.test.ts` append (adapt the existing fixture/caller setup at the top of that file — reuse its manifest and mock scheduler exactly as neighboring tests do):
+`runtime.test.ts` has **no shared `caller` fixture** — each test constructs its own via `createCaller(baseManifest(), sched, ...)` (see its existing tests around lines 53-138 for the exact `baseManifest()` and fake-scheduler helpers). Append, following that local-construction pattern exactly:
 
 ```ts
 import { CliError } from "../src/lib/overflow";
 
 test("missing endpoint throws CliError with regenerate hint", async () => {
-  // Use the file's existing createCaller fixture; call a bogus endpoint id.
+  const caller = createCaller(baseManifest(), fakeScheduler(), null);
   const err = await caller.call("no.such.endpoint", {}).catch((e) => e);
   expect(err).toBeInstanceOf(CliError);
   expect((err as CliError).hint).toContain("regenerate");
 });
 ```
+
+(If the file's scheduler helper has a different name, use that name; copy whatever the neighboring tests pass as `createCaller`'s arguments verbatim.)
 
 Then locate the existing `expect(...).rejects.toThrow(/missing from client.json/)`-style assertions and keep them passing (CliError extends Error, so message assertions survive).
 
@@ -505,11 +515,11 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 - [ ] **Step 1: Write failing structural tests**
 
-Append to `tests/codegen.test.ts` (reuse its existing manifest+commands fixtures):
+Append to `tests/codegen.test.ts`. Its actual fixtures are `taskManifest`/`taskCommands` (task CLI) and `manifest`/`manifestWith(...)` (endpoint CLI) — check the file around lines 139-301 and use those names, not invented ones:
 
 ```ts
 test("task CLI emits fail(), footer wiring, per-command help, and --full", () => {
-  const src = emitCli(manifestFixture, commandsFixture);
+  const src = emitCli(taskManifest, taskCommands);
   expect(src).toContain("function fail(");
   expect(src).toContain("commandHelp(");
   expect(src).toContain("--full");
@@ -650,33 +660,32 @@ if (import.meta.main) {
 
 - [ ] **Step 4: Behavioral tests in `generated-runs.test.ts`**
 
-Open `tests/generated-runs.test.ts`, copy its existing pattern (generate a client into a temp dir from a fixture manifest+commands, spawn `bun cli.ts ...` with `NODE_ENV=test` and `RKT_CLIENTS_ROOT` exported, stub server). Add tests:
+Open `tests/generated-runs.test.ts` and read its actual fixtures first: the task-CLI fixture's command is **`shifts`** (site fixture with manifest + commands), and the file spawns generated CLIs with `NODE_ENV=test` and `RKT_CLIENTS_ROOT` exported. The current fixtures may not include a stub HTTP server for successful data calls — if not, add one (a `Bun.serve` on an ephemeral port whose URL is written into the fixture manifest's `baseUrl`) as part of this step; the oversize tests need it to return 500 rows. Add tests (using the real command name `shifts`; `runCli`/`runCliBig` are thin wrappers you add over the file's existing spawn helper, `runCliBig` pointing the stub server at a 500-row response):
 
 ```ts
 test("unknown command suggests nearest and exits 2", async () => {
-  const { exitCode, stderr } = await runCli(["shifts-todya"]);
+  const { exitCode, stderr } = await runCli(["shifs"]);
   expect(exitCode).toBe(2);
   expect(stderr).toContain("did you mean");
   expect(stderr).toMatch(/\[exit:2 \|/);
 });
 
 test("<command> --help prints params, columns, example", async () => {
-  const { exitCode, stdout } = await runCli(["shifts-today", "--help"]);
+  const { exitCode, stdout } = await runCli(["shifts", "--help"]);
   expect(exitCode).toBe(0);
   expect(stdout).toContain("params");
   expect(stdout).toContain("example: bun cli.ts");
 });
 
 test("success prints footer on stderr, stdout stays pure", async () => {
-  const { exitCode, stdout, stderr } = await runCli(["shifts-today", "--json"]);
+  const { exitCode, stdout, stderr } = await runCli(["shifts", "--json"]);
   expect(exitCode).toBe(0);
   expect(() => JSON.parse(stdout)).not.toThrow();
   expect(stderr).toMatch(/\[exit:0 \| \d+(\.\d)?s \| \d+ rows\]/);
 });
 
 test("oversize response caps stdout and spills redacted full payload", async () => {
-  // stub server returns 500 rows for shifts-today
-  const { exitCode, stdout, stderr } = await runCliBig(["shifts-today"]);
+  const { exitCode, stdout, stderr } = await runCliBig(["shifts"]);
   expect(exitCode).toBe(0);
   expect(stderr).toContain("full: ");
   const spill = stderr.match(/full: (\S+)\]/)![1];
@@ -686,13 +695,11 @@ test("oversize response caps stdout and spills redacted full payload", async () 
 });
 
 test("--full disables cap and spill", async () => {
-  const { stdout, stderr } = await runCliBig(["shifts-today", "--full", "--json"]);
+  const { stdout, stderr } = await runCliBig(["shifts", "--full", "--json"]);
   expect(JSON.parse(stdout).length).toBe(500);
   expect(stderr).not.toContain("full: ");
 });
 ```
-
-(`runCli` / `runCliBig` are thin wrappers over the file's existing spawn helper: same generated client, `runCliBig` points the stub server at a 500-row response. Follow whatever helper names the file actually uses; add these wrappers if absent.)
 
 Run: `cd plugins/rkt/skills/derive-client/scripts && bun test tests/codegen.test.ts tests/generated-runs.test.ts`
 Expected: PASS.
@@ -726,7 +733,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ```ts
 test("endpoint CLI emits reduced-tier navigation", () => {
-  const src = emitCli(manifestFixture); // no commands file
+  const src = emitCli(manifest); // codegen.test.ts's endpoint-CLI fixture; no commands file
   expect(src).toContain("function fail(");
   expect(src).toContain("function endpointHelp(");
   expect(src).toContain("footer(");
@@ -809,21 +816,28 @@ function endpointHelp(c: CommandSpec): string {
   console.error(footer({ exitCode: 0, startedAt: STARTED_AT, size: { bytes: Buffer.byteLength(redacted) }, spillPath }));
 ```
 
-**(g) `usage()` pointer line** (Level 0): after the commands loop add the same two `console.error` pointer lines as Task 4 (c). **(h) top-level catch**: same CliError-aware catch as Task 4 (f).
+**(g) `usage()` pointer line** (Level 0): after the commands loop add the same two `console.error` pointer lines as Task 4 (c). **(h) top-level catch**: this template uses `try { await main() } catch (err) { ... }` (codegen.ts:323-332), not `main().catch(...)` — keep that existing shape and just make the catch CliError-aware:
+
+```ts
+  } catch (err) {
+    if (err instanceof CliError) fail(err.message, err.hint, err.exitCode);
+    fail((err as Error).message, "re-run with --dry-run to inspect the request", 1);
+  }
+```
 
 - [ ] **Step 3: Behavioral test**
 
-In `generated-runs.test.ts`, add (or extend the endpoint-CLI section):
+In `generated-runs.test.ts`, the existing endpoint-CLI fixture (site "runs") has one command, **`api-roster`**, with a required `{id}` path param and **no stub server** — so the missing-param test works against the current fixture as-is, but the success-footer test needs the stub server from Task 4 wired into this fixture's `baseUrl` (do that here). Add:
 
 ```ts
 test("endpoint CLI: missing path param prints help and exits 2", async () => {
-  const { exitCode, stderr } = await runEndpointCli(["employee-detail"]); // fixture cmd with a {id} path param
+  const { exitCode, stderr } = await runEndpointCli(["api-roster"]); // {id} path param omitted
   expect(exitCode).toBe(2);
   expect(stderr).toContain("missing required param");
 });
 
 test("endpoint CLI: success footer reports bytes", async () => {
-  const { stderr } = await runEndpointCli(["employees"]);
+  const { stderr } = await runEndpointCli(["api-roster", "--id", "1"]); // stub server responds 200
   expect(stderr).toMatch(/\[exit:0 \| \d+(\.\d)?s \| \d+ bytes\]/);
 });
 ```
@@ -845,7 +859,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ### Task 6: Generator lib refresh, docs, changelog, validation
 
 **Files:**
-- Verify (no edit expected): `plugins/rkt/skills/derive-client/scripts/src/generate.ts` — confirm it copies `overflow.ts` into `$OUT/lib/` (read how it enumerates lib files; if it uses an explicit list, add `overflow.ts`; if it globs `src/lib/*.ts`, nothing to do).
+- Verify only: `plugins/rkt/skills/derive-client/scripts/src/generate.ts` — `overflow.ts` was added to `RUNTIME_FILES` in Task 1; confirm it is present and nothing else in the runtime list is missing.
 - Modify: `plugins/rkt/CHANGELOG.md` (prepend under `## [Unreleased]`)
 - Modify: `plugins/rkt/skills/derive-client/SKILL.md` (Step 9/11 usage blocks: mention `<command> --help`, `--full`, the stderr footer, and the spill dir `~/.rkt-clients/out/<site>/` in the Artifacts list)
 - Modify: `plugins/rkt/skills/derive-client/README.md` (same surface, developer-facing)
@@ -854,10 +868,10 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 **Interfaces:**
 - Consumes: everything above. Produces: shipped docs; no code interfaces.
 
-- [ ] **Step 1: Check generate.ts lib copying**
+- [ ] **Step 1: Verify generate.ts lib copying**
 
-Run: `grep -n "lib" plugins/rkt/skills/derive-client/scripts/src/generate.ts`
-If lib files are copied by explicit list, add `overflow.ts`; then `bun test tests/generate.test.ts` — Expected: PASS.
+Run: `grep -n "overflow" plugins/rkt/skills/derive-client/scripts/src/generate.ts`
+Expected: `overflow.ts` present in `RUNTIME_FILES` (added in Task 1). If missing, add it and re-run `bun test tests/generate.test.ts tests/generated-runs.test.ts`.
 
 - [ ] **Step 2: CHANGELOG entry**
 
@@ -915,7 +929,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 | §1 Level 2 missing required path param → help + exit 2 | 5 (d) (endpoint CLI; task CLI has no required-param class per spec) |
 | §2 `CliError` in library, `fail()` in generated code only | 1, 3, 4 (b,f), 5 (b,h) |
 | §2 unknown-command suggestion, exit 2 | 4 (d), 5 (d) |
-| §2 401 exhaustion → exit 4, login hint | 3, 4 (g), 5 (e) |
+| §2 401 exhaustion → exit 4, login hint (data path + whoami path) | 2 (step 3), 3, 4 (g), 5 (e) |
 | §2 403 stays exit 1 with permission hint | 2 (step 3), 5 (e) |
 | §2 HTTP error spills full redacted body + path | 2 (step 3), 5 (e) |
 | §2 drift hint (regenerate.sh) | 3, 5 (e) |
