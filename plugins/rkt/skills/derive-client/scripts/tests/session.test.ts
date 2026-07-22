@@ -414,3 +414,53 @@ test("uninstall returns empty when the bin dir does not exist", async () => {
   const { removed } = await uninstallLauncher({ cliPath, binDir: join(tmpdir(), "rkt-does-not-exist-xyz") });
   expect(removed).toEqual([]);
 });
+
+function fullManifest(site: string) {
+  return {
+    schemaVersion: 2, site, baseUrl: "https://api.example.test", recordedAt: "", harSha256: "",
+    userAgent: "", clientHints: {}, auth: null, authBundle: null, refresh: null, endpoints: [],
+  };
+}
+
+test("runLifecycle install creates the launcher and reports handled", async () => {
+  const { runLifecycle } = await import("../src/lib/session");
+  const binDir = await mkdtemp(join(tmpdir(), "rkt-bin-"));
+  const prev = process.env.RKT_BIN_DIR;
+  process.env.RKT_BIN_DIR = binDir;
+  try {
+    const clientDir = join(root, "example");
+    await mkdir(clientDir, { recursive: true });
+    await writeFile(join(clientDir, "cli.ts"), "// stub\n");
+    const mpath = join(clientDir, "client.json");
+    await writeFile(mpath, JSON.stringify(fullManifest("example")));
+
+    const handled = await runLifecycle("install", undefined, mpath);
+    expect(handled).toBe(true);
+    expect(await readlink(join(binDir, "example"))).toBe(join(clientDir, "cli.ts"));
+  } finally {
+    if (prev === undefined) delete process.env.RKT_BIN_DIR;
+    else process.env.RKT_BIN_DIR = prev;
+  }
+});
+
+test("runLifecycle uninstall removes the launcher and reports handled", async () => {
+  const { runLifecycle } = await import("../src/lib/session");
+  const binDir = await mkdtemp(join(tmpdir(), "rkt-bin-"));
+  const prev = process.env.RKT_BIN_DIR;
+  process.env.RKT_BIN_DIR = binDir;
+  try {
+    const clientDir = join(root, "example");
+    await mkdir(clientDir, { recursive: true });
+    await writeFile(join(clientDir, "cli.ts"), "// stub\n");
+    const mpath = join(clientDir, "client.json");
+    await writeFile(mpath, JSON.stringify(fullManifest("example")));
+
+    await runLifecycle("install", undefined, mpath);
+    const handled = await runLifecycle("uninstall", undefined, mpath);
+    expect(handled).toBe(true);
+    await expect(access(join(binDir, "example"))).rejects.toThrow();
+  } finally {
+    if (prev === undefined) delete process.env.RKT_BIN_DIR;
+    else process.env.RKT_BIN_DIR = prev;
+  }
+});

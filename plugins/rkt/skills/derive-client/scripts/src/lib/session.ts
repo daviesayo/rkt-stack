@@ -416,11 +416,20 @@ const defaultLauncher: Launcher = async ({ site, entryUrl, statePath, wanted, ap
   }
 };
 
+function launcherFlagValue(name: string): string | undefined {
+  const i = process.argv.indexOf(`--${name}`);
+  return i === -1 ? undefined : process.argv[i + 1];
+}
+function launcherHasFlag(name: string): boolean {
+  return process.argv.includes(`--${name}`);
+}
+
 /**
- * Handle the lifecycle commands (login, logout, auth status) shared by every
- * generated client. Returns true when it handled the command, false to let the
- * caller fall through to endpoint/task dispatch. `manifestPath` is a plain
- * filesystem path (the caller resolves it), so no URL decoding is needed here.
+ * Handle the lifecycle commands (login, logout, auth status, install,
+ * uninstall) shared by every generated client. Returns true when it handled
+ * the command, false to let the caller fall through to endpoint/task
+ * dispatch. `manifestPath` is a plain filesystem path (the caller resolves
+ * it), so no URL decoding is needed here.
  */
 export async function runLifecycle(
   command: string,
@@ -428,6 +437,32 @@ export async function runLifecycle(
   manifestPath: string,
   opts: { launch?: Launcher } = {},
 ): Promise<boolean> {
+  if (command === "install") {
+    const manifest = validateManifest(JSON.parse(await readFile(manifestPath, "utf8")));
+    const cliPath = join(dirname(manifestPath), "cli.ts");
+    const res = await installLauncher({
+      cliPath,
+      defaultName: manifest.site,
+      name: launcherFlagValue("name"),
+      force: launcherHasFlag("force"),
+    });
+    console.error(`installed '${res.name}' -> ${res.target}`);
+    console.error(`run: ${res.name} <command>`);
+    if (res.pathHint) {
+      console.error("add this line to your shell profile to use it:");
+      console.error(res.pathHint);
+    }
+    return true;
+  }
+  if (command === "uninstall") {
+    const cliPath = join(dirname(manifestPath), "cli.ts");
+    const { removed, reinstall } = await uninstallLauncher({ cliPath });
+    if (removed.length > 0) console.error(`removed: ${removed.join(", ")}`);
+    else console.error("not installed (no launcher on your PATH points at this client).");
+    console.error("the derived client is untouched. reinstall with:");
+    console.error(reinstall);
+    return true;
+  }
   if (command !== "login" && command !== "logout" && !(command === "auth" && sub === "status")) {
     return false;
   }
