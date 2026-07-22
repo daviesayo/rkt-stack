@@ -1,6 +1,10 @@
 # Changelog
 
-## [Unreleased]
+## [0.9.0] - 2026-07-22
+
+Generic identity derivation for `derive-client`: `whoami`/`@me` now work for any
+client whose current-user endpoint is keyed by the operator's own id, not just
+id-free `/me` routes.
 
 ### Added
 
