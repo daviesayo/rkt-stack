@@ -10,16 +10,77 @@
 import { access, readFile, writeFile } from "node:fs/promises";
 import { commandNames } from "./lib/codegen";
 import { validateManifest } from "./lib/manifest";
-import type { ClientManifest } from "./lib/manifest-schema";
-import type { CommandsFile } from "./lib/commands-schema";
+import type { ClientManifest, JsonShape, ManifestEndpoint, ParamSpec } from "./lib/manifest-schema";
+import type { CommandsFile, IdentitySpec } from "./lib/commands-schema";
+
+const NAME_FIELDS = ["name", "full_name", "display_name", "first_name"];
+const ID_FIELDS = ["api_id", "id", "uuid", "user_id", "username"];
+const USER_PROP_NAMES = ["user", "profile", "account", "me", "viewer", "employee", "member"];
+
+function objProps(shape: JsonShape | undefined): Record<string, JsonShape> | null {
+  return shape && shape.type === "object" ? shape.properties : null;
+}
+function firstPresent(props: Record<string, JsonShape>, names: string[]): string | null {
+  const lower = new Map(Object.keys(props).map((k) => [k.toLowerCase(), k]));
+  for (const n of names) {
+    const hit = lower.get(n);
+    if (hit) return hit;
+  }
+  return null;
+}
+function findUserObject(shape: JsonShape): { userPath: string; props: Record<string, JsonShape> } | null {
+  const root = objProps(shape);
+  if (!root) return null;
+  const has = (props: Record<string, JsonShape>) =>
+    (firstPresent(props, NAME_FIELDS) || firstPresent(props, ["email"])) && firstPresent(props, ID_FIELDS);
+  if (has(root)) return { userPath: "", props: root };
+  for (const name of USER_PROP_NAMES) {
+    const key = firstPresent(root, [name]);
+    if (!key) continue;
+    const sub = objProps(root[key]);
+    if (sub && has(sub)) return { userPath: `${key}.`, props: sub };
+  }
+  return null;
+}
+function score(e: ManifestEndpoint, rootLevel: boolean): number {
+  const p = e.pathTemplate;
+  let s = 0;
+  if (/(^|\/)(me|self|current|viewer|whoami)(\/|$)/.test(p)) s += 3;
+  if (/(^|\/)(user|profile|account|employee|member)(\/|$)/.test(p)) s += 1;
+  if (!e.params.some((x) => x.required)) s += 2;
+  if (rootLevel) s += 1;
+  return s;
+}
+function detectIdentity(manifest: ClientManifest): IdentitySpec | undefined {
+  const cands = manifest.endpoints
+    .map((e) => ({ e, u: findUserObject(e.responseShape) }))
+    .filter((c): c is { e: ManifestEndpoint; u: { userPath: string; props: Record<string, JsonShape> } } => c.u !== null)
+    .map((c) => ({ ...c, s: score(c.e, c.u.userPath === "") }));
+  if (!cands.length) return undefined;
+  const reqCount = (e: ManifestEndpoint) => e.params.filter((p) => p.required).length;
+  cands.sort(
+    (a, b) => b.s - a.s || reqCount(a.e) - reqCount(b.e) || manifest.endpoints.indexOf(a.e) - manifest.endpoints.indexOf(b.e),
+  );
+  const w = cands[0];
+  const idKey = firstPresent(w.u.props, ID_FIELDS)!;
+  const nameKey = firstPresent(w.u.props, NAME_FIELDS);
+  const emailKey = firstPresent(w.u.props, ["email"]);
+  const display = [nameKey, emailKey].filter((k): k is string => k !== null).map((k) => `${w.u.userPath}${k}`);
+  const params: Record<string, string> = {};
+  for (const p of w.e.params as ParamSpec[]) if (p.required) params[p.name] = p.example ?? "";
+  return {
+    endpoint: w.e.id,
+    idField: `${w.u.userPath}${idKey}`,
+    display,
+    params: Object.keys(params).length ? params : undefined,
+  };
+}
 
 export function scaffoldCommands(manifest: ClientManifest): CommandsFile {
   const names = commandNames(manifest.endpoints);
-  const identityEp = manifest.endpoints.find(
-    (e) => /\.me$/.test(e.id) && e.params.every((p) => p.in !== "path"),
-  );
+  const identity = detectIdentity(manifest);
   const commands = manifest.endpoints
-    .filter((e) => e.id !== identityEp?.id)
+    .filter((e) => e.id !== identity?.endpoint)
     .map((e) => ({
       name: names.get(e.id)!,
       summary: `${e.method} ${e.pathTemplate}`,
@@ -28,12 +89,7 @@ export function scaffoldCommands(manifest: ClientManifest): CommandsFile {
       redact: [] as string[],
     }));
 
-  return {
-    schemaVersion: 1,
-    site: manifest.site,
-    identity: identityEp ? { endpoint: identityEp.id, idField: "id", display: [] } : undefined,
-    commands,
-  };
+  return { schemaVersion: 1, site: manifest.site, identity, commands };
 }
 
 function arg(name: string): string | undefined {
