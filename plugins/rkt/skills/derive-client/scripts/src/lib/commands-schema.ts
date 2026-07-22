@@ -4,6 +4,7 @@ export const COMMANDS_SCHEMA_VERSION = 1;
 
 export interface IdentitySpec {
   endpoint: string;
+  params?: Record<string, string>;
   idField: string;
   display: string[];
 }
@@ -53,6 +54,16 @@ function validateStringArray(arr: unknown, field: string): string[] {
     if (typeof arr[i] !== "string") fail(`${field}[${i}]`, "must be a string");
   }
   return arr as string[];
+}
+
+function validateStringMap(value: unknown, field: string): Record<string, string> {
+  if (!isPlainObject(value)) fail(field, "must be an object");
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(value)) {
+    if (typeof v !== "string") fail(`${field}.${k}`, "must be a string");
+    out[k] = v;
+  }
+  return out;
 }
 
 function validateParams(params: unknown, cmd: string): Record<string, string> {
@@ -118,7 +129,8 @@ export function validateCommandsFile(value: unknown): CommandsFile {
       fail("identity", "needs endpoint, idField, and display[]");
     }
     const display = validateStringArray(i.display, "identity.display");
-    identity = { endpoint: i.endpoint, idField: i.idField, display };
+    const params = i.params === undefined ? undefined : validateStringMap(i.params, "identity.params");
+    identity = { endpoint: i.endpoint, idField: i.idField, display, params };
   }
   return { schemaVersion: o.schemaVersion, site: o.site, identity, commands: o.commands.map(validateCommand) };
 }

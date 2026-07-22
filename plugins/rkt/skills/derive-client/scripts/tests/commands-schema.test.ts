@@ -128,3 +128,31 @@ test("assertResolvable rejects an identity endpoint that is not id-free", () => 
     ]),
   ).toThrow(/identity.*id-free|id-free/i);
 });
+
+test("identity carries a validated params map through validation", () => {
+  const cf = validateCommandsFile({
+    schemaVersion: 1, site: "s",
+    identity: { endpoint: "get.user.profile", params: { username: "usr-me" }, idField: "user.api_id", display: ["user.name"] },
+    commands: [],
+  });
+  expect(cf.identity?.params).toEqual({ username: "usr-me" });
+});
+
+test("identity.params rejects a non-string value under an identity.params label", () => {
+  expect(() =>
+    validateCommandsFile({
+      schemaVersion: 1, site: "s",
+      identity: { endpoint: "e", params: { username: 5 }, idField: "id", display: [] },
+      commands: [],
+    }),
+  ).toThrow(/identity\.params\.username/);
+});
+
+test("identity without params still validates (back-compat)", () => {
+  const cf = validateCommandsFile({
+    schemaVersion: 1, site: "s",
+    identity: { endpoint: "e", idField: "id", display: ["full_name"] },
+    commands: [],
+  });
+  expect(cf.identity?.params).toBeUndefined();
+});
