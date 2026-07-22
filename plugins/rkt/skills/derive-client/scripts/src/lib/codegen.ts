@@ -400,7 +400,7 @@ async function main() {
     spillPath = await writeSpill(manifest.site, command.command, redacted, new Date());
     console.error(\`hint: output capped at 50KB; full body: \${spillPath}\`);
   }
-  console.log(cap.text);
+  process.stdout.write(cap.text);
   console.error(footer({ exitCode: 0, startedAt: STARTED_AT, size: { bytes: Buffer.byteLength(redacted) }, spillPath }));
 }
 

@@ -242,8 +242,11 @@ test("endpoint CLI: missing path param prints help and exits 2", async () => {
   expect(stderr).toContain("missing required param");
 });
 
-test("endpoint CLI: success footer reports bytes", async () => {
-  const { stderr } = await runEndpointCli(["api-roster", "--id", "1"]);
+const ROSTER_STUB_BODY = JSON.stringify({ ok: true });
+
+test("endpoint CLI: success stdout is byte-identical and footer reports bytes", async () => {
+  const { stdout, stderr } = await runEndpointCli(["api-roster", "--id", "1"]);
+  expect(stdout).toBe(ROSTER_STUB_BODY);
   expect(stderr).toMatch(/\[exit:0 \| \d+(\.\d)?s \| \d+ bytes\]/);
 });
 
