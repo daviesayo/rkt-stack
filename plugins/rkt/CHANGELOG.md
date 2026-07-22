@@ -1,6 +1,10 @@
 # Changelog
 
-## [Unreleased]
+## [0.8.1] - 2026-07-22
+
+Follow-up fixes for `derive-client` from a real luma derivation: a discoverable
+`help` command on generated CLIs, and skill guidance that no longer lets the
+identity/`whoami` wiring be silently skipped.
 
 ### Added
 
