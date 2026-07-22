@@ -125,6 +125,23 @@ chmod +x "$DIR/cli.ts"
 exec bun "$DIR/cli.ts" install "$@"
 `;
 
+// Regeneration needs the plugin's generator, which is NOT shipped in the client
+// (clients stay dependency-free). This wrapper locates the generator itself:
+// an explicit RKT_PLUGIN_ROOT wins, else the newest installed rkt plugin under
+// the Claude plugin cache. Site-agnostic: it targets its own dir's client.json.
+const REGENERATE_SH = `#!/usr/bin/env bash
+set -euo pipefail
+DIR="$(cd "$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
+OUT="$(cd "$DIR/.." && pwd)"
+if [[ -n "\${RKT_PLUGIN_ROOT:-}" && -d "\${RKT_PLUGIN_ROOT}/skills/derive-client/scripts" ]]; then
+  SCRIPTS="\${RKT_PLUGIN_ROOT}/skills/derive-client/scripts"
+else
+  SCRIPTS="$(ls -d "$HOME"/.claude/plugins/cache/*/rkt/*.*.*/skills/derive-client/scripts 2>/dev/null | sort -V | tail -1)"
+fi
+[[ -n "\${SCRIPTS:-}" && -d "$SCRIPTS" ]] || { echo "cannot find the derive-client plugin; set RKT_PLUGIN_ROOT to the installed rkt plugin root" >&2; exit 1; }
+exec bun "$SCRIPTS/src/generate.ts" --manifest "$DIR/client.json" --out "$OUT"
+`;
+
 async function write(path: string, contents: string, written: string[]): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, contents);
@@ -198,6 +215,8 @@ export async function generateClient(
 
   await write(join(siteDir, "install.sh"), INSTALL_SH, written);
   await chmod(join(siteDir, "install.sh"), 0o755);
+  await write(join(siteDir, "regenerate.sh"), REGENERATE_SH, written);
+  await chmod(join(siteDir, "regenerate.sh"), 0o755);
   await chmod(join(siteDir, "cli.ts"), 0o755);
 
   return { siteDir, written };

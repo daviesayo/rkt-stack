@@ -78,6 +78,24 @@ Session lifecycle commands (available on every generated client):
 - `install [--name x]` / `uninstall` — PATH launcher management
 - `help` / `--help` / `-h` — usage
 
+## Regenerating a client
+
+Regeneration refreshes `cli.ts` + the shared `lib/` from the client's current
+`client.json`, preserves your `commands.json`, and prints a drift report. Each
+client ships a `regenerate.sh` that finds the newest installed plugin and does
+it for you:
+
+```bash
+bash ~/Documents/Repositories/rkt-clients/<site>/regenerate.sh
+```
+
+Set `RKT_PLUGIN_ROOT` to override which plugin build is used. Regeneration needs
+the plugin's generator (it is not shipped in the dependency-free client), which
+is why this is a wrapper into the plugin rather than a `cli.ts` subcommand. Run
+it after editing `commands.json`, or to pull the latest runtime into an older
+client. If you re-recorded the site, run `derive.ts` first to rebuild
+`client.json`, then regenerate.
+
 ## The command surface (`commands.json`)
 
 A user-owned file that shapes endpoints into tasks. Per command: `name`,
