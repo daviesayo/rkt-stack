@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import type { Scheduler, SchedulerResponse } from "../src/lib/scheduler";
 import { createCaller } from "../src/lib/runtime";
+import { CliError } from "../src/lib/overflow";
 import { REFRESH_TOKEN_KEY } from "../src/lib/secrets";
 
 const baseManifest = () => ({
@@ -116,6 +117,45 @@ test("fetchJson throws a clear error on a non-2xx", async () => {
   const sched = fakeScheduler([{ status: 500, body: "boom", headers: {} }], []);
   const caller = createCaller(baseManifest(), sched, null, { writeSecret: async () => {} });
   await expect(caller.fetchJson("get.data")).rejects.toThrow(/HTTP 500/);
+});
+
+test("missing endpoint throws CliError with regenerate hint", async () => {
+  const caller = createCaller(baseManifest(), fakeScheduler([], []), null);
+  const err = await caller.call("no.such.endpoint", {}).catch((e) => e);
+  expect(err).toBeInstanceOf(CliError);
+  expect((err as CliError).hint).toContain("regenerate");
+});
+
+test("fetchJson throws CliError exit 4 when 401 persists after renewal", async () => {
+  const sched = fakeScheduler(
+    [
+      { status: 401, body: "no", headers: {} },
+      { status: 401, body: "still no", headers: {} },
+    ],
+    [],
+  );
+  const caller = createCaller(
+    baseManifest(),
+    sched,
+    { authorization: "Bearer old", [REFRESH_TOKEN_KEY]: "r1" },
+    {
+      refreshViaOidc: async () => ({ accessToken: "new", refreshToken: "r2", expiresIn: null }),
+      reauthViaProfile: async () => null,
+      writeSecret: async () => {},
+    },
+  );
+  const err = await caller.fetchJson("get.data").catch((e) => e);
+  expect(err).toBeInstanceOf(CliError);
+  expect((err as CliError).exitCode).toBe(4);
+  expect((err as CliError).hint).toContain("login");
+});
+
+test("fetchJson throws CliError when response is not JSON", async () => {
+  const sched = fakeScheduler([{ status: 200, body: "not-json", headers: {} }], []);
+  const caller = createCaller(baseManifest(), sched, null);
+  const err = await caller.fetchJson("get.data").catch((e) => e);
+  expect(err).toBeInstanceOf(CliError);
+  expect((err as CliError).hint).toContain("dry-run");
 });
 
 test("fetchJson forwards params into the request URL", async () => {
