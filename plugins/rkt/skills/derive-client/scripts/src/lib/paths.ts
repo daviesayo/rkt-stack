@@ -70,3 +70,8 @@ export function recordingDir(site: string, timestamp: string): string {
 export function secretsFile(site: string): string {
   return `${rktRoot()}/secrets/${sanitizeSite(site)}.json`;
 }
+
+/** Spill directory for overflow output; confined under rktRoot like all artifacts. */
+export function outDir(site: string): string {
+  return `${rktRoot()}/out/${sanitizeSite(site)}`;
+}
