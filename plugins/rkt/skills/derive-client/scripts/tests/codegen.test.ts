@@ -363,3 +363,14 @@ test("task CLI treats help/--help/-h as an explicit help request that exits 0", 
   expect(src).toContain('name === "help"');
   expect(src).toContain("usage(0)");
 });
+
+test("task CLI emits fail(), footer wiring, per-command help, and --full", () => {
+  const src = emitCli(taskManifest as never, taskCommands as never);
+  expect(src).toContain("function fail(");
+  expect(src).toContain("commandHelp(");
+  expect(src).toContain("--full");
+  expect(src).toContain("footer(");
+  expect(src).toContain("finishRun(");
+  expect(src).toContain("suggest(");
+  expect(src).toContain("--help for params and an example");
+});

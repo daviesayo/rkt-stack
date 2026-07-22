@@ -351,7 +351,8 @@ import { fileURLToPath } from "node:url";
 import { validateManifest } from "../lib/manifest-schema";
 import { createScheduler } from "../lib/scheduler";
 import { createCaller } from "../lib/runtime";
-import { runCommand${whoamiImport} } from "../lib/command-runner";
+import { finishRun, runCommand${whoamiImport} } from "../lib/command-runner";
+import { CliError, footer } from "../lib/overflow";
 import type { CommandSpec, IdentitySpec } from "../lib/commands-schema";
 import { readSecrets } from "../lib/secrets";
 import { runLifecycle } from "../lib/session";
@@ -359,6 +360,7 @@ import { runLifecycle } from "../lib/session";
 const COMMANDS: CommandSpec[] = ${JSON.stringify(commands.commands, null, 2)};
 const IDENTITY: IdentitySpec | undefined = ${identityLiteral};
 const SITE = ${JSON.stringify(manifest.site)};
+const STARTED_AT = Date.now();
 
 function hasFlag(name: string): boolean {
   return process.argv.includes(\`--\${name}\`);
@@ -366,6 +368,55 @@ function hasFlag(name: string): boolean {
 function flagValue(name: string): string | undefined {
   const i = process.argv.indexOf(\`--\${name}\`);
   return i === -1 ? undefined : process.argv[i + 1];
+}
+
+function fail(message: string, hint: string, exitCode = 1): never {
+  console.error(message);
+  console.error(\`hint: \${hint}\`);
+  console.error(footer({ exitCode, startedAt: STARTED_AT, size: { bytes: 0 } }));
+  process.exit(exitCode);
+}
+
+/** Nearest command name: prefix match first, then smallest edit distance. */
+function suggest(name: string, names: string[]): string | undefined {
+  const pre = names.find((n) => n.startsWith(name) || name.startsWith(n));
+  if (pre) return pre;
+  let best: string | undefined, bestD = 4;
+  for (const n of names) {
+    const d = editDistance(name, n);
+    if (d < bestD) { bestD = d; best = n; }
+  }
+  return best;
+}
+function editDistance(a: string, b: string): number {
+  const dp = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+  for (let j = 0; j <= b.length; j++) dp[0][j] = j;
+  for (let i = 1; i <= a.length; i++)
+    for (let j = 1; j <= b.length; j++)
+      dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+  return dp[a.length][b.length];
+}
+
+function commandHelp(cmd: (typeof COMMANDS)[number]): string {
+  const lines: string[] = [];
+  lines.push(\`\${cmd.name} — \${cmd.summary}\`);
+  const params = Object.entries(cmd.call.params ?? {});
+  if (params.length) {
+    lines.push("params (override with --<name> <value>):");
+    for (const [k, v] of params) lines.push(\`  --\${k}   (default: \${v})\`);
+    lines.push("  token values: @me, @today, @today±<n><d|w|m|y>; literal @ as @@");
+  } else {
+    lines.push("params: none declared (nothing is overridable)");
+  }
+  if (cmd.output.kind === "table" && cmd.output.columns?.length) {
+    lines.push(\`columns: \${cmd.output.columns.join(", ")}\`);
+  }
+  lines.push("global flags: --json --raw --limit <n> --full --dry-run");
+  const example = params.length
+    ? \`\${cmd.name} \${params.map(([k]) => \`--\${k} <value>\`).join(" ")}\`
+    : cmd.name;
+  lines.push(\`example: bun cli.ts \${example}\`);
+  return lines.join("\\n");
 }
 
 function usage(exitCode = 1): never {
@@ -382,6 +433,8 @@ function usage(exitCode = 1): never {
   console.error("");
   console.error("commands:");
   for (const c of COMMANDS) console.error(\`  \${c.name.padEnd(22)} \${c.summary}\`);
+  console.error("");
+  console.error("run: bun cli.ts <command> --help for params and an example");
   process.exit(exitCode);
 }
 
@@ -398,16 +451,23 @@ async function main() {
   // Same pre-flight the manual and fallback CLIs carry: a clear "run login"
   // beats a confusing 401 when the site needs auth but nothing is stored.
   if (manifest.auth && !secret) {
-    console.error(\`no stored credential for "\${manifest.site}". Run: bun cli.ts login\`);
-    process.exit(1);
+    fail(\`no stored credential for "\${manifest.site}"\`, "run: bun cli.ts login", 4);
   }
   const scheduler = createScheduler();
   const caller = createCaller(manifest, scheduler, secret);
 ${whoamiDispatch}
   const cmd = COMMANDS.find((c) => c.name === name);
   if (!cmd) {
-    console.error(\`unknown command: \${name}\`);
-    usage();
+    const near = suggest(name, COMMANDS.map((c) => c.name));
+    fail(
+      \`unknown command: \${name}\${near ? \`. did you mean \${near}?\` : ""}\`,
+      "run: bun cli.ts help for the command list",
+      2,
+    );
+  }
+  if (hasFlag("help")) {
+    console.log(commandHelp(cmd));
+    return;
   }
 
   // Override declared params from --name value; global flags are never treated as params.
@@ -428,7 +488,7 @@ ${whoamiDispatch}
   // --json forces JSON output of the primary response (redaction still applies).
   const toRun = flags.json ? { ...cmd, output: { ...cmd.output, kind: "json" as const } } : cmd;
 
-  const out = await runCommand(toRun, {
+  const result = await runCommand(toRun, {
     manifest,
     site: SITE,
     caller,
@@ -437,13 +497,16 @@ ${whoamiDispatch}
     now: new Date(),
     overrideParams,
   });
-  console.log(out.rendered);
+  const done = await finishRun(SITE, cmd.name, result, { full: hasFlag("full"), now: new Date() });
+  process.stdout.write(done.stdout);
+  if (done.hint) console.error(\`hint: \${done.hint}\`);
+  console.error(footer({ exitCode: 0, startedAt: STARTED_AT, size: done.size, spillPath: done.spillPath }));
 }
 
 if (import.meta.main) {
   main().catch((err) => {
-    console.error((err as Error).message);
-    process.exit(1);
+    if (err instanceof CliError) fail(err.message, err.hint, err.exitCode);
+    fail((err as Error).message, "re-run with --dry-run to inspect the request", 1);
   });
 }
 `;

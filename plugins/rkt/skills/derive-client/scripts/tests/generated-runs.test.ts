@@ -22,6 +22,119 @@ async function getFreePort(): Promise<number> {
   });
 }
 
+type CliRun = { exitCode: number; stdout: string; stderr: string };
+
+async function setupTaskCli(shiftsBody: unknown) {
+  const port = await getFreePort();
+  const server = Bun.serve({
+    port,
+    hostname: "127.0.0.1",
+    fetch(req) {
+      const url = new URL(req.url);
+      if (url.pathname === "/me") return Response.json({ id: 5, first_name: "Ada", email: "ada@x.test" });
+      if (url.pathname === "/shifts") return Response.json(shiftsBody);
+      if (url.pathname.startsWith("/clients/")) return Response.json({ name: "Acme", secret: "x" });
+      return new Response("not found", { status: 404 });
+    },
+  });
+  const base = `http://127.0.0.1:${server.port}`;
+  const root = await mkdtemp(join(tmpdir(), "rkt-task-"));
+  const env = { ...process.env, NODE_ENV: "test", RKT_CLIENTS_ROOT: root };
+  const rec = join(root, "recording");
+  await mkdir(rec, { recursive: true });
+  const manifest = {
+    schemaVersion: 2,
+    site: "task",
+    baseUrl: base,
+    recordedAt: "",
+    harSha256: "",
+    userAgent: "UA",
+    clientHints: {},
+    auth: null,
+    authBundle: null,
+    refresh: null,
+    endpoints: [
+      {
+        id: "get.me",
+        method: "GET",
+        pathTemplate: "/me",
+        params: [],
+        responseShape: { type: "unknown" },
+        source: "xhr",
+        fragile: false,
+        selectors: null,
+        writeSemantics: null,
+      },
+      {
+        id: "get.shifts",
+        method: "GET",
+        pathTemplate: "/shifts",
+        params: [],
+        responseShape: { type: "unknown" },
+        source: "xhr",
+        fragile: false,
+        selectors: null,
+        writeSemantics: null,
+      },
+      {
+        id: "get.clients.id",
+        method: "GET",
+        pathTemplate: "/clients/{id}",
+        params: [{ name: "id", in: "path", type: "number" }],
+        responseShape: { type: "unknown" },
+        source: "xhr",
+        fragile: false,
+        selectors: null,
+        writeSemantics: null,
+      },
+    ],
+  };
+  await writeFile(join(rec, "client.json"), JSON.stringify(manifest));
+  const out = join(root, "clients");
+  await generateClient(join(rec, "client.json"), out);
+  const commands = {
+    schemaVersion: 1,
+    site: "task",
+    identity: { endpoint: "get.me", idField: "id", display: ["first_name", "email"] },
+    commands: [
+      {
+        name: "shifts",
+        summary: "List shifts",
+        call: { endpoint: "get.shifts", params: {} },
+        join: [{ key: "client_id", endpoint: "get.clients.id", select: ["name"], as: "client", onError: "blank" }],
+        output: { kind: "table", columns: ["date", "client.name", "address"], sort: "date" },
+        redact: ["address"],
+      },
+    ],
+  };
+  await writeFile(join(out, "task", "commands.json"), JSON.stringify(commands));
+  await generateClient(join(rec, "client.json"), out);
+  const cli = join(out, "task", "cli.ts");
+  const runCli = async (args: string[]): Promise<CliRun> => {
+    const proc = Bun.spawn(["bun", cli, ...args], { stdout: "pipe", stderr: "pipe", env });
+    const [stdout, stderr] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+    ]);
+    return { exitCode: await proc.exited, stdout, stderr };
+  };
+  const cleanup = async () => {
+    server.stop(true);
+    await rm(root, { recursive: true, force: true });
+  };
+  return { server, root, cli, env, runCli, cleanup };
+}
+
+const SMALL_SHIFTS = [
+  { date: "d1", client_id: 9, address: "1 St" },
+  { date: "d2", client_id: 9, address: "2 Ave" },
+];
+const BIG_SHIFTS = Array.from({ length: 500 }, (_, i) => ({
+  date: `d${String(i).padStart(3, "0")}`,
+  client_id: 9,
+  address: `${i} St`,
+}));
+
 let workRoot: string;
 let outRoot: string;
 
@@ -100,128 +213,91 @@ test("an unknown command exits non-zero and lists the valid ones", async () => {
 });
 
 test("a generated task CLI runs commands, joins, redacts, and answers whoami", async () => {
-  const port = await getFreePort();
-  const server = Bun.serve({
-    port,
-    hostname: "127.0.0.1",
-    fetch(req) {
-      const url = new URL(req.url);
-      if (url.pathname === "/me") return Response.json({ id: 5, first_name: "Ada", email: "ada@x.test" });
-      if (url.pathname === "/shifts")
-        return Response.json([
-          { date: "d1", client_id: 9, address: "1 St" },
-          { date: "d2", client_id: 9, address: "2 Ave" },
-        ]);
-      if (url.pathname.startsWith("/clients/")) return Response.json({ name: "Acme", secret: "x" });
-      return new Response("not found", { status: 404 });
-    },
-  });
-  const base = `http://127.0.0.1:${server.port}`;
-
-  const root = await mkdtemp(join(tmpdir(), "rkt-task-"));
-  // Every spawned CLI inherits these so its identity cache / secrets stay in the sandbox.
-  const env = { ...process.env, NODE_ENV: "test", RKT_CLIENTS_ROOT: root };
+  const { runCli, cleanup } = await setupTaskCli(SMALL_SHIFTS);
   try {
-    const rec = join(root, "recording");
-    await mkdir(rec, { recursive: true });
-    const manifest = {
-      schemaVersion: 2,
-      site: "task",
-      baseUrl: base,
-      recordedAt: "",
-      harSha256: "",
-      userAgent: "UA",
-      clientHints: {},
-      auth: null,
-      authBundle: null,
-      refresh: null,
-      endpoints: [
-        {
-          id: "get.me",
-          method: "GET",
-          pathTemplate: "/me",
-          params: [],
-          responseShape: { type: "unknown" },
-          source: "xhr",
-          fragile: false,
-          selectors: null,
-          writeSemantics: null,
-        },
-        {
-          id: "get.shifts",
-          method: "GET",
-          pathTemplate: "/shifts",
-          params: [],
-          responseShape: { type: "unknown" },
-          source: "xhr",
-          fragile: false,
-          selectors: null,
-          writeSemantics: null,
-        },
-        {
-          id: "get.clients.id",
-          method: "GET",
-          pathTemplate: "/clients/{id}",
-          params: [{ name: "id", in: "path", type: "number" }],
-          responseShape: { type: "unknown" },
-          source: "xhr",
-          fragile: false,
-          selectors: null,
-          writeSemantics: null,
-        },
-      ],
-    };
-    await writeFile(join(rec, "client.json"), JSON.stringify(manifest));
-    const out = join(root, "clients");
-    await generateClient(join(rec, "client.json"), out); // first pass creates the site dir
-    const commands = {
-      schemaVersion: 1,
-      site: "task",
-      identity: { endpoint: "get.me", idField: "id", display: ["first_name", "email"] },
-      commands: [
-        {
-          name: "shifts",
-          summary: "List shifts",
-          call: { endpoint: "get.shifts", params: {} },
-          join: [{ key: "client_id", endpoint: "get.clients.id", select: ["name"], as: "client", onError: "blank" }],
-          output: { kind: "table", columns: ["date", "client.name", "address"], sort: "date" },
-          redact: ["address"],
-        },
-      ],
-    };
-    await writeFile(join(out, "task", "commands.json"), JSON.stringify(commands));
-    await generateClient(join(rec, "client.json"), out); // second pass emits the task CLI
+    const help = await runCli([]);
+    expect(help.stderr).toContain("shifts");
+    expect(help.stderr).toContain("List shifts");
+    expect(help.stderr).toContain("whoami");
 
-    const cli = join(out, "task", "cli.ts");
+    const who = await runCli(["whoami"]);
+    expect(who.exitCode).toBe(0);
+    expect(who.stdout.trim()).toBe("Ada (ada@x.test)");
 
-    const help = Bun.spawn(["bun", cli], { stdout: "pipe", stderr: "pipe", env });
-    const helpText = await new Response(help.stderr).text();
-    await help.exited;
-    expect(helpText).toContain("shifts");
-    expect(helpText).toContain("List shifts");
-    expect(helpText).toContain("whoami");
+    const run = await runCli(["shifts"]);
+    expect(run.exitCode).toBe(0);
+    expect(run.stdout).toContain("Acme");
+    expect(run.stdout).toContain("[REDACTED]");
+    expect(run.stdout.indexOf("d1")).toBeLessThan(run.stdout.indexOf("d2"));
 
-    const who = Bun.spawn(["bun", cli, "whoami"], { stdout: "pipe", stderr: "pipe", env });
-    const whoText = await new Response(who.stdout).text();
-    expect(await who.exited).toBe(0);
-    expect(whoText.trim()).toBe("Ada (ada@x.test)");
-
-    const run = Bun.spawn(["bun", cli, "shifts"], { stdout: "pipe", stderr: "pipe", env });
-    const runText = await new Response(run.stdout).text();
-    expect(await run.exited).toBe(0);
-    expect(runText).toContain("Acme"); // joined
-    expect(runText).toContain("[REDACTED]"); // address redacted by default
-    expect(runText.indexOf("d1")).toBeLessThan(runText.indexOf("d2")); // sorted
-
-    const raw = Bun.spawn(["bun", cli, "shifts", "--raw"], { stdout: "pipe", stderr: "pipe", env });
-    const rawText = await new Response(raw.stdout).text();
-    await raw.exited;
-    expect(rawText).toContain("1 St"); // --raw shows the address
+    const raw = await runCli(["shifts", "--raw"]);
+    expect(raw.stdout).toContain("1 St");
   } finally {
-    server.stop(true);
-    await rm(root, { recursive: true, force: true });
+    await cleanup();
   }
 }, 20000);
+
+test("unknown command suggests nearest and exits 2", async () => {
+  const { runCli, cleanup } = await setupTaskCli(SMALL_SHIFTS);
+  try {
+    const { exitCode, stderr } = await runCli(["shifs"]);
+    expect(exitCode).toBe(2);
+    expect(stderr).toContain("did you mean");
+    expect(stderr).toMatch(/\[exit:2 \|/);
+  } finally {
+    await cleanup();
+  }
+});
+
+test("<command> --help prints params, columns, example", async () => {
+  const { runCli, cleanup } = await setupTaskCli(SMALL_SHIFTS);
+  try {
+    const { exitCode, stdout } = await runCli(["shifts", "--help"]);
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("params");
+    expect(stdout).toContain("example: bun cli.ts");
+  } finally {
+    await cleanup();
+  }
+});
+
+test("success prints footer on stderr, stdout stays pure", async () => {
+  const { runCli, cleanup } = await setupTaskCli(SMALL_SHIFTS);
+  try {
+    const { exitCode, stdout, stderr } = await runCli(["shifts", "--json"]);
+    expect(exitCode).toBe(0);
+    expect(() => JSON.parse(stdout)).not.toThrow();
+    expect(stderr).toMatch(/\[exit:0 \| \d+(\.\d)?s \| \d+ rows\]/);
+  } finally {
+    await cleanup();
+  }
+});
+
+test("oversize response caps stdout and spills redacted full payload", async () => {
+  const { runCli, cleanup } = await setupTaskCli(BIG_SHIFTS);
+  try {
+    const { exitCode, stdout, stderr } = await runCli(["shifts"]);
+    expect(exitCode).toBe(0);
+    expect(stderr).toContain("full: ");
+    const spill = stderr.match(/full: (\S+)\]/)![1];
+    const spilled = await Bun.file(spill).text();
+    expect(JSON.parse(spilled).length).toBe(500);
+    expect(stdout.split("\n").length).toBeLessThanOrEqual(201);
+  } finally {
+    await cleanup();
+  }
+});
+
+test("--full disables cap and spill", async () => {
+  const { runCli, cleanup } = await setupTaskCli(BIG_SHIFTS);
+  try {
+    const { stdout, stderr } = await runCli(["shifts", "--full", "--json"]);
+    expect(JSON.parse(stdout).length).toBe(500);
+    expect(stderr).not.toContain("full: ");
+  } finally {
+    await cleanup();
+  }
+});
 
 test("the generated client typechecks on its own", async () => {
   // The emitted tsconfig sets types: ["bun"], so @types/bun must be installed
