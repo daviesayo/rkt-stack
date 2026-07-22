@@ -173,6 +173,13 @@ const COMMANDS: CommandSpec[] = ${JSON.stringify(commands, null, 2)};
 ${responseFor}function usage(): never {
   console.error("usage: bun cli.ts <command> [--param value ...] [--dry-run]");
   console.error("");
+  console.error("session:");
+  console.error("  login                        sign in and save the session");
+  console.error("  logout                       remove the saved session and secrets");
+  console.error("  auth status                  show token TTL and session age");
+  console.error("  install [--name <x>]         symlink this CLI onto your PATH");
+  console.error("  uninstall                    remove the PATH launcher (keeps the client)");
+  console.error("");
   console.error("commands:");
   for (const c of COMMANDS) {
     const params = c.params.map((p) => \`--\${p.name} <\${p.type}>\`).join(" ");
@@ -367,6 +374,8 @@ function usage(): never {
   console.error("  logout                   remove the saved session and secrets");
   console.error("  auth status              show token TTL and session age");
   if (IDENTITY) console.error("  whoami                   show the signed-in user");
+  console.error("  install [--name <x>]     symlink this CLI onto your PATH");
+  console.error("  uninstall                remove the PATH launcher (keeps the client)");
   console.error("");
   console.error("commands:");
   for (const c of COMMANDS) console.error(\`  \${c.name.padEnd(22)} \${c.summary}\`);

@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { commandNames, emitCli, emitType, emitTypes, typeName } from "../src/lib/codegen";
 import type { ClientManifest, ManifestEndpoint } from "../src/lib/manifest";
+import type { CommandsFile } from "../src/lib/commands-schema";
 
 function ep(over: Partial<ManifestEndpoint>): ManifestEndpoint {
   return {
@@ -307,4 +308,31 @@ test("emitted CLI starts with a bun shebang so a symlink can execute it", () => 
 test("the types file is not executable and carries no shebang", () => {
   const src = emitTypes(manifestWith([ep({})]));
   expect(src.startsWith("#!")).toBe(false);
+});
+
+test("endpoint CLI help lists the session lifecycle commands including install/uninstall", () => {
+  const src = emitCli(manifestWith([ep({})]));
+  expect(src).toContain('console.error("session:")');
+  expect(src).toContain("login");
+  expect(src).toContain("install [--name <x>]");
+  expect(src).toContain("uninstall");
+});
+
+test("task CLI help lists install and uninstall in its session block", () => {
+  const commands: CommandsFile = {
+    schemaVersion: 1,
+    site: "example",
+    commands: [
+      {
+        name: "roster",
+        summary: "List roster entries",
+        call: { endpoint: "get.api.roster.id", params: {} },
+        output: { kind: "json" },
+        redact: [],
+      },
+    ],
+  };
+  const src = emitCli(manifestWith([ep({})]), commands);
+  expect(src).toContain("install [--name <x>]");
+  expect(src).toContain("uninstall");
 });
