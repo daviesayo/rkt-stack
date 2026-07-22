@@ -353,6 +353,22 @@ test("oversize response caps stdout and spills redacted full payload", async () 
   }
 });
 
+test("oversize --json output is capped but still valid JSON", async () => {
+  const { runCli, cleanup } = await setupTaskCli(BIG_SHIFTS);
+  try {
+    const { exitCode, stdout, stderr } = await runCli(["shifts", "--json"]);
+    expect(exitCode).toBe(0);
+    expect(stderr).toContain("full: ");
+    const parsed = JSON.parse(stdout); // must not throw: agents pipe this to jq
+    expect(Array.isArray(parsed)).toBe(true);
+    expect(parsed.length).toBe(200);
+    // Footer reports the pre-cap total so the agent knows data was withheld.
+    expect(stderr).toMatch(/\| 500 rows \|/);
+  } finally {
+    await cleanup();
+  }
+});
+
 test("--full disables cap and spill", async () => {
   const { runCli, cleanup } = await setupTaskCli(BIG_SHIFTS);
   try {

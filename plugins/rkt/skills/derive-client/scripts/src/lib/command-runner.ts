@@ -24,6 +24,13 @@ export interface RunResult {
   rendered: string;
   rowCount?: number;
   fullPayload: string;
+  /**
+   * Re-render the first n rows in the same output mode. Provided when the
+   * result is row-shaped; finishRun uses it so a row-capped result is
+   * re-rendered from data (valid JSON / consistent table) instead of sliced
+   * as text.
+   */
+  renderCapped?: (n: number) => string;
 }
 
 export interface RunOpts {
@@ -145,7 +152,13 @@ export async function runCommand(cmd: CommandSpec, opts: RunOpts): Promise<RunRe
     data = maskSecretValues(data, secrets);
     const rendered = mask(renderJson(data, { redact, raw: flags.raw }));
     const rowCount = Array.isArray(data) ? (data as unknown[]).length : undefined;
-    return { rendered, rowCount, fullPayload: rendered };
+    // Line-slicing pretty-printed JSON would emit an unparseable fragment;
+    // re-render a sliced array instead so capped stdout stays valid JSON.
+    const renderCapped =
+      rowCount !== undefined
+        ? (n: number) => mask(renderJson((data as unknown[]).slice(0, n), { redact, raw: flags.raw }))
+        : undefined;
+    return { rendered, rowCount, fullPayload: rendered, renderCapped };
   }
 
   let rows = extractRows(parsed, cmd.output.rows);
@@ -164,7 +177,9 @@ export async function runCommand(cmd: CommandSpec, opts: RunOpts): Promise<RunRe
   const rendered = mask(renderTable(rows, cmd.output.columns ?? [], { redact, raw: flags.raw }));
   const maskedRows = maskSecretValues(rows, secrets);
   const fullPayload = mask(renderJson(maskedRows, { redact, raw: flags.raw }));
-  return { rendered, rowCount: rows.length, fullPayload };
+  const renderCapped = (n: number) =>
+    mask(renderTable(rows.slice(0, n), cmd.output.columns ?? [], { redact, raw: flags.raw }));
+  return { rendered, rowCount: rows.length, fullPayload, renderCapped };
 }
 
 /** Apply overflow caps to a finished run; spill the full payload when capped. */
@@ -188,9 +203,11 @@ export async function finishRun(
   let text = result.rendered;
   let capped = false;
   if (result.rowCount !== undefined && result.rowCount > MAX_ROWS) {
-    // Row-capping rendered text: keep the first MAX_ROWS + header line for tables.
-    const lines = text.split("\n");
-    text = lines.slice(0, MAX_ROWS + 1).join("\n");
+    // Re-render from data when possible: slicing pretty-printed JSON by line
+    // emits an unparseable fragment. Text-slicing is only a last resort.
+    text = result.renderCapped
+      ? result.renderCapped(MAX_ROWS)
+      : text.split("\n").slice(0, MAX_ROWS + 1).join("\n");
     capped = true;
   }
   const byteCap = capText(text, MAX_BYTES);
