@@ -1,6 +1,8 @@
 # Changelog
 
-## [Unreleased]
+## [0.9.1] - 2026-07-22
+
+Ergonomic follow-up to 0.9.0: regenerating a derived client is now one command.
 
 ### Added
 
