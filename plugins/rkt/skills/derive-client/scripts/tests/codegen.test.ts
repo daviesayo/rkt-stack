@@ -282,3 +282,29 @@ test("emitCli without commands keeps the endpoint-per-command CLI", () => {
   expect(src).toContain("COMMANDS");
   expect(src).not.toContain("runCommand");
 });
+
+function manifestWith(endpoints: ManifestEndpoint[]): ClientManifest {
+  return {
+    schemaVersion: 2,
+    site: "example",
+    baseUrl: "https://x.test",
+    recordedAt: "2026-07-20T12:00:00.000Z",
+    harSha256: "deadbeef",
+    userAgent: "Mozilla/5.0 Chrome/141.0.0.0",
+    clientHints: {},
+    auth: null,
+    authBundle: null,
+    refresh: null,
+    endpoints,
+  } as ClientManifest;
+}
+
+test("emitted CLI starts with a bun shebang so a symlink can execute it", () => {
+  const src = emitCli(manifestWith([ep({})]));
+  expect(src.startsWith("#!/usr/bin/env bun\n")).toBe(true);
+});
+
+test("the types file is not executable and carries no shebang", () => {
+  const src = emitTypes(manifestWith([ep({})]));
+  expect(src.startsWith("#!")).toBe(false);
+});

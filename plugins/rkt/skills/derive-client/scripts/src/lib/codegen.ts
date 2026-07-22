@@ -110,8 +110,8 @@ export function emitCli(manifest: ClientManifest, commands?: CommandsFile): stri
       );
     }
   }
-  if (commands) return emitTaskCli(manifest, commands);
-  return emitEndpointCli(manifest);
+  const body = commands ? emitTaskCli(manifest, commands) : emitEndpointCli(manifest);
+  return `#!/usr/bin/env bun\n${body}`;
 }
 
 function emitEndpointCli(manifest: ClientManifest): string {
