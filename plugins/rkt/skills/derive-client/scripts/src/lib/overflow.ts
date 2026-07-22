@@ -41,6 +41,8 @@ export async function writeSpill(
 ): Promise<string> {
   const dir = outDir(site);
   await mkdir(dir, { recursive: true, mode: 0o700 });
+  // Same command in the same millisecond overwrites its spill; acceptable —
+  // the spill is a convenience copy of the last run, not a durable log.
   const ts = now.toISOString().replace(/[:.]/g, "-");
   const path = `${dir}/${ts}-${command}.json`;
   await writeFile(path, payload, { mode: 0o600 });

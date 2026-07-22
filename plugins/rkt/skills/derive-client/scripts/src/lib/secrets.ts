@@ -133,6 +133,14 @@ export function redact(text: string, secret: string | null): string {
   if (bare !== secret && bare.length > 0) {
     out = out.split(bare).join(REDACTED);
   }
+  // Raw JSON bodies carry the secret escaped (ab"cd appears as ab\"cd), which
+  // literal substring matching misses. Mask the escaped forms too.
+  for (const v of [secret, bare]) {
+    const escaped = JSON.stringify(v).slice(1, -1);
+    if (escaped !== v && escaped.length > 0) {
+      out = out.split(escaped).join(REDACTED);
+    }
+  }
   return out;
 }
 
