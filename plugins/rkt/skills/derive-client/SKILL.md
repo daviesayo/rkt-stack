@@ -372,6 +372,12 @@ changes. Regeneration:
   regeneration stops until you fix it) and `new` (endpoints no command uses
   yet). Edit `commands.json` in response.
 
+The agent runs `generate.ts` directly (Step 9). For the user's own later
+regenerations, each generated client also ships a **`regenerate.sh`**:
+`bash "$OUT/<site>/regenerate.sh"` locates the newest installed plugin (or honors
+`RKT_PLUGIN_ROOT`) and regenerates that client. Point the user at it instead of a
+raw `bun generate.ts` command.
+
 Use the task CLI:
 
 ```bash

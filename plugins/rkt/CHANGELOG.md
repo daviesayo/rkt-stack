@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **derive-client: `regenerate.sh` per client.** Generated clients ship a
+  `regenerate.sh` alongside `install.sh`; `bash <client>/regenerate.sh` locates
+  the newest installed plugin (or honors `RKT_PLUGIN_ROOT`) and regenerates that
+  client, so refreshing `cli.ts` + the runtime no longer needs a hand-typed
+  `bun generate.ts` command.
+
 ## [0.9.0] - 2026-07-22
 
 Generic identity derivation for `derive-client`: `whoami`/`@me` now work for any

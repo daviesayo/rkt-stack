@@ -245,3 +245,20 @@ test("emits an executable install.sh and an executable cli.ts", async () => {
   expect(shBody).toContain('exec bun "$DIR/cli.ts" install');
   expect(shBody).not.toContain(MANIFEST.site); // stays site-agnostic
 });
+
+test("emits an executable, site-agnostic regenerate.sh that finds the plugin and regenerates this client", async () => {
+  const out = await mkdtemp(join(tmpdir(), "rkt-gen-"));
+  const mPath = join(out, "client.json");
+  await writeFile(mPath, JSON.stringify(MANIFEST));
+  const { siteDir } = await generateClient(mPath, out);
+
+  const regenSh = join(siteDir, "regenerate.sh");
+  expect((await stat(regenSh)).mode & 0o111).not.toBe(0); // executable
+
+  const body = await readFile(regenSh, "utf8");
+  expect(body).toContain("src/generate.ts"); // runs the generator
+  expect(body).toContain('--manifest "$DIR/client.json"'); // this client's manifest
+  expect(body).toContain("RKT_PLUGIN_ROOT"); // env override honored
+  expect(body).toContain("plugins/cache"); // globs the newest installed plugin
+  expect(body).not.toContain(MANIFEST.site); // stays site-agnostic
+});
