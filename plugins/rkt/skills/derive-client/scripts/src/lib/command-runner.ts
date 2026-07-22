@@ -8,7 +8,7 @@ import { getPath, renderJson, renderTable, sortRows } from "./render";
 
 export interface RunnerCaller {
   call(endpointId: string, params: Record<string, string>): Promise<{ status: number; body: string }>;
-  fetchJson(endpointId: string): Promise<unknown>;
+  fetchJson(endpointId: string, params?: Record<string, string>): Promise<unknown>;
   /** Credential bundle for always-on output masking; mirrors runtime Caller.secret. */
   readonly secret?: Record<string, string> | null;
 }
@@ -43,7 +43,7 @@ export function makeResolveMe(
         new Error("@me needs an identity block in commands.json; this client has none"),
       );
     }
-    return (memo ??= resolveIdentity(site, identity, (id) => caller.fetchJson(id)).then((r) => r.id));
+    return (memo ??= resolveIdentity(site, identity, (id, p) => caller.fetchJson(id, p)).then((r) => r.id));
   };
 }
 
@@ -53,7 +53,7 @@ export async function runWhoami(
   caller: RunnerCaller,
 ): Promise<string> {
   if (!identity) throw new Error("this client has no identity endpoint; whoami is unavailable");
-  const r = await resolveIdentity(site, identity, (id) => caller.fetchJson(id));
+  const r = await resolveIdentity(site, identity, (id, p) => caller.fetchJson(id, p));
   return whoamiLine(r.display, identity.display);
 }
 

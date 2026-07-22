@@ -10,7 +10,7 @@ interface IdentityCache {
   label: string;
 }
 
-export type FetchEndpoint = (endpointId: string) => Promise<unknown>;
+export type FetchEndpoint = (endpointId: string, params?: Record<string, string>) => Promise<unknown>;
 
 export async function resolveIdentity(
   site: string,
@@ -31,7 +31,7 @@ export async function resolveIdentity(
     }
   }
 
-  const body = await fetchEndpoint(spec.endpoint);
+  const body = await fetchEndpoint(spec.endpoint, spec.params ?? {});
   const idRaw = getPath(body, spec.idField);
   if (idRaw == null) {
     throw new Error(`identity endpoint returned no idField '${spec.idField}'`);

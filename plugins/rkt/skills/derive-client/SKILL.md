@@ -163,11 +163,14 @@ echo '{"kind":"goto","url":"https://<site>/section"}' >> "$CMDS"
 
 The recorder paces itself between actions; do not add your own tight loops.
 
-**Capture identity too.** `whoami` and the `@me` token are only possible if the
-recording includes a call that returns the signed-in user. So while signed in,
-also visit the account, profile, or settings page (or trigger whatever loads the
-current user), so a `/me`-style endpoint gets recorded. If you skip this, nothing
-downstream can wire `whoami`, no matter how the command surface is authored.
+**Capture identity deterministically.** `whoami` and `@me` need a call that
+returns the signed-in user. Open **your own** profile or account through the
+app's own UI (its avatar or account menu), never by typing a guessed
+`/settings`-style URL — a wrong URL can land on a stranger's public profile and
+poison the captured id. If the app routes profiles by id (URL like
+`/user/<id>`, `/u/<id>`, `/employees/<id>`), that `<id>` in the URL is **your**
+id; the current-user endpoint fires on that page and records your id as its
+param example. If you skip this, nothing downstream can wire `whoami`.
 
 ## Step 6: Close and derive
 
@@ -324,17 +327,16 @@ SITE=<site-slug>
 
 Then edit `commands.json`:
 
-- **`identity`** wires `whoami` and the `@me` token, so wire it whenever you can,
-  do not treat it as optional. It names an **id-free** `/me`-style endpoint that
-  returns the signed-in user (needs no path param), its `idField` (the field
-  holding the user's id, what `@me` resolves to), and `display` (fields to print
-  for `whoami`, e.g. `["name","email"]`). The scaffolder pre-fills a guess, but it
-  just takes the first id-free endpoint, which is often NOT a user route, so open
-  `client.json`, confirm the endpoint actually returns the current user, and fix
-  or replace it. Only if no user endpoint was captured are `@me` and `whoami`
-  unavailable: in that case say so to the user and offer to re-record with the
-  account/profile page visited (Step 5). Do not silently drop the `identity`
-  block.
+- **`identity`** wires `whoami` and `@me`; wire it whenever a current-user
+  endpoint exists. It names the endpoint, an `idField` (dotted path to the
+  user's id in the response, e.g. `user.api_id`), a `display` list (dotted
+  paths to show, e.g. `["user.name"]`), and, when the endpoint needs your own
+  id, a `params` map supplying it (e.g. `{"username": "usr-<you>"}`). The
+  scaffolder auto-detects the endpoint by response shape and seeds `params`
+  from the recorded example, but that example is only correct if you recorded
+  **your own** profile: confirm the seeded id is yours (matches your profile
+  URL), not a placeholder or a stranger's. Every required param of the identity
+  endpoint must appear in `params` or generation fails.
 - Each **command** has a `name`, a `summary`, a `call` (endpoint id + params),
   optional `join`s, an `output` (`table` with `columns`/`sort`/`rows`, or
   `json`), and a `redact` list.
@@ -384,6 +386,12 @@ bun "$OUT/<site>/cli.ts" login           # re-authenticate in a browser, no re-r
 
 Redaction is on by default because the data is real personal information. Only
 `--raw` disables it.
+
+**Verify identity (required when an identity block exists).** Run
+`bun "$OUT/<site>/cli.ts" whoami` and confirm it prints the operator's real
+name/email. If it prints a stranger, a blank, or an error, the identity is
+wrong: fix `identity.params` (or re-record visiting your own profile) and
+regenerate. Do not report identity as working without this check.
 
 ## Artifacts
 

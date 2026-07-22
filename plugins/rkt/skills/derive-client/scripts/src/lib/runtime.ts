@@ -14,7 +14,7 @@ export interface CallerDeps {
 
 export interface Caller {
   call(endpointId: string, params: Record<string, string>): Promise<{ status: number; body: string }>;
-  fetchJson(endpointId: string): Promise<unknown>;
+  fetchJson(endpointId: string, params?: Record<string, string>): Promise<unknown>;
   readonly secret: Record<string, string> | null;
 }
 
@@ -90,8 +90,8 @@ export function createCaller(
     return res;
   }
 
-  async function fetchJson(endpointId: string): Promise<unknown> {
-    const { status, body } = await call(endpointId, {});
+  async function fetchJson(endpointId: string, params?: Record<string, string>): Promise<unknown> {
+    const { status, body } = await call(endpointId, params ?? {});
     if (status >= 400) throw new Error(`endpoint ${endpointId} returned HTTP ${status}`);
     try {
       return JSON.parse(body);

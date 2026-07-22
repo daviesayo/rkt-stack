@@ -80,6 +80,7 @@ const ep = (id: string, pathParams: number) => ({
     name: i === 0 ? "id" : `id${i + 1}`,
     in: "path" as const,
     type: "string" as const,
+    required: true,
   })),
 });
 
@@ -118,13 +119,72 @@ test("assertResolvable rejects a join lookup that is not single-path-param", () 
   ).toThrow(/exactly one path param/i);
 });
 
-test("assertResolvable rejects an identity endpoint that is not id-free", () => {
+test("assertResolvable rejects an identity endpoint missing a required path param in params", () => {
   const cf = validateCommandsFile(valid()); // identity -> get.api.v1.employees.me
   expect(() =>
     assertResolvable(cf, [
-      ep("get.api.v1.employees.me", 1), // a path param means it is not the /me-style id-free route
+      ep("get.api.v1.employees.me", 1), // required path param must be pinned in identity.params
       ep("get.scheduling.getShifts", 0),
       ep("get.api.v1.clients.id", 1),
     ]),
-  ).toThrow(/identity.*id-free|id-free/i);
+  ).toThrow(/identity\.params/);
+});
+
+test("assertResolvable accepts an identity endpoint whose required query param is supplied", () => {
+  const cf = validateCommandsFile({
+    schemaVersion: 1, site: "s",
+    identity: { endpoint: "get.user.profile", params: { username: "usr-me" }, idField: "user.api_id", display: ["user.name"] },
+    commands: [],
+  });
+  const eps = [{ id: "get.user.profile", params: [{ name: "username", in: "query", type: "string", required: true }] }];
+  expect(() => assertResolvable(cf, eps as never)).not.toThrow();
+});
+
+test("assertResolvable rejects when a required identity param is missing", () => {
+  const cf = validateCommandsFile({
+    schemaVersion: 1, site: "s",
+    identity: { endpoint: "get.user.profile", idField: "user.api_id", display: ["user.name"] },
+    commands: [],
+  });
+  const eps = [{ id: "get.user.profile", params: [{ name: "username", in: "query", type: "string", required: true }] }];
+  expect(() => assertResolvable(cf, eps as never)).toThrow(/username/);
+  expect(() => assertResolvable(cf, eps as never)).toThrow(/identity\.params/);
+});
+
+test("assertResolvable accepts a param-free identity endpoint (back-compat)", () => {
+  const cf = validateCommandsFile({
+    schemaVersion: 1, site: "s",
+    identity: { endpoint: "get.api.v1.employees.924", idField: "id", display: ["full_name"] },
+    commands: [],
+  });
+  const eps = [{ id: "get.api.v1.employees.924", params: [] }];
+  expect(() => assertResolvable(cf, eps as never)).not.toThrow();
+});
+
+test("identity carries a validated params map through validation", () => {
+  const cf = validateCommandsFile({
+    schemaVersion: 1, site: "s",
+    identity: { endpoint: "get.user.profile", params: { username: "usr-me" }, idField: "user.api_id", display: ["user.name"] },
+    commands: [],
+  });
+  expect(cf.identity?.params).toEqual({ username: "usr-me" });
+});
+
+test("identity.params rejects a non-string value under an identity.params label", () => {
+  expect(() =>
+    validateCommandsFile({
+      schemaVersion: 1, site: "s",
+      identity: { endpoint: "e", params: { username: 5 }, idField: "id", display: [] },
+      commands: [],
+    }),
+  ).toThrow(/identity\.params\.username/);
+});
+
+test("identity without params still validates (back-compat)", () => {
+  const cf = validateCommandsFile({
+    schemaVersion: 1, site: "s",
+    identity: { endpoint: "e", idField: "id", display: ["full_name"] },
+    commands: [],
+  });
+  expect(cf.identity?.params).toBeUndefined();
 });

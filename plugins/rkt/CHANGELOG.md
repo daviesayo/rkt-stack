@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.9.0] - 2026-07-22
+
+Generic identity derivation for `derive-client`: `whoami`/`@me` now work for any
+client whose current-user endpoint is keyed by the operator's own id, not just
+id-free `/me` routes.
+
+### Added
+
+- **derive-client: generic identity/`whoami` derivation.** `identity` in
+  `commands.json` gains a `params` map, so `whoami`/`@me` work when the
+  current-user endpoint is keyed by the operator's own id via a query or path
+  param (not only a path literal). The scaffolder now detects the identity
+  endpoint by response shape and seeds `params` from the recorded example, and
+  the skill captures the operator's own profile deterministically and requires a
+  `whoami` verify.
+
 ## [0.8.1] - 2026-07-22
 
 Follow-up fixes for `derive-client` from a real luma derivation: a discoverable
