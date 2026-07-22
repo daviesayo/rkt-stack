@@ -152,10 +152,13 @@ export function assertResolvable(
 
   if (commands.identity) {
     const idEp = need("identity", commands.identity.endpoint);
-    if (idEp.params.some((p) => p.in === "path")) {
+    const supplied = new Set(Object.keys(commands.identity.params ?? {}));
+    const missing = idEp.params.filter((p) => p.required && !supplied.has(p.name));
+    if (missing.length) {
       throw new Error(
-        `commands.json: identity endpoint '${commands.identity.endpoint}' must be id-free ` +
-          `(a /me-style route with no path params), but it takes a path param`,
+        `commands.json: identity endpoint '${commands.identity.endpoint}' needs ` +
+          `param(s) ${missing.map((p) => p.name).join(", ")} in identity.params ` +
+          `(set them to your own id, e.g. from your profile URL)`,
       );
     }
   }
