@@ -156,7 +156,8 @@ export async function runCommand(cmd: CommandSpec, opts: RunOpts): Promise<RunRe
   if (cmd.output.sort) rows = sortRows(rows, cmd.output.sort);
   if (typeof flags.limit === "number") rows = rows.slice(0, flags.limit);
   const rendered = mask(renderTable(rows, cmd.output.columns ?? [], { redact, raw: flags.raw }));
-  const fullPayload = mask(renderJson(rows, { redact, raw: flags.raw }));
+  const maskedRows = maskSecretValues(rows, secrets);
+  const fullPayload = mask(renderJson(maskedRows, { redact, raw: flags.raw }));
   return { rendered, rowCount: rows.length, fullPayload };
 }
 

@@ -175,9 +175,23 @@ test("runCommand returns rowCount and fullPayload for table output", async () =>
   expect(JSON.parse(r.fullPayload)).toEqual([{ id: "a" }, { id: "b" }]);
 });
 
-test("HTTP >=400 throws CliError with a hint", async () => {
+test("table fullPayload masks secrets with quote and backslash before serialization", async () => {
+  const TOKEN = 'va"lue\\tail';
+  const c = caller({ "get.shifts": [{ id: "a", token: TOKEN }] }, [], { default: TOKEN });
+  const cmd = {
+    name: "shifts", summary: "",
+    call: { endpoint: "get.shifts", params: {} },
+    output: { kind: "table" as const, columns: ["id", "token"] },
+  };
+  const r = await runCommand(cmd, { ...baseOpts(c), flags: { json: false, raw: true } });
+  expect(r.fullPayload).not.toContain(TOKEN);
+  expect(r.fullPayload).not.toContain('va\\"lue');
+  expect(r.fullPayload).toContain("[REDACTED]");
+});
+
+test("HTTP 401 throws CliError with exit code 4 and login hint", async () => {
   const c: RunnerCaller = {
-    call: async () => ({ status: 500, body: "oops" }),
+    call: async () => ({ status: 401, body: "unauthorized" }),
     fetchJson: async () => ({}),
   };
   const cmd = {
@@ -185,7 +199,64 @@ test("HTTP >=400 throws CliError with a hint", async () => {
     call: { endpoint: "get.shifts", params: {} },
     output: { kind: "json" as const },
   };
-  await expect(runCommand(cmd, baseOpts(c))).rejects.toThrow(CliError);
+  try {
+    await runCommand(cmd, baseOpts(c));
+    throw new Error("expected CliError");
+  } catch (err) {
+    expect(err).toBeInstanceOf(CliError);
+    const e = err as CliError;
+    expect(e.exitCode).toBe(4);
+    expect(e.hint).toContain("login");
+    expect(e.hint).toContain("auth status");
+  }
+});
+
+test("HTTP 403 throws CliError with exit code 1 and permission hint", async () => {
+  const c: RunnerCaller = {
+    call: async () => ({ status: 403, body: "forbidden" }),
+    fetchJson: async () => ({}),
+  };
+  const cmd = {
+    name: "items", summary: "s",
+    call: { endpoint: "get.shifts", params: {} },
+    output: { kind: "json" as const },
+  };
+  try {
+    await runCommand(cmd, baseOpts(c));
+    throw new Error("expected CliError");
+  } catch (err) {
+    expect(err).toBeInstanceOf(CliError);
+    const e = err as CliError;
+    expect(e.exitCode).toBe(1);
+    expect(e.hint).toMatch(/permission/i);
+  }
+});
+
+test("HTTP error spills redacted body and mentions spill path in hint", async () => {
+  const c: RunnerCaller = {
+    call: async () => ({ status: 500, body: "error details here" }),
+    fetchJson: async () => ({}),
+  };
+  const cmd = {
+    name: "items", summary: "s",
+    call: { endpoint: "get.shifts", params: {} },
+    output: { kind: "json" as const },
+  };
+  try {
+    await runCommand(cmd, baseOpts(c));
+    throw new Error("expected CliError");
+  } catch (err) {
+    expect(err).toBeInstanceOf(CliError);
+    const e = err as CliError;
+    expect(e.exitCode).toBe(1);
+    expect(e.hint).toMatch(/full body:/);
+    const spillMatch = e.hint.match(/full body: (.+\.json)/);
+    expect(spillMatch).not.toBeNull();
+    const spillPath = spillMatch![1];
+    expect(await Bun.file(spillPath).text()).toBe("error details here");
+    expect(e.message).toContain("HTTP 500");
+    expect(e.message).toContain("error details here");
+  }
 });
 
 test("finishRun passes small results through untouched, no spill", async () => {
