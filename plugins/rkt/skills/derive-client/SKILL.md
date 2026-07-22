@@ -69,13 +69,24 @@ command -v bun >/dev/null || { echo "bun is required: https://bun.sh"; exit 1; }
 (cd "$SCRIPTS" && bun install)
 ```
 
-## Step 2: Start the recorder
+## Step 2: Name the client and start the recorder
 
-Pick a **site slug** once (lowercase letters, digits, and hyphens only — e.g.
-`example-app`; dots and other punctuation are rejected) and reuse
-the exact same `SITE=...` value in every command below. Each bash snippet is
-self-contained; shell variables and file descriptors do not carry over between
-tool calls.
+Decide the **client name** first: it is the slug used for the generated
+directory, the credential file, and every `SITE=...` command below. Ask the
+user with `AskUserQuestion`, proposing 2-3 candidates derived from the target
+site with a recommended default first. For example, for `kirinari.alayacare.com`:
+
+- `kirinari-alayacare` (Recommended) — product plus tenant, unambiguous if you
+  ever derive another tenant of the same product
+- `alayacare` — the product alone
+- `kirinari` — the tenant alone
+
+The slug must be lowercase letters, digits, and hyphens only (`^[a-z0-9-]+$`);
+dots and other punctuation are rejected. If the user picks "Other" and types a
+custom name, sanitize it to that shape (lowercase, spaces and punctuation to
+hyphens) before using it. Reuse the exact chosen value as `SITE=...` in every
+command below; each bash snippet is self-contained, so shell variables and file
+descriptors do not carry over between tool calls.
 
 The recorder owns the browser and reads commands as JSON lines appended to a
 plain file. It is deliberately **not** a named pipe: opening a FIFO for read

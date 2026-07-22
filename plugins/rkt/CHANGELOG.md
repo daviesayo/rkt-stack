@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- `derive-client` now asks what to name the client via `AskUserQuestion`,
+  proposing slug candidates derived from the target site with a recommended
+  default, instead of the agent picking a slug unprompted.
+
 ## [0.7.0] - 2026-07-21
 
 Task-oriented generated CLIs for `derive-client`: a user-owned `commands.json`
