@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtemp, mkdir, writeFile, rm, access, stat } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { formatAuthStatus, logoutSite, readIdentityLabel } from "../src/lib/session";
 
@@ -279,4 +279,92 @@ test("readIdentityLabel returns the cached label, or null when absent", async ()
   await chmod(secretsDir(), 0o700);
   await writeFile(identityCacheFile("someone"), JSON.stringify({ id: "1", display: {}, label: "Ada (ada@x.test)" }), { mode: 0o600 });
   expect(await readIdentityLabel("someone")).toBe("Ada (ada@x.test)");
+});
+
+import { symlink as symlinkFs, readlink } from "node:fs/promises";
+
+async function stubClient(): Promise<{ dir: string; cliPath: string }> {
+  const dir = await mkdtemp(join(tmpdir(), "rkt-client-"));
+  const cliPath = join(dir, "cli.ts");
+  await writeFile(cliPath, "// stub cli\n");
+  return { dir, cliPath };
+}
+
+test("install symlinks the launcher and makes the cli executable", async () => {
+  const { installLauncher } = await import("../src/lib/session");
+  const { cliPath } = await stubClient();
+  const binDir = await mkdtemp(join(tmpdir(), "rkt-bin-"));
+
+  const res = await installLauncher({ cliPath, defaultName: "example", binDir, pathEnv: binDir });
+
+  expect(res.name).toBe("example");
+  expect(res.target).toBe(join(binDir, "example"));
+  expect(await readlink(res.target)).toBe(cliPath);
+  expect((await stat(cliPath)).mode & 0o111).not.toBe(0); // executable bit set
+  expect(res.pathHint).toBeNull(); // binDir is on pathEnv
+});
+
+test("install --name overrides the default launcher name", async () => {
+  const { installLauncher } = await import("../src/lib/session");
+  const { cliPath } = await stubClient();
+  const binDir = await mkdtemp(join(tmpdir(), "rkt-bin-"));
+  const res = await installLauncher({ cliPath, defaultName: "kirinari-example", name: "ex", binDir });
+  expect(res.name).toBe("ex");
+  expect(await readlink(join(binDir, "ex"))).toBe(cliPath);
+});
+
+test("install rejects a name outside the allowed charset", async () => {
+  const { installLauncher } = await import("../src/lib/session");
+  const { cliPath } = await stubClient();
+  const binDir = await mkdtemp(join(tmpdir(), "rkt-bin-"));
+  await expect(
+    installLauncher({ cliPath, defaultName: "bad/name", binDir }),
+  ).rejects.toThrow(/lowercase letters, digits, and hyphens/);
+});
+
+test("install refuses to clobber an unrelated target without --force", async () => {
+  const { installLauncher } = await import("../src/lib/session");
+  const { cliPath } = await stubClient();
+  const binDir = await mkdtemp(join(tmpdir(), "rkt-bin-"));
+  await writeFile(join(binDir, "example"), "#!/bin/sh\necho real binary\n");
+  await expect(
+    installLauncher({ cliPath, defaultName: "example", binDir }),
+  ).rejects.toThrow(/--force/);
+});
+
+test("install --force replaces an unrelated target", async () => {
+  const { installLauncher } = await import("../src/lib/session");
+  const { cliPath } = await stubClient();
+  const binDir = await mkdtemp(join(tmpdir(), "rkt-bin-"));
+  await writeFile(join(binDir, "example"), "#!/bin/sh\necho real binary\n");
+  const res = await installLauncher({ cliPath, defaultName: "example", force: true, binDir });
+  expect(await readlink(res.target)).toBe(cliPath);
+});
+
+test("install is idempotent when the target already points at this cli", async () => {
+  const { installLauncher } = await import("../src/lib/session");
+  const { cliPath } = await stubClient();
+  const binDir = await mkdtemp(join(tmpdir(), "rkt-bin-"));
+  await symlinkFs(cliPath, join(binDir, "example"));
+  const res = await installLauncher({ cliPath, defaultName: "example", binDir }); // no --force
+  expect(await readlink(res.target)).toBe(cliPath);
+});
+
+test("install returns a PATH hint only when the bin dir is off PATH", async () => {
+  const { installLauncher } = await import("../src/lib/session");
+  const { cliPath } = await stubClient();
+  const binDir = await mkdtemp(join(tmpdir(), "rkt-bin-"));
+  const off = await installLauncher({ cliPath, defaultName: "example", binDir, pathEnv: "/usr/bin" });
+  expect(off.pathHint).toBe(`export PATH="${binDir}:$PATH"`);
+});
+
+test("launcherBinDir honors RKT_BIN_DIR then falls back to ~/.local/bin", async () => {
+  const { launcherBinDir } = await import("../src/lib/session");
+  const prev = process.env.RKT_BIN_DIR;
+  process.env.RKT_BIN_DIR = "/tmp/custom-bin";
+  expect(launcherBinDir()).toBe("/tmp/custom-bin");
+  delete process.env.RKT_BIN_DIR;
+  expect(launcherBinDir()).toBe(`${homedir()}/.local/bin`);
+  if (prev === undefined) delete process.env.RKT_BIN_DIR;
+  else process.env.RKT_BIN_DIR = prev;
 });

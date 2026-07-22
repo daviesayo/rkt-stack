@@ -1,4 +1,6 @@
-import { chmod, mkdir, readFile, rm, stat } from "node:fs/promises";
+import { chmod, lstat, mkdir, readFile, realpath, rm, stat, symlink, unlink } from "node:fs/promises";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import { validateManifest } from "./manifest-schema";
 import { readSecretMeta, writeSecret, REFRESH_TOKEN_KEY, type SecretMeta } from "./secrets";
 import { profileDir, secretsFile, storageStateFile, secretsDir, sanitizeSite } from "./paths";
@@ -175,6 +177,85 @@ export async function loginSite(
   // overwrite a good stored session with nothing whenever harvesting misses.
   if (Object.keys(result.values).length > 0) await writeSecret(site, result.values);
   return true;
+}
+
+const LAUNCHER_NAME = /^[a-z0-9-]+$/;
+
+/**
+ * Where the CLI launcher symlink is created. RKT_BIN_DIR overrides for tests
+ * and power users. Unlike rktRoot(), this is NOT gated by NODE_ENV: it holds a
+ * symlink, not credential files, so it is safe to redirect in any environment.
+ */
+export function launcherBinDir(): string {
+  const override = process.env.RKT_BIN_DIR;
+  if (override && override.length > 0) return override;
+  return `${homedir()}/.local/bin`;
+}
+
+export interface InstallResult {
+  name: string;
+  target: string;
+  pathHint: string | null;
+}
+
+/**
+ * Create a launcher symlink `<binDir>/<name> -> cliPath`, chmod the cli
+ * executable, and report whether the bin dir needs adding to PATH. Refuses to
+ * overwrite anything that is not already a link to this same cli, unless force.
+ */
+export async function installLauncher(opts: {
+  cliPath: string;
+  defaultName: string;
+  name?: string;
+  force?: boolean;
+  binDir?: string;
+  pathEnv?: string;
+}): Promise<InstallResult> {
+  const name = opts.name ?? opts.defaultName;
+  if (!LAUNCHER_NAME.test(name)) {
+    throw new Error(
+      `invalid launcher name ${JSON.stringify(name)}: use only lowercase letters, digits, and hyphens`,
+    );
+  }
+  const binDir = opts.binDir ?? launcherBinDir();
+  const target = join(binDir, name);
+  await mkdir(binDir, { recursive: true });
+
+  let existing: Awaited<ReturnType<typeof lstat>> | null = null;
+  try {
+    existing = await lstat(target);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
+
+  if (existing) {
+    if (existing.isDirectory()) {
+      throw new Error(`${target} is a directory; remove it and retry`);
+    }
+    let pointsHere = false;
+    if (existing.isSymbolicLink()) {
+      try {
+        pointsHere = (await realpath(target)) === (await realpath(opts.cliPath));
+      } catch {
+        pointsHere = false; // broken link
+      }
+    }
+    if (!pointsHere && !opts.force) {
+      throw new Error(
+        `${target} already exists and does not point at this client; pass --force to replace it`,
+      );
+    }
+    await unlink(target);
+  }
+
+  await chmod(opts.cliPath, 0o755);
+  await symlink(opts.cliPath, target);
+
+  const pathEnv = opts.pathEnv ?? process.env.PATH ?? "";
+  const onPath = pathEnv.split(":").includes(binDir);
+  const pathHint = onPath ? null : `export PATH="${binDir}:$PATH"`;
+
+  return { name, target, pathHint };
 }
 
 const defaultLauncher: Launcher = async ({ site, entryUrl, statePath, wanted, apiHost, tokenEndpoint }) => {
