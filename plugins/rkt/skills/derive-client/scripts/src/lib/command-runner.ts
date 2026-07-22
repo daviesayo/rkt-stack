@@ -102,7 +102,13 @@ export async function runCommand(cmd: CommandSpec, opts: RunOpts): Promise<RunRe
 
   const { status, body } = await caller.call(cmd.call.endpoint, params);
   if (status >= 400) {
-    const redactedBody = redactAll(body, caller.secret ?? null);
+    let redactedBody: string;
+    try {
+      const parsed = JSON.parse(body);
+      redactedBody = JSON.stringify(maskSecretValues(parsed, caller.secret ?? null));
+    } catch {
+      redactedBody = redactAll(body, caller.secret ?? null);
+    }
     const spill = await writeSpill(site, cmd.name, redactedBody, now).catch(() => undefined);
     const head = redactedBody.slice(0, 2000);
     let hint: string;

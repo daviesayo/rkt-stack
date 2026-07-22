@@ -232,6 +232,39 @@ test("HTTP 403 throws CliError with exit code 1 and permission hint", async () =
   }
 });
 
+test("HTTP 500 JSON error masks secrets with quote and backslash before spill", async () => {
+  const TOKEN = 'va"lue\\tail';
+  const body = JSON.stringify({ error: TOKEN, message: "internal error" });
+  const c: RunnerCaller = {
+    call: async () => ({ status: 500, body }),
+    fetchJson: async () => ({}),
+    secret: { default: TOKEN },
+  };
+  const cmd = {
+    name: "items", summary: "s",
+    call: { endpoint: "get.shifts", params: {} },
+    output: { kind: "json" as const },
+  };
+  try {
+    await runCommand(cmd, baseOpts(c));
+    throw new Error("expected CliError");
+  } catch (err) {
+    expect(err).toBeInstanceOf(CliError);
+    const e = err as CliError;
+    expect(e.exitCode).toBe(1);
+    expect(e.hint).toMatch(/full body:/);
+    const spillMatch = e.hint.match(/full body: (.+\.json)/);
+    expect(spillMatch).not.toBeNull();
+    const spillPath = spillMatch![1];
+    const spillText = await Bun.file(spillPath).text();
+    expect(e.message).not.toContain(TOKEN);
+    expect(e.message).not.toContain('va\\"lue');
+    expect(spillText).not.toContain(TOKEN);
+    expect(spillText).not.toContain('va\\"lue');
+    expect(spillText).toContain("[REDACTED]");
+  }
+});
+
 test("HTTP error spills redacted body and mentions spill path in hint", async () => {
   const c: RunnerCaller = {
     call: async () => ({ status: 500, body: "error details here" }),
