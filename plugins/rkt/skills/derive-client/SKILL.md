@@ -163,6 +163,12 @@ echo '{"kind":"goto","url":"https://<site>/section"}' >> "$CMDS"
 
 The recorder paces itself between actions; do not add your own tight loops.
 
+**Capture identity too.** `whoami` and the `@me` token are only possible if the
+recording includes a call that returns the signed-in user. So while signed in,
+also visit the account, profile, or settings page (or trigger whatever loads the
+current user), so a `/me`-style endpoint gets recorded. If you skip this, nothing
+downstream can wire `whoami`, no matter how the command surface is authored.
+
 ## Step 6: Close and derive
 
 ```bash
@@ -318,10 +324,17 @@ SITE=<site-slug>
 
 Then edit `commands.json`:
 
-- **`identity`** names an **id-free** endpoint (a `/me`-style route needing no
-  id), its `idField` (the field holding the user's id, what `@me` resolves to),
-  and `display` fields for `whoami`. Omit it if the site has no such route;
-  `@me` and `whoami` are then unavailable.
+- **`identity`** wires `whoami` and the `@me` token, so wire it whenever you can,
+  do not treat it as optional. It names an **id-free** `/me`-style endpoint that
+  returns the signed-in user (needs no path param), its `idField` (the field
+  holding the user's id, what `@me` resolves to), and `display` (fields to print
+  for `whoami`, e.g. `["name","email"]`). The scaffolder pre-fills a guess, but it
+  just takes the first id-free endpoint, which is often NOT a user route, so open
+  `client.json`, confirm the endpoint actually returns the current user, and fix
+  or replace it. Only if no user endpoint was captured are `@me` and `whoami`
+  unavailable: in that case say so to the user and offer to re-record with the
+  account/profile page visited (Step 5). Do not silently drop the `identity`
+  block.
 - Each **command** has a `name`, a `summary`, a `call` (endpoint id + params),
   optional `join`s, an `output` (`table` with `columns`/`sort`/`rows`, or
   `json`), and a `redact` list.
