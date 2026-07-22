@@ -363,3 +363,37 @@ test("task CLI treats help/--help/-h as an explicit help request that exits 0", 
   expect(src).toContain('name === "help"');
   expect(src).toContain("usage(0)");
 });
+
+test("task CLI emits fail(), footer wiring, per-command help, and --full", () => {
+  const src = emitCli(taskManifest as never, taskCommands as never);
+  expect(src).toContain("function fail(");
+  expect(src).toContain("commandHelp(");
+  expect(src).toContain("--full");
+  expect(src).toContain("footer(");
+  expect(src).toContain("finishRun(");
+  expect(src).toContain("suggest(");
+  expect(src).toContain("--help for params and an example");
+});
+
+test("task CLI resolves commands and --help before the credential gate", () => {
+  const authManifest = {
+    ...taskManifest,
+    auth: { kind: "cookie", location: "cookie:session", mintedBy: null, expiry: null },
+  };
+  const src = emitCli(authManifest as never, taskCommands as never);
+  const helpIdx = src.indexOf('hasFlag("help")');
+  const credIdx = src.indexOf("no stored credential");
+  expect(helpIdx).toBeGreaterThan(-1);
+  expect(credIdx).toBeGreaterThan(-1);
+  expect(helpIdx).toBeLessThan(credIdx);
+});
+
+test("endpoint CLI emits reduced-tier navigation", () => {
+  const src = emitCli(manifest);
+  expect(src).toContain("function fail(");
+  expect(src).toContain("function endpointHelp(");
+  expect(src).toContain("footer(");
+  expect(src).toContain("writeSpill(");
+  expect(src).not.toContain("--full");
+  expect(src).toContain("missing required param");
+});

@@ -1,6 +1,7 @@
 import type { ClientManifest, ManifestEndpoint } from "./manifest-schema";
 import type { Scheduler } from "./scheduler";
 import { buildRequest, issue } from "./transport";
+import { CliError } from "./overflow";
 import { REFRESH_TOKEN_KEY, writeSecret as realWriteSecret } from "./secrets";
 import { refreshViaOidc as realRefresh } from "./refresh";
 import { reauthViaProfile as realReauth } from "./reauth";
@@ -32,7 +33,10 @@ export function createCaller(
 
   function endpointById(id: string): ManifestEndpoint {
     const ep = manifest.endpoints.find((e) => e.id === id);
-    if (!ep) throw new Error(`endpoint ${id} is missing from client.json; regenerate this client`);
+    if (!ep) throw new CliError(
+      `endpoint ${id} is missing from client.json`,
+      "regenerate this client: bash regenerate.sh",
+    );
     return ep;
   }
 
@@ -92,11 +96,20 @@ export function createCaller(
 
   async function fetchJson(endpointId: string, params?: Record<string, string>): Promise<unknown> {
     const { status, body } = await call(endpointId, params ?? {});
-    if (status >= 400) throw new Error(`endpoint ${endpointId} returned HTTP ${status}`);
+    if (status >= 400) throw new CliError(
+      `endpoint ${endpointId} returned HTTP ${status}`,
+      status === 401
+        ? "run: login  (then check: auth status)"
+        : "re-run the command with --dry-run to inspect the request",
+      status === 401 ? 4 : 1,
+    );
     try {
       return JSON.parse(body);
     } catch {
-      throw new Error(`endpoint ${endpointId} did not return JSON`);
+      throw new CliError(
+        `endpoint ${endpointId} did not return JSON`,
+        "re-run the command with --dry-run to inspect the request",
+      );
     }
   }
 

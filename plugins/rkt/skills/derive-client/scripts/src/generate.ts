@@ -35,6 +35,7 @@ export interface GeneratedFiles {
  */
 const RUNTIME_FILES = [
   "paths.ts",
+  "overflow.ts",
   "manifest-schema.ts",
   "secrets.ts",
   "scheduler.ts",

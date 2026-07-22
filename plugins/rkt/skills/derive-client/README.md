@@ -53,6 +53,8 @@ Runtime state lives under `~/.rkt-clients/` (never committed):
 - `recordings/<site>/<ts>/` — HAR, flows, and the derived `client.json`
 - `secrets/<site>.json` — the session credential bundle, mode `0600`
 - `<site>.storage-state.json` — serialized browser session
+- `out/<site>/` — capped-output spill files (redacted; unredacted only if the
+  run used --raw). Prune-managed, newest 20 kept.
 
 ## Using a generated client
 
@@ -60,7 +62,13 @@ Runtime state lives under `~/.rkt-clients/` (never committed):
 bun ~/Documents/Repositories/rkt-clients/<site>/cli.ts            # help
 bun .../<site>/cli.ts <command> --dry-run                        # inspect the request
 bun .../<site>/cli.ts <command> [--param v] [--json] [--raw] [--limit n]
+bun .../<site>/cli.ts <command> --help                           # params, columns, example
+bun .../<site>/cli.ts <task> --full                              # disable the 200-row/50KB output cap
 ```
+
+Every run prints a `[exit:N | Xs | N rows]` footer on stderr; oversized output
+is capped and the full redacted payload is written under
+`~/.rkt-clients/out/<site>/` with the path in the footer.
 
 Or put it on your PATH and run it by name:
 

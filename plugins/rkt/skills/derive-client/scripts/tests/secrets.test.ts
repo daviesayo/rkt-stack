@@ -7,6 +7,7 @@ import {
   readSecretMeta,
   readSecrets,
   redact,
+  redactAll,
   maskHeaders,
   maskSecretValues,
   writeSecret,
@@ -106,6 +107,16 @@ function jwt(payload: Record<string, unknown>): string {
   const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url");
   return `${b64({ alg: "HS256" })}.${b64(payload)}.sig`;
 }
+
+test("redactAll masks the JSON-escaped form of a secret", () => {
+  const secret = 'va"lue\\tail';
+  // A raw response body carries the secret JSON-escaped; substring matching
+  // on the literal value alone misses it.
+  const body = `{"token":${JSON.stringify(secret)}}`;
+  const out = redactAll(body, { "cookie:sessionid": secret });
+  expect(out).not.toContain(JSON.stringify(secret).slice(1, -1));
+  expect(out).toContain("[REDACTED]");
+});
 
 test("readSecretMeta decodes a JWT value's expiry", async () => {
   const exp = Math.floor(Date.parse("2026-08-01T00:00:00Z") / 1000);

@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased]
+
+- derive-client: generated CLIs are now agent-navigable — per-command `--help`
+  with a runnable example, errors that state the next step (`hint:` lines,
+  nearest-command suggestion), a uniform stderr footer
+  `[exit:N | Xs | N rows|bytes]`, and overflow mode: output is capped
+  (200 rows / 50 KB) and the full redacted payload spills to
+  `~/.rkt-clients/out/<site>/` with the path in the footer. New task-CLI flag
+  `--full` disables the cap. Exit codes are now 0/1/2/4 (success / error /
+  usage / auth) instead of blanket 1.
+
 ## [0.9.1] - 2026-07-22
 
 Ergonomic follow-up to 0.9.0: regenerating a derived client is now one command.

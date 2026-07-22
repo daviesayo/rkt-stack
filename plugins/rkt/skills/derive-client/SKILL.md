@@ -279,6 +279,8 @@ Use it:
 bun "$OUT/<site>/cli.ts"                        # list commands
 bun "$OUT/<site>/cli.ts" <command> --dry-run    # inspect the request
 bun "$OUT/<site>/cli.ts" <command>              # run it, JSON to stdout
+bun "$OUT/<site>/cli.ts" <command> --help          # params, columns, example
+bun "$OUT/<site>/cli.ts" <task> --full             # disable the 200-row/50KB output cap
 ```
 
 Verify a generated client the same way as `call`: compare against the browser
@@ -391,7 +393,9 @@ bun "$OUT/<site>/cli.ts" login           # re-authenticate in a browser, no re-r
 ```
 
 Redaction is on by default because the data is real personal information. Only
-`--raw` disables it.
+`--raw` disables it. Every run prints a `[exit:N | Xs | N rows]` footer on
+stderr; oversized output is capped and the full redacted payload is written under
+`~/.rkt-clients/out/<site>/` with the path in the footer.
 
 **Verify identity (required when an identity block exists).** Run
 `bun "$OUT/<site>/cli.ts" whoami` and confirm it prints the operator's real
@@ -411,5 +415,7 @@ this root during automated tests only; it is ignored outside `NODE_ENV=test`.)
 - `secrets/<site>.json` — the session credential, mode `0600`. Never commit,
   never print, never paste into a chat or an issue. Delete this file to revoke
   the derived client's access.
+- `out/<site>/` — capped-output spill files (redacted; unredacted only if the
+  run used --raw). Prune-managed, newest 20 kept.
 
 Never commit these. They contain session credentials.
