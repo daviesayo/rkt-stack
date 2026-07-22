@@ -1,6 +1,10 @@
 # Changelog
 
-## [Unreleased]
+## [0.8.0] - 2026-07-22
+
+Native install for `derive-client` clients, plus a client-naming prompt. A
+generated CLI can now be put on your PATH by name and removed again from inside
+itself, without the `bun <path>/cli.ts` ceremony.
 
 ### Added
 
