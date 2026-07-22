@@ -281,6 +281,24 @@ re-derive and regenerate; hand edits are overwritten on the next run.
 Credentials are never written into `rkt-clients`. Each client reads
 `<rkt-root>/secrets/<site>.json` at runtime.
 
+### Install the CLI (optional, macOS/Linux)
+
+To run the client by name instead of `bun <client>/cli.ts ...`:
+
+    bash ~/Documents/Repositories/rkt-clients/<site>/install.sh
+
+This symlinks the CLI onto `~/.local/bin` (override with `RKT_BIN_DIR`) and
+chmods it executable. Pass a shorter name with:
+
+    bun ~/Documents/Repositories/rkt-clients/<site>/cli.ts install --name <name>
+
+If `~/.local/bin` is not on your PATH, the command prints the `export PATH=...`
+line to add to your shell profile. It never edits the profile for you.
+
+Remove the launcher later with `<name> uninstall`. That removes only the
+PATH shortcut; the derived client and its saved credentials stay on disk, and
+the command prints how to reinstall.
+
 ## Step 10: Shape the command surface
 
 The generated CLI so far has one command per endpoint. Turn it into domain

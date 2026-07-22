@@ -1,6 +1,19 @@
 # Changelog
 
-## [Unreleased]
+## [0.8.0] - 2026-07-22
+
+Native install for `derive-client` clients, plus a client-naming prompt. A
+generated CLI can now be put on your PATH by name and removed again from inside
+itself, without the `bun <path>/cli.ts` ceremony.
+
+### Added
+
+- **derive-client: native install/uninstall.** Generated clients now carry a
+  `#!/usr/bin/env bun` shebang and an `install.sh`. `bun <client>/cli.ts install
+  [--name x]` symlinks the CLI onto `~/.local/bin` (or `$RKT_BIN_DIR`) so you can
+  run it by name; `<client> uninstall` removes the launcher while leaving the
+  derived client and its credentials in place. PATH help is printed, never
+  written to your shell profile.
 
 ### Changed
 

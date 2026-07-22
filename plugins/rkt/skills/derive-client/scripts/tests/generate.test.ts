@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { generateClient } from "../src/generate";
@@ -225,4 +225,23 @@ test("generated client typechecks with tsc --noEmit", async () => {
   const stderr = await new Response(tsc.stderr).text();
   expect(await tsc.exited).toBe(0);
   if (stderr) expect(stderr).not.toMatch(/error TS/i);
+});
+
+test("emits an executable install.sh and an executable cli.ts", async () => {
+  const out = await mkdtemp(join(tmpdir(), "rkt-gen-"));
+  const mPath = join(out, "client.json");
+  await writeFile(mPath, JSON.stringify(MANIFEST));
+  const { siteDir } = await generateClient(mPath, out);
+
+  const installSh = join(siteDir, "install.sh");
+  const cliTs = join(siteDir, "cli.ts");
+  const shMode = (await stat(installSh)).mode & 0o111;
+  const cliMode = (await stat(cliTs)).mode & 0o111;
+  expect(shMode).not.toBe(0);
+  expect(cliMode).not.toBe(0);
+
+  const shBody = await readFile(installSh, "utf8");
+  expect(shBody).toContain("bun install");
+  expect(shBody).toContain('exec bun "$DIR/cli.ts" install');
+  expect(shBody).not.toContain(MANIFEST.site); // stays site-agnostic
 });

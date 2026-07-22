@@ -3,7 +3,7 @@
  *
  * Usage: bun src/generate.ts --manifest <path/to/client.json> --out <rkt-clients-root>
  */
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { emitCli, emitTypes } from "./lib/codegen";
@@ -116,6 +116,15 @@ client's access.
 re-run \`/derive-client\` and regenerate instead.
 `;
 
+const INSTALL_SH = `#!/usr/bin/env bash
+set -euo pipefail
+DIR="$(cd "$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
+# Dependencies live at the rkt-clients root; node_modules is shared across clients.
+( cd "$DIR/.." && bun install )
+chmod +x "$DIR/cli.ts"
+exec bun "$DIR/cli.ts" install "$@"
+`;
+
 async function write(path: string, contents: string, written: string[]): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, contents);
@@ -186,6 +195,10 @@ export async function generateClient(
   }
 
   await write(join(siteDir, "cli.ts"), emitCli(manifest, commands), written);
+
+  await write(join(siteDir, "install.sh"), INSTALL_SH, written);
+  await chmod(join(siteDir, "install.sh"), 0o755);
+  await chmod(join(siteDir, "cli.ts"), 0o755);
 
   return { siteDir, written };
 }

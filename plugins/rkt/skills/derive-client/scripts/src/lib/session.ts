@@ -1,4 +1,6 @@
-import { chmod, mkdir, readFile, rm, stat } from "node:fs/promises";
+import { chmod, lstat, mkdir, readdir, readFile, realpath, rm, stat, symlink, unlink } from "node:fs/promises";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import { validateManifest } from "./manifest-schema";
 import { readSecretMeta, writeSecret, REFRESH_TOKEN_KEY, type SecretMeta } from "./secrets";
 import { profileDir, secretsFile, storageStateFile, secretsDir, sanitizeSite } from "./paths";
@@ -177,6 +179,142 @@ export async function loginSite(
   return true;
 }
 
+const LAUNCHER_NAME = /^[a-z0-9-]+$/;
+
+/**
+ * Where the CLI launcher symlink is created. RKT_BIN_DIR overrides for tests
+ * and power users. Unlike rktRoot(), this is NOT gated by NODE_ENV: it holds a
+ * symlink, not credential files, so it is safe to redirect in any environment.
+ */
+export function launcherBinDir(): string {
+  const override = process.env.RKT_BIN_DIR;
+  if (override && override.length > 0) return override;
+  return `${homedir()}/.local/bin`;
+}
+
+export interface InstallResult {
+  name: string;
+  target: string;
+  pathHint: string | null;
+}
+
+/**
+ * Create a launcher symlink `<binDir>/<name> -> cliPath`, chmod the cli
+ * executable, and report whether the bin dir needs adding to PATH. Refuses to
+ * overwrite anything that is not already a link to this same cli, unless force.
+ */
+export async function installLauncher(opts: {
+  cliPath: string;
+  defaultName: string;
+  name?: string;
+  force?: boolean;
+  binDir?: string;
+  pathEnv?: string;
+}): Promise<InstallResult> {
+  const name = opts.name ?? opts.defaultName;
+  if (!LAUNCHER_NAME.test(name)) {
+    throw new Error(
+      `invalid launcher name ${JSON.stringify(name)}: use only lowercase letters, digits, and hyphens`,
+    );
+  }
+  const binDir = opts.binDir ?? launcherBinDir();
+  const target = join(binDir, name);
+  await mkdir(binDir, { recursive: true });
+
+  let existing: Awaited<ReturnType<typeof lstat>> | null = null;
+  try {
+    existing = await lstat(target);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
+
+  if (existing) {
+    if (existing.isDirectory()) {
+      throw new Error(`${target} is a directory; remove it and retry`);
+    }
+    let pointsHere = false;
+    if (existing.isSymbolicLink()) {
+      try {
+        pointsHere = (await realpath(target)) === (await realpath(opts.cliPath));
+      } catch {
+        pointsHere = false; // broken link
+      }
+    }
+    if (!pointsHere && !opts.force) {
+      throw new Error(
+        `${target} already exists and does not point at this client; pass --force to replace it`,
+      );
+    }
+    await unlink(target);
+  }
+
+  await chmod(opts.cliPath, 0o755);
+  await symlink(opts.cliPath, target);
+
+  const pathEnv = opts.pathEnv ?? process.env.PATH ?? "";
+  const onPath = pathEnv.split(":").includes(binDir);
+  const pathHint = onPath ? null : `export PATH="${binDir}:$PATH"`;
+
+  return { name, target, pathHint };
+}
+
+export interface UninstallResult {
+  removed: string[];
+  reinstall: string;
+}
+
+/**
+ * Remove every launcher in binDir that resolves to this client's cli.ts, and
+ * nothing else. Stateless (scans by realpath), so it correctly removes custom
+ * --name aliases and multiple installs. Never touches the client directory.
+ */
+export async function uninstallLauncher(opts: {
+  cliPath: string;
+  binDir?: string;
+}): Promise<UninstallResult> {
+  const binDir = opts.binDir ?? launcherBinDir();
+  const reinstall = `bun ${opts.cliPath} install`;
+
+  let entries: string[];
+  try {
+    entries = await readdir(binDir);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return { removed: [], reinstall };
+    throw err;
+  }
+
+  let cliReal: string;
+  try {
+    cliReal = await realpath(opts.cliPath);
+  } catch {
+    cliReal = opts.cliPath;
+  }
+
+  const removed: string[] = [];
+  for (const entry of entries) {
+    const p = join(binDir, entry);
+    let info: Awaited<ReturnType<typeof lstat>>;
+    try {
+      info = await lstat(p);
+    } catch {
+      continue;
+    }
+    if (!info.isSymbolicLink()) continue;
+    let real: string;
+    try {
+      real = await realpath(p);
+    } catch {
+      continue; // broken link points nowhere; not ours to judge
+    }
+    if (real === cliReal) {
+      await unlink(p);
+      removed.push(entry);
+    }
+  }
+  removed.sort();
+  return { removed, reinstall };
+}
+
 const defaultLauncher: Launcher = async ({ site, entryUrl, statePath, wanted, apiHost, tokenEndpoint }) => {
   let pw: typeof import("playwright");
   try {
@@ -278,11 +416,20 @@ const defaultLauncher: Launcher = async ({ site, entryUrl, statePath, wanted, ap
   }
 };
 
+function launcherFlagValue(name: string): string | undefined {
+  const i = process.argv.indexOf(`--${name}`);
+  return i === -1 ? undefined : process.argv[i + 1];
+}
+function launcherHasFlag(name: string): boolean {
+  return process.argv.includes(`--${name}`);
+}
+
 /**
- * Handle the lifecycle commands (login, logout, auth status) shared by every
- * generated client. Returns true when it handled the command, false to let the
- * caller fall through to endpoint/task dispatch. `manifestPath` is a plain
- * filesystem path (the caller resolves it), so no URL decoding is needed here.
+ * Handle the lifecycle commands (login, logout, auth status, install,
+ * uninstall) shared by every generated client. Returns true when it handled
+ * the command, false to let the caller fall through to endpoint/task
+ * dispatch. `manifestPath` is a plain filesystem path (the caller resolves
+ * it), so no URL decoding is needed here.
  */
 export async function runLifecycle(
   command: string,
@@ -290,6 +437,32 @@ export async function runLifecycle(
   manifestPath: string,
   opts: { launch?: Launcher } = {},
 ): Promise<boolean> {
+  if (command === "install") {
+    const manifest = validateManifest(JSON.parse(await readFile(manifestPath, "utf8")));
+    const cliPath = join(dirname(manifestPath), "cli.ts");
+    const res = await installLauncher({
+      cliPath,
+      defaultName: manifest.site,
+      name: launcherFlagValue("name"),
+      force: launcherHasFlag("force"),
+    });
+    console.error(`installed '${res.name}' -> ${res.target}`);
+    console.error(`run: ${res.name} <command>`);
+    if (res.pathHint) {
+      console.error("add this line to your shell profile to use it:");
+      console.error(res.pathHint);
+    }
+    return true;
+  }
+  if (command === "uninstall") {
+    const cliPath = join(dirname(manifestPath), "cli.ts");
+    const { removed, reinstall } = await uninstallLauncher({ cliPath });
+    if (removed.length > 0) console.error(`removed: ${removed.join(", ")}`);
+    else console.error("not installed (no launcher on your PATH points at this client).");
+    console.error("the derived client is untouched. reinstall with:");
+    console.error(reinstall);
+    return true;
+  }
   if (command !== "login" && command !== "logout" && !(command === "auth" && sub === "status")) {
     return false;
   }
