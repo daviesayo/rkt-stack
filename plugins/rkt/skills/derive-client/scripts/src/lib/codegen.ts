@@ -528,6 +528,20 @@ async function main() {
   if (name === "help" || name === "--help" || name === "-h") usage(0);
   if (!name || name.startsWith("-")) usage();
 
+  const cmd = COMMANDS.find((c) => c.name === name);
+  if (name !== "whoami" && !cmd) {
+    const near = suggest(name, COMMANDS.map((c) => c.name));
+    fail(
+      \`unknown command: \${name}\${near ? \`. did you mean \${near}?\` : ""}\`,
+      "run: bun cli.ts help for the command list",
+      2,
+    );
+  }
+  if (cmd && hasFlag("help")) {
+    console.log(commandHelp(cmd));
+    return;
+  }
+
   const manifest = validateManifest(JSON.parse(await readFile(manifestPath, "utf8")));
   const secret = await readSecrets(manifest.site);
   // Same pre-flight the manual and fallback CLIs carry: a clear "run login"
@@ -538,19 +552,6 @@ async function main() {
   const scheduler = createScheduler();
   const caller = createCaller(manifest, scheduler, secret);
 ${whoamiDispatch}
-  const cmd = COMMANDS.find((c) => c.name === name);
-  if (!cmd) {
-    const near = suggest(name, COMMANDS.map((c) => c.name));
-    fail(
-      \`unknown command: \${name}\${near ? \`. did you mean \${near}?\` : ""}\`,
-      "run: bun cli.ts help for the command list",
-      2,
-    );
-  }
-  if (hasFlag("help")) {
-    console.log(commandHelp(cmd));
-    return;
-  }
 
   // Override declared params from --name value; global flags are never treated as params.
   const overrideParams: Record<string, string> = {};

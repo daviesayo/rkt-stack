@@ -375,6 +375,19 @@ test("task CLI emits fail(), footer wiring, per-command help, and --full", () =>
   expect(src).toContain("--help for params and an example");
 });
 
+test("task CLI resolves commands and --help before the credential gate", () => {
+  const authManifest = {
+    ...taskManifest,
+    auth: { kind: "cookie", location: "cookie:session", mintedBy: null, expiry: null },
+  };
+  const src = emitCli(authManifest as never, taskCommands as never);
+  const helpIdx = src.indexOf('hasFlag("help")');
+  const credIdx = src.indexOf("no stored credential");
+  expect(helpIdx).toBeGreaterThan(-1);
+  expect(credIdx).toBeGreaterThan(-1);
+  expect(helpIdx).toBeLessThan(credIdx);
+});
+
 test("endpoint CLI emits reduced-tier navigation", () => {
   const src = emitCli(manifest);
   expect(src).toContain("function fail(");

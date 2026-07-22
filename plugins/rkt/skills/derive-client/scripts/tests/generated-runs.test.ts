@@ -24,7 +24,7 @@ async function getFreePort(): Promise<number> {
 
 type CliRun = { exitCode: number; stdout: string; stderr: string };
 
-async function setupTaskCli(shiftsBody: unknown) {
+async function setupTaskCli(shiftsBody: unknown, opts?: { requireAuth?: boolean }) {
   const port = await getFreePort();
   const server = Bun.serve({
     port,
@@ -50,7 +50,9 @@ async function setupTaskCli(shiftsBody: unknown) {
     harSha256: "",
     userAgent: "UA",
     clientHints: {},
-    auth: null,
+    auth: opts?.requireAuth
+      ? { kind: "cookie", location: "cookie:session", mintedBy: null, expiry: null }
+      : null,
     authBundle: null,
     refresh: null,
     endpoints: [
@@ -294,6 +296,31 @@ test("<command> --help prints params, columns, example", async () => {
     expect(exitCode).toBe(0);
     expect(stdout).toContain("params");
     expect(stdout).toContain("example: bun cli.ts");
+  } finally {
+    await cleanup();
+  }
+});
+
+test("task CLI <command> --help works without stored credentials on auth clients", async () => {
+  const { runCli, cleanup } = await setupTaskCli(SMALL_SHIFTS, { requireAuth: true });
+  try {
+    const { exitCode, stdout, stderr } = await runCli(["shifts", "--help"]);
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("List shifts");
+    expect(stdout).toContain("example: bun cli.ts");
+    expect(stderr).not.toContain("no stored credential");
+  } finally {
+    await cleanup();
+  }
+});
+
+test("unknown task command exits 2 without credentials on auth clients", async () => {
+  const { runCli, cleanup } = await setupTaskCli(SMALL_SHIFTS, { requireAuth: true });
+  try {
+    const { exitCode, stderr } = await runCli(["shifs"]);
+    expect(exitCode).toBe(2);
+    expect(stderr).toContain("did you mean");
+    expect(stderr).not.toContain("no stored credential");
   } finally {
     await cleanup();
   }
