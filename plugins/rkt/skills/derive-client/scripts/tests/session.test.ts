@@ -368,3 +368,49 @@ test("launcherBinDir honors RKT_BIN_DIR then falls back to ~/.local/bin", async 
   if (prev === undefined) delete process.env.RKT_BIN_DIR;
   else process.env.RKT_BIN_DIR = prev;
 });
+
+test("uninstall removes only links pointing at this cli, leaving others intact", async () => {
+  const { installLauncher, uninstallLauncher } = await import("../src/lib/session");
+  const { cliPath } = await stubClient();
+  const other = await stubClient();
+  const binDir = await mkdtemp(join(tmpdir(), "rkt-bin-"));
+
+  await installLauncher({ cliPath, defaultName: "example", binDir });
+  await installLauncher({ cliPath, defaultName: "example", name: "ex-alias", binDir });
+  await symlinkFs(other.cliPath, join(binDir, "other-client")); // unrelated link
+  await writeFile(join(binDir, "realbin"), "#!/bin/sh\n"); // unrelated real file
+
+  const { removed, reinstall } = await uninstallLauncher({ cliPath, binDir });
+
+  expect(removed).toEqual(["ex-alias", "example"]); // sorted
+  expect(reinstall).toBe(`bun ${cliPath} install`);
+  await expect(access(join(binDir, "other-client"))).resolves.toBeNull(); // Bun's fs.access resolves null, not undefined
+  await expect(access(join(binDir, "realbin"))).resolves.toBeNull();
+  await expect(access(join(binDir, "example"))).rejects.toThrow();
+});
+
+test("uninstall leaves the derived client on disk", async () => {
+  const { installLauncher, uninstallLauncher } = await import("../src/lib/session");
+  const { dir, cliPath } = await stubClient();
+  const binDir = await mkdtemp(join(tmpdir(), "rkt-bin-"));
+  await installLauncher({ cliPath, defaultName: "example", binDir });
+  await uninstallLauncher({ cliPath, binDir });
+  await expect(access(cliPath)).resolves.toBeNull(); // Bun's fs.access resolves null, not undefined
+  await expect(access(dir)).resolves.toBeNull();
+});
+
+test("uninstall is a no-op with a reinstall hint when nothing matches", async () => {
+  const { uninstallLauncher } = await import("../src/lib/session");
+  const { cliPath } = await stubClient();
+  const binDir = await mkdtemp(join(tmpdir(), "rkt-bin-"));
+  const { removed, reinstall } = await uninstallLauncher({ cliPath, binDir });
+  expect(removed).toEqual([]);
+  expect(reinstall).toBe(`bun ${cliPath} install`);
+});
+
+test("uninstall returns empty when the bin dir does not exist", async () => {
+  const { uninstallLauncher } = await import("../src/lib/session");
+  const { cliPath } = await stubClient();
+  const { removed } = await uninstallLauncher({ cliPath, binDir: join(tmpdir(), "rkt-does-not-exist-xyz") });
+  expect(removed).toEqual([]);
+});

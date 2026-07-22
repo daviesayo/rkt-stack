@@ -1,4 +1,4 @@
-import { chmod, lstat, mkdir, readFile, realpath, rm, stat, symlink, unlink } from "node:fs/promises";
+import { chmod, lstat, mkdir, readdir, readFile, realpath, rm, stat, symlink, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { validateManifest } from "./manifest-schema";
@@ -256,6 +256,63 @@ export async function installLauncher(opts: {
   const pathHint = onPath ? null : `export PATH="${binDir}:$PATH"`;
 
   return { name, target, pathHint };
+}
+
+export interface UninstallResult {
+  removed: string[];
+  reinstall: string;
+}
+
+/**
+ * Remove every launcher in binDir that resolves to this client's cli.ts, and
+ * nothing else. Stateless (scans by realpath), so it correctly removes custom
+ * --name aliases and multiple installs. Never touches the client directory.
+ */
+export async function uninstallLauncher(opts: {
+  cliPath: string;
+  binDir?: string;
+}): Promise<UninstallResult> {
+  const binDir = opts.binDir ?? launcherBinDir();
+  const reinstall = `bun ${opts.cliPath} install`;
+
+  let entries: string[];
+  try {
+    entries = await readdir(binDir);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return { removed: [], reinstall };
+    throw err;
+  }
+
+  let cliReal: string;
+  try {
+    cliReal = await realpath(opts.cliPath);
+  } catch {
+    cliReal = opts.cliPath;
+  }
+
+  const removed: string[] = [];
+  for (const entry of entries) {
+    const p = join(binDir, entry);
+    let info: Awaited<ReturnType<typeof lstat>>;
+    try {
+      info = await lstat(p);
+    } catch {
+      continue;
+    }
+    if (!info.isSymbolicLink()) continue;
+    let real: string;
+    try {
+      real = await realpath(p);
+    } catch {
+      continue; // broken link points nowhere; not ours to judge
+    }
+    if (real === cliReal) {
+      await unlink(p);
+      removed.push(entry);
+    }
+  }
+  removed.sort();
+  return { removed, reinstall };
 }
 
 const defaultLauncher: Launcher = async ({ site, entryUrl, statePath, wanted, apiHost, tokenEndpoint }) => {
