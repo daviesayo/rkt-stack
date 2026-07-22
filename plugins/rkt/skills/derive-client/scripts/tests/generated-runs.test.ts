@@ -137,6 +137,8 @@ const BIG_SHIFTS = Array.from({ length: 500 }, (_, i) => ({
 
 let workRoot: string;
 let outRoot: string;
+let endpointServer: ReturnType<typeof Bun.serve>;
+let runEndpointCli: (args: string[]) => Promise<CliRun>;
 
 const MANIFEST = {
   schemaVersion: 2,
@@ -165,15 +167,42 @@ const MANIFEST = {
 };
 
 beforeAll(async () => {
+  const port = await getFreePort();
+  endpointServer = Bun.serve({
+    port,
+    hostname: "127.0.0.1",
+    fetch(req) {
+      const url = new URL(req.url);
+      if (/^\/api\/roster\/\d+$/.test(url.pathname)) {
+        return Response.json({ ok: true });
+      }
+      return new Response("not found", { status: 404 });
+    },
+  });
   workRoot = await mkdtemp(join(tmpdir(), "rkt-runs-"));
   const dir = join(workRoot, "recording");
   await mkdir(dir, { recursive: true });
-  await writeFile(join(dir, "client.json"), JSON.stringify(MANIFEST));
+  const manifest = { ...MANIFEST, baseUrl: `http://127.0.0.1:${endpointServer.port}` };
+  await writeFile(join(dir, "client.json"), JSON.stringify(manifest));
   outRoot = join(workRoot, "clients");
   await generateClient(join(dir, "client.json"), outRoot);
+  runEndpointCli = async (args: string[]): Promise<CliRun> => {
+    const env = { ...process.env, NODE_ENV: "test", RKT_CLIENTS_ROOT: workRoot };
+    const proc = Bun.spawn(["bun", join(outRoot, "runs", "cli.ts"), ...args], {
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [stdout, stderr] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+    ]);
+    return { exitCode: await proc.exited, stdout, stderr };
+  };
 });
 
 afterAll(async () => {
+  endpointServer.stop(true);
   await rm(workRoot, { recursive: true, force: true });
 });
 
@@ -186,30 +215,36 @@ test("the generated CLI lists its commands when run with no arguments", async ()
 });
 
 test("--dry-run builds a real request without network access", async () => {
-  const proc = Bun.spawn(
-    ["bun", join(outRoot, "runs", "cli.ts"), "api-roster", "--id", "4821", "--dry-run"],
-    { stderr: "pipe", stdout: "pipe" },
-  );
-  const stdout = await new Response(proc.stdout).text();
-  await proc.exited;
-
+  const { stdout } = await runEndpointCli(["api-roster", "--id", "4821", "--dry-run"]);
   const preview = JSON.parse(stdout);
-  expect(preview.url).toBe("https://x.test/api/roster/4821");
+  expect(preview.url).toMatch(/\/api\/roster\/4821$/);
   expect(preview.method).toBe("GET");
   expect(preview.headers["user-agent"]).toBe("Mozilla/5.0 Chrome/141.0.0.0");
   expect(preview.headers["sec-ch-ua"]).toBe('"Chromium";v="141"');
 });
 
-test("an unknown command exits non-zero and lists the valid ones", async () => {
-  const proc = Bun.spawn(["bun", join(outRoot, "runs", "cli.ts"), "nope"], {
-    stderr: "pipe",
-    stdout: "pipe",
-  });
-  const stderr = await new Response(proc.stderr).text();
-  const code = await proc.exited;
-  expect(code).not.toBe(0);
+test("an unknown command exits 2 with a help hint", async () => {
+  const { exitCode, stderr } = await runEndpointCli(["nope"]);
+  expect(exitCode).toBe(2);
   expect(stderr).toContain("unknown command: nope");
-  expect(stderr).toContain("api-roster");
+  expect(stderr).toContain("run: bun cli.ts help for the command list");
+});
+
+test("an unknown command near-miss suggests the closest name", async () => {
+  const { exitCode, stderr } = await runEndpointCli(["api-roste"]);
+  expect(exitCode).toBe(2);
+  expect(stderr).toContain("did you mean api-roster");
+});
+
+test("endpoint CLI: missing path param prints help and exits 2", async () => {
+  const { exitCode, stderr } = await runEndpointCli(["api-roster"]);
+  expect(exitCode).toBe(2);
+  expect(stderr).toContain("missing required param");
+});
+
+test("endpoint CLI: success footer reports bytes", async () => {
+  const { stderr } = await runEndpointCli(["api-roster", "--id", "1"]);
+  expect(stderr).toMatch(/\[exit:0 \| \d+(\.\d)?s \| \d+ bytes\]/);
 });
 
 test("a generated task CLI runs commands, joins, redacts, and answers whoami", async () => {

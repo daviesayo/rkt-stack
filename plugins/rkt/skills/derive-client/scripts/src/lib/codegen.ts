@@ -150,6 +150,7 @@ import { validateManifest } from "../lib/manifest-schema";
 import { createScheduler } from "../lib/scheduler";
 import { reauthViaProfile } from "../lib/reauth";
 import { refreshViaOidc } from "../lib/refresh";
+import { capText, CliError, footer, writeSpill } from "../lib/overflow";
 import { maskHeaders, readSecrets, redactAll, REFRESH_TOKEN_KEY, writeSecret } from "../lib/secrets";
 import { runLifecycle } from "../lib/session";
 import { buildRequest, issue } from "../lib/transport";
@@ -170,7 +171,52 @@ interface CommandSpec {
 
 const COMMANDS: CommandSpec[] = ${JSON.stringify(commands, null, 2)};
 
-${responseFor}function usage(exitCode = 1): never {
+${responseFor}const STARTED_AT = Date.now();
+
+function fail(message: string, hint: string, exitCode = 1): never {
+  console.error(message);
+  console.error(\`hint: \${hint}\`);
+  console.error(footer({ exitCode, startedAt: STARTED_AT, size: { bytes: 0 } }));
+  process.exit(exitCode);
+}
+
+/** Nearest command name: prefix match first, then smallest edit distance. */
+function suggest(name: string, names: string[]): string | undefined {
+  const pre = names.find((n) => n.startsWith(name) || name.startsWith(n));
+  if (pre) return pre;
+  let best: string | undefined, bestD = 4;
+  for (const n of names) {
+    const d = editDistance(name, n);
+    if (d < bestD) { bestD = d; best = n; }
+  }
+  return best;
+}
+function editDistance(a: string, b: string): number {
+  const dp = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+  for (let j = 0; j <= b.length; j++) dp[0][j] = j;
+  for (let i = 1; i <= a.length; i++)
+    for (let j = 1; j <= b.length; j++)
+      dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+  return dp[a.length][b.length];
+}
+
+function endpointHelp(c: CommandSpec): string {
+  const lines: string[] = [];
+  lines.push(\`\${c.command} — \${c.method} \${c.pathTemplate}\`);
+  if (c.params.length) {
+    lines.push("params:");
+    for (const p of c.params) {
+      lines.push(\`  --\${p.name} <\${p.type}>\${p.in === "path" ? " (required, path)" : " (query)"}\`);
+    }
+  } else {
+    lines.push("params: none");
+  }
+  const example = c.params.map((p) => \`--\${p.name} <value>\`).join(" ");
+  lines.push(\`example: bun cli.ts \${c.command}\${example ? " " + example : ""} --dry-run\`);
+  return lines.join("\\n");
+}
+
+function usage(exitCode = 1): never {
   console.error("usage: bun cli.ts <command> [--param value ...] [--dry-run]");
   console.error("");
   console.error("session:");
@@ -186,6 +232,8 @@ ${responseFor}function usage(exitCode = 1): never {
     const params = c.params.map((p) => \`--\${p.name} <\${p.type}>\`).join(" ");
     console.error(\`  \${c.command.padEnd(28)} \${c.method} \${c.pathTemplate} \${params}\`);
   }
+  console.error("");
+  console.error("run: bun cli.ts <command> --help for params and an example");
   process.exit(exitCode);
 }
 
@@ -203,8 +251,17 @@ async function main() {
 
   const command = COMMANDS.find((c) => c.command === commandName);
   if (!command) {
-    console.error(\`unknown command: \${commandName}\`);
-    usage();
+    const near = suggest(commandName, COMMANDS.map((c) => c.command));
+    fail(
+      \`unknown command: \${commandName}\${near ? \`. did you mean \${near}?\` : ""}\`,
+      "run: bun cli.ts help for the command list",
+      2,
+    );
+  }
+
+  if (process.argv.includes("--help")) {
+    console.log(endpointHelp(command));
+    return;
   }
 
   const params: Record<string, string> = {};
@@ -215,21 +272,32 @@ async function main() {
     }
   }
 
+  for (const p of command.params) {
+    if (p.in === "path" && params[p.name] === undefined) {
+      console.error(endpointHelp(command));
+      fail(\`missing required param: --\${p.name}\`, \`see usage above\`, 2);
+    }
+  }
+
   const manifest = validateManifest(
     JSON.parse(await readFile(new URL("./client.json", import.meta.url), "utf8")),
   );
   const endpoint = manifest.endpoints.find((e) => e.id === command.id);
   if (!endpoint) {
-    console.error(\`endpoint \${command.id} is missing from client.json; regenerate this client\`);
-    process.exit(1);
+    fail(
+      \`endpoint \${command.id} is missing from client.json\`,
+      "regenerate this client: bash regenerate.sh",
+      1,
+    );
   }
 
   const secret = await readSecrets(manifest.site);
   if (manifest.auth && !secret) {
-    console.error(
-      \`no stored credential for "\${manifest.site}". Re-run /derive-client to refresh it.\`,
+    fail(
+      \`no stored credential for "\${manifest.site}"\`,
+      "re-run /derive-client to refresh it",
+      4,
     );
-    process.exit(1);
   }
 
   if (manifest.auth?.expiry && Date.parse(manifest.auth.expiry) < Date.now()) {
@@ -298,9 +366,11 @@ async function main() {
       if (harvested) {
         renewedValues = { ...secret, ...harvested.values };
       } else {
-        console.error(
+        fail(
           \`could not re-authenticate "\${manifest.site}". The saved browser profile is no \` +
             \`longer signed in; re-run /derive-client to sign in again.\`,
+          "re-run /derive-client to sign in again",
+          4,
         );
       }
     }
@@ -313,21 +383,33 @@ async function main() {
   }
 
   if (status >= 400) {
-    console.error(\`HTTP \${status}\`);
-    console.error(redactAll(body, secret).slice(0, 2000));
-    process.exit(1);
+    const redacted = redactAll(body, secret);
+    const spill = await writeSpill(manifest.site, command.command, redacted, new Date()).catch(() => undefined);
+    fail(
+      \`HTTP \${status}\\n\${redacted.slice(0, 2000)}\`,
+      status === 403
+        ? \`the session may lack permission for this resource; if the whole client fails, try: bun cli.ts login\${spill ? \`. full body: \${spill}\` : ""}\`
+        : \`\${spill ? \`full body: \${spill}. \` : ""}re-run with --dry-run to inspect the request\`,
+      status === 401 ? 4 : 1,
+    );
   }
-  console.log(redactAll(body, secret));
+  const redacted = redactAll(body, secret);
+  const cap = capText(redacted);
+  let spillPath: string | undefined;
+  if (cap.capped) {
+    spillPath = await writeSpill(manifest.site, command.command, redacted, new Date());
+    console.error(\`hint: output capped at 50KB; full body: \${spillPath}\`);
+  }
+  console.log(cap.text);
+  console.error(footer({ exitCode: 0, startedAt: STARTED_AT, size: { bytes: Buffer.byteLength(redacted) }, spillPath }));
 }
 
 if (import.meta.main) {
   try {
     await main();
   } catch (err) {
-    // buildRequest throws on a missing path param; without this the user gets
-    // a raw stack trace while every other failure path prints a clean message.
-    console.error((err as Error).message);
-    process.exit(1);
+    if (err instanceof CliError) fail(err.message, err.hint, err.exitCode);
+    fail((err as Error).message, "re-run with --dry-run to inspect the request", 1);
   }
 }
 `;

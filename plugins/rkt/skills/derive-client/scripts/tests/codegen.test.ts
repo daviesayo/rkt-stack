@@ -374,3 +374,13 @@ test("task CLI emits fail(), footer wiring, per-command help, and --full", () =>
   expect(src).toContain("suggest(");
   expect(src).toContain("--help for params and an example");
 });
+
+test("endpoint CLI emits reduced-tier navigation", () => {
+  const src = emitCli(manifest);
+  expect(src).toContain("function fail(");
+  expect(src).toContain("function endpointHelp(");
+  expect(src).toContain("footer(");
+  expect(src).toContain("writeSpill(");
+  expect(src).not.toContain("--full");
+  expect(src).toContain("missing required param");
+});
