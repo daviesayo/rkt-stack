@@ -1,7 +1,7 @@
 # derive-client: heuristic navigation for generated clients
 
 Date: 2026-07-22
-Status: draft (revised after blind review)
+Status: implemented
 Scope: `plugins/rkt/skills/derive-client/scripts/src/lib/codegen.ts`, the shared
 runtime under `scripts/src/lib/` that generated clients import, and the
 generated `cli.ts` output. No changes to record/derive/scaffold flows, to the
