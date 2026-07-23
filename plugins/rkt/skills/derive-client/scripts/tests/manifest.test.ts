@@ -2,11 +2,8 @@ import { expect, test } from "bun:test";
 import { analyzeAuth } from "../src/lib/auth";
 import type { HarEntry } from "../src/lib/har";
 import { groupEndpoints } from "../src/lib/synthesize";
-import { buildManifest, SCHEMA_VERSION, validateManifest } from "../src/lib/manifest";
-import {
-  SCHEMA_VERSION as SCHEMA_VERSION_FROM_SCHEMA,
-  validateManifest as validateFromSchema,
-} from "../src/lib/manifest-schema";
+import { buildManifest } from "../src/lib/manifest";
+import { SCHEMA_VERSION, validateManifest } from "../src/lib/manifest-schema";
 
 function entry(url: string, body: string): HarEntry {
   return {
@@ -181,16 +178,44 @@ test("auth remains null when the analysis found nothing", () => {
   expect(m.auth).toBeNull();
 });
 
+test("schema version is 3", () => {
+  expect(SCHEMA_VERSION).toBe(3);
+});
+
+test("accepts a version 2 manifest as read-only", () => {
+  const v2 = { schemaVersion: 2, site: "x", endpoints: [] };
+  const m = validateManifest(v2);
+  expect(m.schemaVersion).toBe(2);
+  expect(m.mode ?? "read").toBe("read");
+});
+
+test("accepts a version 3 manifest carrying mode full", () => {
+  const v3 = { schemaVersion: 3, site: "x", mode: "full", endpoints: [] };
+  expect(validateManifest(v3).mode).toBe("full");
+});
+
+test("still rejects an unsupported schema version", () => {
+  expect(() => validateManifest({ schemaVersion: 99, site: "x", endpoints: [] })).toThrow(
+    /schema version/i,
+  );
+});
+
+test("rejects an unknown mode value", () => {
+  expect(() =>
+    validateManifest({ schemaVersion: 3, site: "x", mode: "write", endpoints: [] }),
+  ).toThrow(/mode/i);
+});
+
 test("manifest-schema exports the schema half independently", () => {
-  expect(SCHEMA_VERSION_FROM_SCHEMA).toBe(2);
-  expect(() => validateFromSchema({ schemaVersion: 99, site: "x", endpoints: [] })).toThrow(
+  expect(SCHEMA_VERSION).toBe(3);
+  expect(() => validateManifest({ schemaVersion: 99, site: "x", endpoints: [] })).toThrow(
     /schema version/i,
   );
 });
 
 test("manifest re-exports the schema half, so existing imports keep working", async () => {
   const fromManifest = await import("../src/lib/manifest");
-  expect(fromManifest.SCHEMA_VERSION).toBe(SCHEMA_VERSION_FROM_SCHEMA);
+  expect(fromManifest.SCHEMA_VERSION).toBe(SCHEMA_VERSION);
   expect(typeof fromManifest.validateManifest).toBe("function");
 });
 

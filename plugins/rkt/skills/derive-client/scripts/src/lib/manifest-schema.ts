@@ -1,4 +1,7 @@
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
+
+/** Schema versions this codebase can read. v2 clients are read-only. */
+const SUPPORTED_SCHEMA_VERSIONS = new Set([2, 3]);
 
 export interface ParamSpec {
   name: string;
@@ -47,6 +50,19 @@ export type RefreshSpec =
       entryUrl: string;
     };
 
+export interface WriteSemantics {
+  /**
+   * Body field names + types, from the recorded request body. No values.
+   * null when the endpoint takes no body (bodyless POST/PUT, most DELETEs)
+   * or when the recorded body was not JSON.
+   */
+  bodyShape: JsonShape | null;
+  /** Dotted body path -> format hint, e.g. "starts_at" -> "iso8601". */
+  bodyHints: Record<string, string>;
+  /** Observed request Content-Type; null when there is no body. */
+  contentType: string | null;
+}
+
 export interface ManifestEndpoint {
   id: string;
   method: string;
@@ -56,7 +72,7 @@ export interface ManifestEndpoint {
   source: "xhr" | "scrape";
   fragile: boolean;
   selectors: Record<string, string> | null;
-  writeSemantics: null;
+  writeSemantics: WriteSemantics | null;
   stale?: boolean;
 }
 
@@ -74,6 +90,8 @@ export interface ClientManifest {
   /** How to renew credentials when they go stale. */
   refresh: RefreshSpec | null;
   endpoints: ManifestEndpoint[];
+  /** Read-only client (default) or read+write. Absent = "read". */
+  mode?: "read" | "full";
 }
 
 export function validateManifest(value: unknown): ClientManifest {
@@ -81,10 +99,13 @@ export function validateManifest(value: unknown): ClientManifest {
   if (typeof m !== "object" || m === null) {
     throw new Error("manifest must be an object");
   }
-  if (m.schemaVersion !== SCHEMA_VERSION) {
+  if (typeof m.schemaVersion !== "number" || !SUPPORTED_SCHEMA_VERSIONS.has(m.schemaVersion)) {
     throw new Error(
-      `unsupported manifest schema version ${String(m.schemaVersion)}; expected ${SCHEMA_VERSION}`,
+      `unsupported manifest schema version ${String(m.schemaVersion)}; expected one of ${[...SUPPORTED_SCHEMA_VERSIONS].join(", ")}`,
     );
+  }
+  if (m.mode !== undefined && m.mode !== "read" && m.mode !== "full") {
+    throw new Error(`manifest mode must be "read" or "full", got ${JSON.stringify(m.mode)}`);
   }
   if (!Array.isArray(m.endpoints)) {
     throw new Error("manifest must have an endpoints array");

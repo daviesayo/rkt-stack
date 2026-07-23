@@ -33,7 +33,7 @@ test("derives a manifest end to end from the fixture HAR", async () => {
   const har = await stageFixture("sample.har");
   const { manifest, dropped } = await deriveManifest(har, "example");
 
-  expect(manifest.schemaVersion).toBe(2);
+  expect(manifest.schemaVersion).toBe(3);
   expect(manifest.site).toBe("example");
   expect(manifest.baseUrl).toBe("https://example.test");
 
