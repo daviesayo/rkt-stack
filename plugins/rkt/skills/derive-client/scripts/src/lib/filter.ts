@@ -82,11 +82,16 @@ export function filterEntries(
       dropped.push({ url: e.url, reason: `non-success status (${e.status})` });
       continue;
     }
-    if (e.responseBody === null || e.responseBody.length === 0) {
+    const isWrite = !READ_METHODS.has(e.method.toUpperCase());
+
+    // Response-quality gates judge whether a RESPONSE is useful data. A write is
+    // kept for its REQUEST, and a 204 legitimately has neither body nor
+    // content-type, so these two gates apply to reads only.
+    if (!isWrite && (e.responseBody === null || e.responseBody.length === 0)) {
       dropped.push({ url: e.url, reason: "empty response body" });
       continue;
     }
-    if (!DATA_MIME.test(e.mimeType)) {
+    if (!isWrite && !DATA_MIME.test(e.mimeType)) {
       dropped.push({ url: e.url, reason: `non-data content type (${e.mimeType})` });
       continue;
     }
