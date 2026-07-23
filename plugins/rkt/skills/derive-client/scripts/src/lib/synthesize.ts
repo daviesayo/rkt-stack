@@ -1,7 +1,14 @@
 import type { HarEntry } from "./har";
-import type { JsonShape, ParamSpec } from "./manifest-schema";
+import type { JsonShape, ParamSpec, WriteSemantics } from "./manifest-schema";
 
 export type { JsonShape, ParamSpec } from "./manifest-schema";
+
+const READ_METHODS = new Set(["GET", "HEAD"]);
+
+const ISO8601 = /^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)?$/;
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const URL_RE = /^https?:\/\/\S+$/i;
 
 export interface EndpointGroup {
   method: string;
@@ -179,4 +186,105 @@ export function inferShape(bodies: string[]): JsonShape {
     merged = merged === null ? shape : mergeShapes(merged, shape);
   }
   return merged ?? { type: "unknown" };
+}
+
+/** Classify a value's FORMAT. Returns a hint only; the value never escapes. */
+export function formatHint(value: string): string | undefined {
+  if (UUID_RE.test(value)) return "uuid";
+  if (EMAIL.test(value)) return "email";
+  if (URL_RE.test(value)) return "url";
+  if (ISO8601.test(value)) return "iso8601";
+  return undefined;
+}
+
+/**
+ * An object key that classifies as data (an email, uuid, or long opaque id) is
+ * a VALUE wearing a key's clothing. Persisting it as a schema property name
+ * would leak PII into the committed client.json, so such maps collapse to a
+ * single wildcard entry.
+ */
+function isDataKey(key: string): boolean {
+  // A plain length threshold is far too aggressive: real schemas have long
+  // snake_case field names ("organization_identifier", "recipient_email_address"),
+  // and collapsing those to a wildcard silently destroys the body model with no
+  // signal. Only classify a key as data when it looks like an identifier VALUE:
+  // a format-hint match (email/uuid/url/iso8601), or an opaque token with no
+  // word separators and mixed alphanumerics.
+  if (formatHint(key) !== undefined) return true;
+  const opaque = /^[A-Za-z0-9]{16,}$/.test(key) && /\d/.test(key);
+  const prefixedId = /^[a-z]{2,5}[-_][A-Za-z0-9]{10,}$/.test(key); // usr-8YWsBVeEy8stAMd
+  return opaque || prefixedId;
+}
+
+const WILDCARD = "*";
+
+function scrubShape(shape: JsonShape): JsonShape {
+  if (shape.type === "array") return { type: "array", items: scrubShape(shape.items) };
+  if (shape.type !== "object") return shape;
+  const keys = Object.keys(shape.properties);
+  if (keys.length > 0 && keys.every(isDataKey)) {
+    const merged = keys.map((k) => shape.properties[k]).reduce(mergeShapes);
+    return { type: "object", properties: { [WILDCARD]: scrubShape(merged) }, required: [] };
+  }
+  const properties: Record<string, JsonShape> = {};
+  for (const [k, v] of Object.entries(shape.properties)) properties[k] = scrubShape(v);
+  return { type: "object", properties, required: shape.required };
+}
+
+function collectHints(value: unknown, prefix: string, out: Record<string, string>): void {
+  if (Array.isArray(value)) return; // v1: no array-index or wildcard hint syntax
+  if (!value || typeof value !== "object") return;
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    if (isDataKey(k)) continue;
+    const path = prefix ? `${prefix}.${k}` : k;
+    if (typeof v === "string") {
+      const hint = formatHint(v);
+      if (hint) out[path] = hint;
+    } else {
+      collectHints(v, path, out);
+    }
+  }
+}
+
+function isJsonContentType(ct: string): boolean {
+  return /json/i.test(ct);
+}
+
+/**
+ * Model a write endpoint's request body as shape + format hints, never values.
+ * Returns null for a read endpoint. Always non-null for a write, even bodyless,
+ * because its presence is what marks the endpoint as a write downstream.
+ */
+export function inferWriteSemantics(group: EndpointGroup): WriteSemantics | null {
+  if (READ_METHODS.has(group.method.toUpperCase())) return null;
+
+  const contentType =
+    group.samples.map((s) => s.requestHeaders["content-type"] ?? "").find((c) => c.length > 0) ?? null;
+
+  const bodies = group.samples
+    .map((s) => s.postData)
+    .filter((b): b is string => typeof b === "string" && b.length > 0);
+
+  // Bodyless, or a body we do not model in v1 (urlencoded / multipart): record
+  // the content type and stop. inferShape collapses a parse failure to
+  // "unknown" for the whole merge, so these must be caught before it runs.
+  if (bodies.length === 0 || !contentType || !isJsonContentType(contentType)) {
+    return { bodyShape: null, bodyHints: {}, contentType: bodies.length === 0 ? null : contentType };
+  }
+
+  const bodyHints: Record<string, string> = {};
+  let merged: JsonShape | null = null;
+  for (const body of bodies) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      return { bodyShape: null, bodyHints: {}, contentType };
+    }
+    collectHints(parsed, "", bodyHints);
+    const shape = shapeOf(parsed);
+    merged = merged === null ? shape : mergeShapes(merged, shape);
+  }
+
+  return { bodyShape: merged ? scrubShape(merged) : null, bodyHints, contentType };
 }
