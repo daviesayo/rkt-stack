@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.10.0] - 2026-07-23
 
 - derive-client: generated CLIs are now agent-navigable — per-command `--help`
   with a runnable example, errors that state the next step (`hint:` lines,
