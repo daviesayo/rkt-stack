@@ -204,6 +204,20 @@ test("buildRequest serialises a body and sets content-type for a write", () => {
   expect(built.headers["content-type"]).toBe("application/json");
 });
 
+test("buildRequest refuses a JSON body under a recorded non-JSON content type", () => {
+  const ep = {
+    ...WRITE_EP,
+    writeSemantics: {
+      bodyShape: null,
+      bodyHints: {},
+      contentType: "application/x-www-form-urlencoded",
+    },
+  };
+  expect(() => buildRequest(FULL, ep as never, {}, null, { name: "x" })).toThrow(
+    /non-JSON content type|urlencoded|refusing/i,
+  );
+});
+
 test("buildRequest still refuses a write on a read-mode manifest", () => {
   expect(() => buildRequest(BASE_MANIFEST, WRITE_EP as never, {}, null, {})).toThrow(/read mode/i);
 });

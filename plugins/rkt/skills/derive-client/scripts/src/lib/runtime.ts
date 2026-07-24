@@ -117,7 +117,7 @@ export function createCaller(
       `endpoint ${endpointId} returned HTTP ${status}`,
       status === 401
         ? "run: login  (then check: auth status)"
-        : "re-run the command with --dry-run to inspect the request",
+        : "inspect the request before retrying (omit --commit for a write preview)",
       status === 401 ? 4 : 1,
     );
     try {
@@ -125,9 +125,10 @@ export function createCaller(
     } catch {
       throw new CliError(
         `endpoint ${endpointId} did not return JSON`,
-        "re-run the command with --dry-run to inspect the request",
+        "inspect the request before retrying (omit --commit for a write preview)",
       );
     }
+
   }
 
   return {

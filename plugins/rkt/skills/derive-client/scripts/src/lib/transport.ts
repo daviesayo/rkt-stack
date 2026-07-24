@@ -125,9 +125,17 @@ export function buildRequest(
 
   if (!isWrite) return { url, method: endpoint.method, headers };
 
+  const contentType = endpoint.writeSemantics?.contentType ?? "application/json";
+  if (body !== undefined && !/json/i.test(contentType)) {
+    throw new Error(
+      `refusing ${endpoint.method} ${endpoint.pathTemplate}: recorded content type ` +
+        `${JSON.stringify(contentType)} is non-JSON; this client only serialises JSON bodies`,
+    );
+  }
+
   const serialised = body === undefined ? undefined : JSON.stringify(body);
   if (serialised !== undefined) {
-    headers["content-type"] = endpoint.writeSemantics?.contentType ?? "application/json";
+    headers["content-type"] = contentType;
   }
   return { url, method: endpoint.method, headers, body: serialised };
 }

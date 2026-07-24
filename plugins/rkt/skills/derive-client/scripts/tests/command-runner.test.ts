@@ -421,6 +421,7 @@ test("a bare write previews and never calls the network", async () => {
     fetchJson: async () => ({}),
     secret: { "cookie:s": "sekret" },
   };
+  process.env.RKT_ALLOW_WRITES = "1";
   const res = await runCommand(WRITE_CMD as never, {
     manifest: FULL_MANIFEST,
     site: "x",
@@ -436,6 +437,26 @@ test("a bare write previews and never calls the network", async () => {
   expect(res.rendered).toContain("[REDACTED]");
   expect(res.rendered).not.toContain("Party");
   expect(res.rendered).not.toContain("sekret");
+});
+
+test("preview without the env flag raises the enable-writes error", async () => {
+  delete process.env.RKT_ALLOW_WRITES;
+  const caller = {
+    call: async () => ({ status: 201, body: "{}" }),
+    fetchJson: async () => ({}),
+    secret: null,
+  };
+  await expect(
+    runCommand(WRITE_CMD as never, {
+      manifest: FULL_MANIFEST,
+      site: "x",
+      caller: caller as never,
+      flags: { json: true, raw: false },
+      now: new Date(),
+      commit: false,
+      args: { title: "t", count: "1" },
+    } as never),
+  ).rejects.toThrow(/RKT_ALLOW_WRITES/);
 });
 
 test("coerces an @arg to the shape type and sends on commit", async () => {
@@ -473,6 +494,7 @@ test("a command missing write:true on a write endpoint STILL cannot mutate", asy
     secret: null,
   };
   const undeclared = { ...WRITE_CMD, write: undefined };
+  process.env.RKT_ALLOW_WRITES = "1";
   const res = await runCommand(undeclared as never, {
     manifest: FULL_MANIFEST,
     site: "x",
@@ -492,6 +514,7 @@ test("an @arg failing its format hint is rejected before the wire", async () => 
     fetchJson: async () => ({}),
     secret: null,
   };
+  process.env.RKT_ALLOW_WRITES = "1";
   await expect(
     runCommand(HINTED_CMD as never, {
       manifest: HINTED_MANIFEST,

@@ -226,7 +226,7 @@ test("fetchJson throws CliError when response is not JSON", async () => {
   const caller = createCaller(baseManifest(), sched, null);
   const err = await caller.fetchJson("get.data").catch((e) => e);
   expect(err).toBeInstanceOf(CliError);
-  expect((err as CliError).hint).toContain("dry-run");
+  expect((err as CliError).hint).toMatch(/inspect the request|omit --commit/i);
 });
 
 test("a write is not re-issued after a 401 renewal", async () => {

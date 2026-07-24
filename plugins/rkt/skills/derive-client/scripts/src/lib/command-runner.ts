@@ -185,6 +185,16 @@ export async function runCommand(cmd: CommandSpec, opts: RunOpts): Promise<RunRe
   const isWrite = !["GET", "HEAD"].includes(ep.method.toUpperCase());
 
   if (isWrite) {
+    // Both preview and commit require the env gate. The generated CLI also
+    // hides write commands when the flag is off; defend the library boundary.
+    if (!writesEnabled()) {
+      throw new CliError(
+        `${cmd.name} is a write and writes are disabled: set RKT_ALLOW_WRITES=1`,
+        "set RKT_ALLOW_WRITES=1 to enable writes for this session",
+        2,
+      );
+    }
+
     const body =
       cmd.call.body === undefined
         ? undefined
@@ -214,13 +224,6 @@ export async function runCommand(cmd: CommandSpec, opts: RunOpts): Promise<RunRe
       return { kind: "preview", rendered, fullPayload: rendered };
     }
 
-    if (!writesEnabled()) {
-      throw new CliError(
-        `${cmd.name} is a write and writes are disabled: set RKT_ALLOW_WRITES=1`,
-        "set RKT_ALLOW_WRITES=1 to enable writes for this session",
-        2,
-      );
-    }
     const { status, body: resBody } = await caller.call(cmd.call.endpoint, params, body);
     if (status >= 400) {
       throw new CliError(
@@ -259,7 +262,7 @@ export async function runCommand(cmd: CommandSpec, opts: RunOpts): Promise<RunRe
     } else if (status === 403) {
       hint = `the session may lack permission for this resource; if the whole client fails, try: login${spill ? `. full body: ${spill}` : ""}`;
     } else {
-      hint = `${spill ? `full body: ${spill}. ` : ""}re-run with --dry-run to inspect the request`;
+      hint = `${spill ? `full body: ${spill}. ` : ""}inspect the request before retrying (omit --commit for a write preview)`;
     }
     throw new CliError(`HTTP ${status} from ${cmd.call.endpoint}\n${head}`, hint, exitCode);
   }

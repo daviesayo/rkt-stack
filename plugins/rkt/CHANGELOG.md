@@ -8,6 +8,10 @@
   A bare write previews the request and sends nothing. Writes never auto-retry.
   Request bodies are modelled as shape plus format hints; recorded values are
   never persisted.
+- derive-client: refuse JSON bodies under a recorded non-JSON content type;
+  `flagValue` no longer swallows the next `--flag` (so `--title --commit` cannot
+  bind `"--commit"` as a body value); require `RKT_ALLOW_WRITES` for write
+  previews at the `runCommand` boundary, not only in generated CLI visibility.
 
 ## [0.10.0] - 2026-07-23
 

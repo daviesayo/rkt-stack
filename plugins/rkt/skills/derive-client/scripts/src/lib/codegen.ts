@@ -527,7 +527,11 @@ function hasFlag(name: string): boolean {
 }
 function flagValue(name: string): string | undefined {
   const i = process.argv.indexOf(\`--\${name}\`);
-  return i === -1 ? undefined : process.argv[i + 1];
+  if (i === -1) return undefined;
+  const next = process.argv[i + 1];
+  // A bare \`--flag\` with no value must not swallow the next flag (e.g. --commit).
+  if (next === undefined || next.startsWith("--")) return undefined;
+  return next;
 }
 
 function fail(message: string, hint: string, exitCode = 1): never {
@@ -692,7 +696,7 @@ ${whoamiDispatch}
 if (import.meta.main) {
   main().catch((err) => {
     if (err instanceof CliError) fail(err.message, err.hint, err.exitCode);
-    fail((err as Error).message, "re-run with --dry-run to inspect the request", 1);
+    fail((err as Error).message, "for writes, omit --commit to preview; otherwise check --help", 1);
   });
 }
 `;

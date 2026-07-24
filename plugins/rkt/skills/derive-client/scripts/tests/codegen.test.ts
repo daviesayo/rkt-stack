@@ -479,6 +479,11 @@ test("the generated main gates the command list on writesEnabled", () => {
   expect(cli).toContain("writesEnabled");
 });
 
+test("flagValue refuses to bind the next token when it is another flag", () => {
+  const cli = emitCli(FULL_MANIFEST, COMMANDS_WITH_WRITE);
+  expect(cli).toMatch(/next\.startsWith\(["'`]--["'`]\)/);
+});
+
 const ARRAY_BODY_MANIFEST: ClientManifest = {
   ...FULL_MANIFEST,
   endpoints: [
