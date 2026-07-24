@@ -76,6 +76,8 @@ test("rejects non-object call.params", () => {
 
 const ep = (id: string, pathParams: number) => ({
   id,
+  method: "GET",
+  writeSemantics: null,
   params: Array.from({ length: pathParams }, (_, i) => ({
     name: i === 0 ? "id" : `id${i + 1}`,
     in: "path" as const,
@@ -136,7 +138,7 @@ test("assertResolvable accepts an identity endpoint whose required query param i
     identity: { endpoint: "get.user.profile", params: { username: "usr-me" }, idField: "user.api_id", display: ["user.name"] },
     commands: [],
   });
-  const eps = [{ id: "get.user.profile", params: [{ name: "username", in: "query", type: "string", required: true }] }];
+  const eps = [{ id: "get.user.profile", method: "GET", writeSemantics: null, params: [{ name: "username", in: "query", type: "string", required: true }] }];
   expect(() => assertResolvable(cf, eps as never)).not.toThrow();
 });
 
@@ -146,7 +148,7 @@ test("assertResolvable rejects when a required identity param is missing", () =>
     identity: { endpoint: "get.user.profile", idField: "user.api_id", display: ["user.name"] },
     commands: [],
   });
-  const eps = [{ id: "get.user.profile", params: [{ name: "username", in: "query", type: "string", required: true }] }];
+  const eps = [{ id: "get.user.profile", method: "GET", writeSemantics: null, params: [{ name: "username", in: "query", type: "string", required: true }] }];
   expect(() => assertResolvable(cf, eps as never)).toThrow(/username/);
   expect(() => assertResolvable(cf, eps as never)).toThrow(/identity\.params/);
 });
@@ -157,7 +159,7 @@ test("assertResolvable accepts a param-free identity endpoint (back-compat)", ()
     identity: { endpoint: "get.api.v1.employees.924", idField: "id", display: ["full_name"] },
     commands: [],
   });
-  const eps = [{ id: "get.api.v1.employees.924", params: [] }];
+  const eps = [{ id: "get.api.v1.employees.924", method: "GET", writeSemantics: null, params: [] }];
   expect(() => assertResolvable(cf, eps as never)).not.toThrow();
 });
 
@@ -187,4 +189,44 @@ test("identity without params still validates (back-compat)", () => {
     commands: [],
   });
   expect(cf.identity?.params).toBeUndefined();
+});
+
+const WRITE_EP = { id: "post.api.events", params: [], method: "POST", writeSemantics: { bodyShape: null, bodyHints: {}, contentType: "application/json" } };
+const READ_EP = { id: "get.api.events", params: [], method: "GET", writeSemantics: null };
+
+const file = (cmd: Record<string, unknown>) => ({
+  schemaVersion: 1,
+  site: "x",
+  commands: [{ name: "c", summary: "s", output: { kind: "json" }, redact: [], ...cmd }],
+});
+
+test("write and call.body survive validation", () => {
+  const f = validateCommandsFile(
+    file({ write: true, call: { endpoint: "post.api.events", body: { name: "@arg:title" } } }),
+  );
+  expect(f.commands[0].write).toBe(true);
+  expect(f.commands[0].call.body).toEqual({ name: "@arg:title" });
+});
+
+test("rejects a command on a write endpoint without write: true", () => {
+  const f = validateCommandsFile(file({ call: { endpoint: "post.api.events" } }));
+  expect(() => assertResolvable(f, [WRITE_EP] as never)).toThrow(/write: true/);
+});
+
+test("rejects write: true on a read endpoint", () => {
+  const f = validateCommandsFile(file({ write: true, call: { endpoint: "get.api.events" } }));
+  expect(() => assertResolvable(f, [READ_EP] as never)).toThrow(/is not a write endpoint/);
+});
+
+test("rejects a non-boolean write", () => {
+  expect(() => validateCommandsFile(file({ write: "yes", call: { endpoint: "x" } }))).toThrow(/write/);
+});
+
+test("rejects an @arg hole with no modelled body shape", () => {
+  const f = { schemaVersion: 1, site: "x", commands: [{
+    name: "event-create", summary: "", write: true,
+    call: { endpoint: "post.api.events", body: { nope: "@arg:nope" } },
+    output: { kind: "json" }, redact: [],
+  }] };
+  expect(() => assertResolvable(f as never, [WRITE_EP] as never)).toThrow(/no modelled shape/);
 });

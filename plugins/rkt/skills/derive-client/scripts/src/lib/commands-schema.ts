@@ -1,4 +1,4 @@
-import type { ManifestEndpoint } from "./manifest-schema";
+import type { JsonShape, ManifestEndpoint } from "./manifest-schema";
 
 export const COMMANDS_SCHEMA_VERSION = 1;
 
@@ -27,10 +27,12 @@ export interface CommandOutput {
 export interface CommandSpec {
   name: string;
   summary: string;
-  call: { endpoint: string; params?: Record<string, string> };
+  call: { endpoint: string; params?: Record<string, string>; body?: unknown };
   join?: JoinSpec[];
   output: CommandOutput;
   redact?: string[];
+  /** Marks a mutating command. Required when call targets a write endpoint. */
+  write?: boolean;
 }
 
 export interface CommandsFile {
@@ -106,13 +108,21 @@ function validateCommand(c: unknown): CommandSpec {
         : fail(`${o.name}.output.rows`, "must be a string");
   const join = Array.isArray(o.join) ? o.join.map((j) => validateJoin(j, o.name!)) : undefined;
   const redact = Array.isArray(o.redact) ? validateStringArray(o.redact, `${o.name}.redact`) : [];
+  if (o.write !== undefined && typeof o.write !== "boolean") {
+    fail(`${o.name}.write`, "must be a boolean");
+  }
   return {
     name: o.name,
     summary: o.summary,
-    call: { endpoint: o.call.endpoint, params: validateParams(o.call.params, o.name) },
+    call: {
+      endpoint: o.call.endpoint,
+      params: validateParams(o.call.params, o.name),
+      ...(o.call.body === undefined ? {} : { body: o.call.body }),
+    },
     join,
     output: { ...output, columns, rows },
     redact,
+    ...(o.write === undefined ? {} : { write: o.write }),
   };
 }
 
@@ -135,12 +145,48 @@ export function validateCommandsFile(value: unknown): CommandsFile {
   return { schemaVersion: o.schemaVersion, site: o.site, identity, commands: o.commands.map(validateCommand) };
 }
 
+type ResolvableEndpoint = Pick<ManifestEndpoint, "id" | "params" | "method" | "writeSemantics">;
+
+const READ_METHODS = new Set(["GET", "HEAD"]);
+
+/** The JsonShape type at a dotted body path, if the manifest models one. */
+export function shapeTypeAt(shape: JsonShape | null | undefined, path: string): string | undefined {
+  let node: JsonShape | undefined = shape ?? undefined;
+  for (const key of path.split(".").filter(Boolean)) {
+    if (!node || node.type !== "object") return undefined;
+    node = node.properties[key];
+  }
+  return node?.type;
+}
+
+function argPaths(body: unknown, prefix = ""): string[] {
+  if (body === undefined || body === null) return [];
+  if (typeof body === "string") {
+    return body.startsWith("@arg:") && prefix ? [prefix] : [];
+  }
+  if (Array.isArray(body)) {
+    return body.flatMap((item, i) => {
+      const p = prefix ? `${prefix}.${i}` : String(i);
+      if (typeof item === "string" && item.startsWith("@arg:")) return [p];
+      return argPaths(item, p);
+    });
+  }
+  if (typeof body === "object") {
+    return Object.entries(body).flatMap(([key, value]) => {
+      const p = prefix ? `${prefix}.${key}` : key;
+      if (typeof value === "string" && value.startsWith("@arg:")) return [p];
+      return argPaths(value, p);
+    });
+  }
+  return [];
+}
+
 export function assertResolvable(
   commands: CommandsFile,
-  endpoints: Pick<ManifestEndpoint, "id" | "params">[],
+  endpoints: ResolvableEndpoint[],
 ): void {
   const byId = new Map(endpoints.map((e) => [e.id, e]));
-  const need = (cmd: string, endpoint: string): Pick<ManifestEndpoint, "id" | "params"> => {
+  const need = (cmd: string, endpoint: string): ResolvableEndpoint => {
     const ep = byId.get(endpoint);
     if (!ep) {
       throw new Error(
@@ -163,7 +209,29 @@ export function assertResolvable(
     }
   }
   for (const c of commands.commands) {
-    need(c.name, c.call.endpoint);
+    const ep = need(c.name, c.call.endpoint);
+    const isWrite = !READ_METHODS.has(ep.method.toUpperCase());
+    if (isWrite && c.write !== true) {
+      throw new Error(
+        `commands.json: ${c.name} targets write endpoint '${ep.id}' (${ep.method}) ` +
+          `but is missing write: true; a mutating command must declare itself`,
+      );
+    }
+    if (!isWrite && c.write === true) {
+      throw new Error(
+        `commands.json: ${c.name} declares "write": true but '${ep.id}' is not a write endpoint`,
+      );
+    }
+
+    for (const path of argPaths(c.call.body)) {
+      if (shapeTypeAt(ep.writeSemantics?.bodyShape ?? null, path) === undefined) {
+        throw new Error(
+          `commands.json: ${c.name} body path '${path}' has no modelled shape in ` +
+            `'${ep.id}'; remove the @arg: hole or re-derive with --mode full`,
+        );
+      }
+    }
+
     for (const j of c.join ?? []) {
       const ep = need(c.name, j.endpoint);
       const pathParams = ep.params.filter((p) => p.in === "path");
