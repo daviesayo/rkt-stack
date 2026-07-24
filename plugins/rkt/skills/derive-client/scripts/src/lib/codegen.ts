@@ -442,7 +442,14 @@ function argFlags(
       });
       return;
     }
-    if (node && typeof node === "object" && !Array.isArray(node)) {
+    if (Array.isArray(node)) {
+      node.forEach((item, i) => {
+        const p = path ? `${path}.${i}` : String(i);
+        walk(item, p);
+      });
+      return;
+    }
+    if (node && typeof node === "object") {
       for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
         walk(v, path ? `${path}.${k}` : k);
       }

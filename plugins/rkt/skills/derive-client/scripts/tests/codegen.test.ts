@@ -478,3 +478,60 @@ test("the generated main gates the command list on writesEnabled", () => {
   const cli = emitCli(FULL_MANIFEST, COMMANDS_WITH_WRITE);
   expect(cli).toContain("writesEnabled");
 });
+
+const ARRAY_BODY_MANIFEST: ClientManifest = {
+  ...FULL_MANIFEST,
+  endpoints: [
+    {
+      id: "post.api.events",
+      method: "POST",
+      pathTemplate: "/api/events",
+      params: [],
+      responseShape: { type: "unknown" },
+      source: "xhr",
+      fragile: false,
+      selectors: null,
+      writeSemantics: {
+        bodyShape: {
+          type: "object",
+          properties: {
+            items: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: { title: { type: "string" } },
+                required: ["title"],
+              },
+            },
+          },
+          required: ["items"],
+        },
+        bodyHints: { "items.0.title": "event title" },
+        contentType: "application/json",
+      },
+    },
+  ],
+};
+
+const COMMANDS_WITH_ARRAY_BODY: CommandsFile = {
+  schemaVersion: 1,
+  site: "x",
+  commands: [
+    {
+      name: "event-create",
+      summary: "Create an event",
+      write: true,
+      call: {
+        endpoint: "post.api.events",
+        body: { items: [{ title: "@arg:title" }] },
+      },
+      output: { kind: "json" },
+      redact: [],
+    },
+  ],
+};
+
+test("a curated write with an array body hole emits --title in ARG_HELP", () => {
+  const cli = emitCli(ARRAY_BODY_MANIFEST, COMMANDS_WITH_ARRAY_BODY);
+  expect(cli).toContain('"event-create":["  --title <event title>"]');
+});
