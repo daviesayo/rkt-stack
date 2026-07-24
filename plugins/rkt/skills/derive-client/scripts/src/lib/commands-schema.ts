@@ -153,8 +153,14 @@ const READ_METHODS = new Set(["GET", "HEAD"]);
 export function shapeTypeAt(shape: JsonShape | null | undefined, path: string): string | undefined {
   let node: JsonShape | undefined = shape ?? undefined;
   for (const key of path.split(".").filter(Boolean)) {
-    if (!node || node.type !== "object") return undefined;
-    node = node.properties[key];
+    if (!node) return undefined;
+    if (/^\d+$/.test(key)) {
+      if (node.type !== "array") return undefined;
+      node = node.items;
+    } else {
+      if (node.type !== "object") return undefined;
+      node = node.properties[key];
+    }
   }
   return node?.type;
 }

@@ -230,3 +230,22 @@ test("rejects an @arg hole with no modelled body shape", () => {
   }] };
   expect(() => assertResolvable(f as never, [WRITE_EP] as never)).toThrow(/no modelled shape/);
 });
+
+test("assertResolvable accepts an @arg hole in a modelled array body", () => {
+  const f = { schemaVersion: 1, site: "x", commands: [{
+    name: "tag-update", summary: "", write: true,
+    call: { endpoint: "post.api.tags", body: ["@arg:tags_0"] },
+    output: { kind: "json" }, redact: [],
+  }] };
+  const endpoints = [{
+    id: "post.api.tags",
+    params: [],
+    method: "POST",
+    writeSemantics: {
+      bodyShape: { type: "array", items: { type: "string" } },
+      bodyHints: {},
+      contentType: "application/json",
+    },
+  }];
+  expect(() => assertResolvable(f as never, endpoints as never)).not.toThrow();
+});
