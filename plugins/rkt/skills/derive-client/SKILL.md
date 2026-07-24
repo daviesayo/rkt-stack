@@ -27,7 +27,8 @@ client replays plain HTTP calls.
 
 This skill records a session, derives a `client.json` endpoint manifest, and
 generates a standalone typed CLI. It has two design modes for shaping that CLI
-into domain tasks (below). `full` (read + write) mode arrives in a later plan.
+into domain tasks (below). **Full mode** (read + write) is available — see
+[Full mode (read + write)](#full-mode-read--write) below.
 
 ## Design modes
 
@@ -223,6 +224,10 @@ Never print the credential's value. Report only its kind, location, and expiry.
 
 ## Step 8: Verify with a real call
 
+`call.ts` is the read-only smoke path — it exercises GET and HEAD endpoints
+only. It cannot exercise a write; curated write commands (preview +
+`--commit`) are verified after generation (see [Full mode](#full-mode-read--write)).
+
 ```bash
 RKT_PLUGIN_ROOT="${RKT_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-<installed-rkt-plugin-root>}}"
 SCRIPTS="${RKT_PLUGIN_ROOT}/skills/derive-client/scripts"
@@ -254,8 +259,36 @@ Rotated tokens are written back, so a scheduled job stays signed in without
 help. Only when the profile itself is no longer signed in does a human need to
 re-run this skill.
 
-Only GET and HEAD endpoints can be called. Recorded writes are excluded from
-the manifest in read mode, and `call` refuses them even if one appears.
+`call.ts` is read-only by its own guard: it refuses any non-GET/HEAD endpoint
+regardless of manifest mode or `RKT_ALLOW_WRITES`. Recorded writes are excluded
+from read-mode manifests; in full mode, writes go through curated commands in
+`commands.json` (preview + `--commit` + env gate), not through `call.ts`.
+
+## Full mode (read + write)
+
+**Recording a write performs it.** You cannot capture `event-create` without
+creating an event. Use disposable test data you are willing to leave behind,
+and say plainly that recording mutates real state.
+
+**Derive with `--mode full`:**
+
+```bash
+(cd "$SCRIPTS" && bun src/derive.ts --site "$SITE" --har "$HAR" --mode full)
+```
+
+**Author the write task fresh.** Never paste a recorded body; the manifest
+stores only shape and hints. Mark caller fields `@arg:<name>` (flag name is
+verbatim), pin everything else. A literal leading `@` must be escaped `@@`.
+
+**The two-step gate:** a bare run previews the built request and sends nothing;
+`--commit` sends it. Both preview and commit require `RKT_ALLOW_WRITES=1`.
+
+**Agent rule:** an agent MUST show the previewed request to the human and get
+explicit approval before adding `--commit`. `--commit` is a permission-required
+action.
+
+**Limitations:** JSON request bodies only; writes answering 3xx are not
+derived; writes never auto-retry, so a 401 mid-write reports may-have-applied.
 
 ## Step 9: Generate the typed client
 

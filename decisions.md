@@ -7,6 +7,8 @@
 
 ## Entries
 
+[2026-07-24 11:00] | derive-client full mode ships behind four independent gates: manifest derived with `--mode full`, `RKT_ALLOW_WRITES=1` (fail-closed truthiness at send time), an authored `commands.json` task with `write: true`, and `--commit` to send (bare run previews only). `call.ts` stays read-only permanently. Writes never auto-retry — a 401 mid-write reports may-have-applied; attended-path idempotency only; unattended/cron writes remain out of scope | Four gates make accidental mutation hard: env off hides writes from help, uncurated fallback never emits writes, and preview-before-commit gives the operator a consent step. No auto-retry avoids double mutation on partial failure | davies+claude (unreleased)
+
 [2026-07-20 14:00] | derive-client introduces a Bun/TypeScript workspace with a pinned Playwright dependency under `plugins/rkt/skills/derive-client/scripts/` | The plugin was bash + Python only. HAR recording requires Playwright, and the derivation passes need real data structures and typed manifests that bash cannot express safely. Scoped to the one skill: no other skill gains a Node dependency, and `tests/test-derive-client.sh` skips rather than fails when bun is absent | davies+claude (0.4.0)
 [2026-07-20 14:05] | `record.ts` exposes a stdin JSON-lines control protocol; the driving agent issues one command per bash call and every command is appended to `flows.json` | The recorder must own the Playwright context to configure `recordHar` at launch, but the guided crawl is agent-driven. A stdin protocol keeps HAR configuration with the recorder, keeps navigation with the agent, and produces machine-replayable flows for the repair path in one mechanism | davies+claude (0.4.0)
 

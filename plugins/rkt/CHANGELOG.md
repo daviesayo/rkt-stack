@@ -2,13 +2,12 @@
 
 ## [Unreleased]
 
-- derive-client full mode: codegen emits curated write commands with `@arg` flags
-  and `--commit`, gates them behind `RKT_ALLOW_WRITES`, and never emits writes
-  through the uncurated fallback CLI.
-- derive-client full mode: write commands preview the built request by default
-  (credentials masked, body redactions applied) and only send on `--commit` with
-  `RKT_ALLOW_WRITES=1`; `@arg:` values are coerced to modelled body types and
-  format hints are validated before the wire.
+- derive-client: full mode (`--mode full`) derives write endpoints and emits
+  curated write commands. Writes are gated four ways: derived in full mode,
+  `RKT_ALLOW_WRITES=1`, an authored `commands.json` task, and `--commit`.
+  A bare write previews the request and sends nothing. Writes never auto-retry.
+  Request bodies are modelled as shape plus format hints; recorded values are
+  never persisted.
 
 ## [0.10.0] - 2026-07-23
 
