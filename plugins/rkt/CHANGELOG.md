@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+- derive-client full mode: write commands preview the built request by default
+  (credentials masked, body redactions applied) and only send on `--commit` with
+  `RKT_ALLOW_WRITES=1`; `@arg:` values are coerced to modelled body types and
+  format hints are validated before the wire.
+
 ## [0.10.0] - 2026-07-23
 
 - derive-client: generated CLIs are now agent-navigable — per-command `--help`
