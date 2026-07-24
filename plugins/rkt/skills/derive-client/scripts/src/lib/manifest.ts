@@ -1,6 +1,6 @@
 import type { AuthBundle, AuthSpec, ClientManifest, ManifestEndpoint, RefreshSpec } from "./manifest-schema";
 import type { EndpointGroup } from "./synthesize";
-import { inferShape } from "./synthesize";
+import { inferShape, inferWriteSemantics } from "./synthesize";
 import { SCHEMA_VERSION, validateManifest } from "./manifest-schema";
 
 export type { AuthSpec, AuthBundle, ClientManifest, ManifestEndpoint, RefreshSpec } from "./manifest-schema";
@@ -14,6 +14,7 @@ export interface BuildManifestInput {
   auth?: AuthSpec | null;
   authBundle?: AuthBundle | null;
   refresh?: RefreshSpec | null;
+  mode?: "read" | "full";
 }
 
 function endpointId(method: string, pathTemplate: string): string {
@@ -53,7 +54,7 @@ export function buildManifest(input: BuildManifestInput): ClientManifest {
       source: isHtml ? "scrape" : "xhr",
       fragile: isHtml,
       selectors: null,
-      writeSemantics: null,
+      writeSemantics: inferWriteSemantics(g),
     };
   });
 
@@ -66,6 +67,7 @@ export function buildManifest(input: BuildManifestInput): ClientManifest {
   return {
     schemaVersion: SCHEMA_VERSION,
     site,
+    ...(input.mode === "full" ? { mode: "full" as const } : {}),
     baseUrl: groups[0]?.origin ?? "",
     recordedAt,
     harSha256,

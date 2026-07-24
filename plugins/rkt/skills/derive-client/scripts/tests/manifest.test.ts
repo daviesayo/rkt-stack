@@ -237,3 +237,45 @@ test("validateManifest rejects a site with path separators or ..", () => {
     ).toThrow(/single path segment/i);
   }
 });
+
+const writeGroup = {
+  method: "POST",
+  origin: "https://x.test",
+  pathTemplate: "/api/events",
+  params: [],
+  samples: [
+    {
+      url: "https://x.test/api/events",
+      method: "POST",
+      status: 201,
+      mimeType: "application/json",
+      responseBody: "{}",
+      postData: '{"name":"x"}',
+      startedDateTime: "2026-07-24T00:00:00.000Z",
+      requestHeaders: { "content-type": "application/json" },
+    },
+  ],
+} as never;
+
+test("full mode stamps mode and populates writeSemantics", () => {
+  const m = buildManifest({
+    site: "x",
+    groups: [writeGroup],
+    harSha256: "d",
+    recordedAt: "2026-07-24T00:00:00.000Z",
+    mode: "full",
+  } as never);
+  expect(m.mode).toBe("full");
+  expect(m.endpoints[0].writeSemantics).not.toBeNull();
+  expect(m.endpoints[0].writeSemantics!.bodyShape).not.toBeNull();
+});
+
+test("read mode leaves writeSemantics null and mode read", () => {
+  const m = buildManifest({
+    site: "x",
+    groups: [],
+    harSha256: "d",
+    recordedAt: "2026-07-24T00:00:00.000Z",
+  } as never);
+  expect(m.mode ?? "read").toBe("read");
+});

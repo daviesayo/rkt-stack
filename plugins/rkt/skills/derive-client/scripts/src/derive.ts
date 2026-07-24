@@ -27,7 +27,11 @@ export interface DeriveResult {
   notes: string[];
 }
 
-export async function deriveManifest(harPath: string, site: string): Promise<DeriveResult> {
+export async function deriveManifest(
+  harPath: string,
+  site: string,
+  opts: { mode?: "read" | "full" } = {},
+): Promise<DeriveResult> {
   const absHar = assertUnderRktRoot(resolve(harPath));
   const entries = await readHar(absHar);
   const notes: string[] = [];
@@ -55,7 +59,7 @@ export async function deriveManifest(harPath: string, site: string): Promise<Der
     }
   });
 
-  const { kept, dropped } = filterEntries(originEntries);
+  const { kept, dropped } = filterEntries(originEntries, { allowWrites: opts.mode === "full" });
   const groups = groupEndpoints(kept);
 
   // Auth analysis sees the API-origin entries for coverage (so a credential
@@ -94,6 +98,7 @@ export async function deriveManifest(harPath: string, site: string): Promise<Der
       auth: bundle?.credentials[0] ?? null,
       authBundle: bundle,
       refresh: detected.spec,
+      mode: opts.mode,
     }),
     dropped,
     secrets,
@@ -112,12 +117,20 @@ async function main() {
   const site = arg("site");
   const har = arg("har");
   if (!site || !har) {
-    console.error("usage: bun src/derive.ts --site <site> --har <path>");
+    console.error("usage: bun src/derive.ts --site <site> --har <path> [--mode full]");
     process.exit(1);
   }
 
+  const mode = arg("mode") === "full" ? "full" : "read";
+  if (mode === "full") {
+    console.error(
+      "FULL MODE: write endpoints (POST/PUT/PATCH/DELETE) will be derived. " +
+        "They stay inert until you author a write task and set RKT_ALLOW_WRITES.",
+    );
+  }
+
   const absHar = assertUnderRktRoot(resolve(har));
-  const { manifest, dropped, secrets, origin, notes } = await deriveManifest(absHar, site);
+  const { manifest, dropped, secrets, origin, notes } = await deriveManifest(absHar, site, { mode });
   const outPath = `${dirname(absHar)}/client.json`;
   await writeFile(outPath, `${JSON.stringify(manifest, null, 2)}\n`);
 
