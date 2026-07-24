@@ -13,6 +13,33 @@ import { validateManifest } from "./lib/manifest";
 import type { ClientManifest, JsonShape, ManifestEndpoint, ParamSpec } from "./lib/manifest-schema";
 import type { CommandsFile, IdentitySpec } from "./lib/commands-schema";
 
+const READ_METHODS = new Set(["GET", "HEAD"]);
+
+/** Every scalar leaf becomes an editable hole; the curator prunes and pins. */
+function stubBody(shape: JsonShape | null, prefix = ""): unknown {
+  if (!shape || shape.type !== "object") return undefined;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(shape.properties)) {
+    if (k === "*") {
+      out["__scrubbed__"] =
+        "REPLACE: this object was keyed by data (ids/emails); author it by hand";
+      continue;
+    }
+    const path = prefix ? `${prefix}_${k}` : k;
+    if (v.type === "object") {
+      out[k] = stubBody(v, path);
+    } else if (v.type === "array") {
+      out[k] =
+        v.items.type === "object"
+          ? [stubBody(v.items, `${path}_0`)]
+          : [`@arg:${path}_0`];
+    } else {
+      out[k] = `@arg:${path}`;
+    }
+  }
+  return out;
+}
+
 const NAME_FIELDS = ["name", "full_name", "display_name", "first_name"];
 const ID_FIELDS = ["api_id", "id", "uuid", "user_id", "username"];
 const USER_PROP_NAMES = ["user", "profile", "account", "me", "viewer", "employee", "member"];
@@ -77,17 +104,27 @@ function detectIdentity(manifest: ClientManifest): IdentitySpec | undefined {
 }
 
 export function scaffoldCommands(manifest: ClientManifest): CommandsFile {
-  const names = commandNames(manifest.endpoints);
+  const allowWrites = manifest.mode === "full";
+  const names = commandNames(manifest.endpoints, { allowWrites });
   const identity = detectIdentity(manifest);
   const commands = manifest.endpoints
     .filter((e) => e.id !== identity?.endpoint)
-    .map((e) => ({
-      name: names.get(e.id)!,
-      summary: `${e.method} ${e.pathTemplate}`,
-      call: { endpoint: e.id, params: {} as Record<string, string> },
-      output: { kind: "json" as const },
-      redact: [] as string[],
-    }));
+    .map((e) => {
+      const isWrite = !READ_METHODS.has(e.method.toUpperCase());
+      const body = isWrite ? stubBody(e.writeSemantics?.bodyShape ?? null) : undefined;
+      return {
+        name: names.get(e.id)!,
+        summary: `${e.method} ${e.pathTemplate}`,
+        call: {
+          endpoint: e.id,
+          params: {} as Record<string, string>,
+          ...(body === undefined ? {} : { body }),
+        },
+        output: { kind: "json" as const },
+        redact: [] as string[],
+        ...(isWrite ? { write: true } : {}),
+      };
+    });
 
   return { schemaVersion: 1, site: manifest.site, identity, commands };
 }

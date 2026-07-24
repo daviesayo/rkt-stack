@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { scaffoldCommands } from "../src/scaffold-commands";
-import { validateCommandsFile } from "../src/lib/commands-schema";
+import { assertResolvable, validateCommandsFile } from "../src/lib/commands-schema";
 import type { ClientManifest, JsonShape, ManifestEndpoint } from "../src/lib/manifest-schema";
 
 function e(over: Partial<ManifestEndpoint>): ManifestEndpoint {
@@ -99,4 +99,175 @@ test("emits no identity when nothing looks like a user object", () => {
         responseShape: { type: "object", properties: { things: { type: "array", items: { type: "unknown" } } }, required: [] } }),
   ]));
   expect(cf.identity).toBeUndefined();
+});
+
+const FULL_MANIFEST: ClientManifest = {
+  schemaVersion: 3,
+  site: "x",
+  baseUrl: "https://x.test",
+  recordedAt: "2026-07-24T00:00:00.000Z",
+  harSha256: "d",
+  userAgent: "UA",
+  clientHints: {},
+  auth: { kind: "cookie", location: "cookie:s", mintedBy: null, expiry: null },
+  authBundle: null,
+  refresh: null,
+  mode: "full",
+  endpoints: [
+    {
+      id: "post.api.events",
+      method: "POST",
+      pathTemplate: "/api/events",
+      params: [],
+      responseShape: { type: "unknown" },
+      source: "xhr",
+      fragile: false,
+      selectors: null,
+      writeSemantics: {
+        bodyShape: {
+          type: "object",
+          properties: {
+            name: { type: "string" },
+            count: { type: "number" },
+          },
+          required: [],
+        },
+        bodyHints: {},
+        contentType: "application/json",
+      },
+    },
+  ],
+};
+
+test("scaffolds a write endpoint as a write: true stub with @arg holes", () => {
+  const file = scaffoldCommands(FULL_MANIFEST);
+  const cmd = file.commands.find((c) => c.call.endpoint === "post.api.events")!;
+  expect(cmd.write).toBe(true);
+  expect(cmd.call.body).toEqual({ name: "@arg:name", count: "@arg:count" });
+  expect(() => assertResolvable(file, FULL_MANIFEST.endpoints)).not.toThrow();
+});
+
+test("scaffolds array-typed body leaves as shape-correct stubs", () => {
+  const manifest: ClientManifest = {
+    ...FULL_MANIFEST,
+    endpoints: [{
+      id: "post.api.tags",
+      method: "POST",
+      pathTemplate: "/api/tags",
+      params: [],
+      responseShape: { type: "unknown" },
+      source: "xhr",
+      fragile: false,
+      selectors: null,
+      writeSemantics: {
+        bodyShape: {
+          type: "object",
+          properties: {
+            tags: { type: "array", items: { type: "string" } },
+            items: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: { label: { type: "string" } },
+                required: [],
+              },
+            },
+          },
+          required: [],
+        },
+        bodyHints: {},
+        contentType: "application/json",
+      },
+    }],
+  };
+  const file = scaffoldCommands(manifest);
+  const cmd = file.commands[0];
+  expect(cmd.call.body).toEqual({
+    tags: ["@arg:tags_0"],
+    items: [{ label: "@arg:items_0_label" }],
+  });
+  expect(() => assertResolvable(file, manifest.endpoints)).not.toThrow();
+});
+
+test("threads full accumulated prefix for nested @arg holes", () => {
+  const manifest: ClientManifest = {
+    ...FULL_MANIFEST,
+    endpoints: [{
+      id: "post.api.nested",
+      method: "POST",
+      pathTemplate: "/api/nested",
+      params: [],
+      responseShape: { type: "unknown" },
+      source: "xhr",
+      fragile: false,
+      selectors: null,
+      writeSemantics: {
+        bodyShape: {
+          type: "object",
+          properties: {
+            a: {
+              type: "object",
+              properties: { b: { type: "object", properties: { name: { type: "string" } }, required: [] } },
+              required: [],
+            },
+            c: {
+              type: "object",
+              properties: { b: { type: "object", properties: { name: { type: "string" } }, required: [] } },
+              required: [],
+            },
+          },
+          required: [],
+        },
+        bodyHints: {},
+        contentType: "application/json",
+      },
+    }],
+  };
+  const file = scaffoldCommands(manifest);
+  const body = file.commands[0].call.body as Record<string, unknown>;
+  expect(body).toEqual({
+    a: { b: { name: "@arg:a_b_name" } },
+    c: { b: { name: "@arg:c_b_name" } },
+  });
+  expect(() => assertResolvable(file, manifest.endpoints)).not.toThrow();
+});
+
+test("scrubbed map keys emit a marker, not an @arg hole", () => {
+  const manifest: ClientManifest = {
+    ...FULL_MANIFEST,
+    endpoints: [{
+      id: "post.api.map",
+      method: "POST",
+      pathTemplate: "/api/map",
+      params: [],
+      responseShape: { type: "unknown" },
+      source: "xhr",
+      fragile: false,
+      selectors: null,
+      writeSemantics: {
+        bodyShape: {
+          type: "object",
+          properties: {
+            meta: {
+              type: "object",
+              properties: { "*": { type: "string" } },
+              required: [],
+            },
+            title: { type: "string" },
+          },
+          required: [],
+        },
+        bodyHints: {},
+        contentType: "application/json",
+      },
+    }],
+  };
+  const file = scaffoldCommands(manifest);
+  const body = file.commands[0].call.body as Record<string, unknown>;
+  expect(body.meta).toEqual({
+    __scrubbed__: "REPLACE: this object was keyed by data (ids/emails); author it by hand",
+  });
+  expect(body.title).toBe("@arg:title");
+  expect(JSON.stringify(body)).not.toMatch(/@arg:\*/);
+  expect(() => assertResolvable(file, manifest.endpoints)).not.toThrow();
 });
