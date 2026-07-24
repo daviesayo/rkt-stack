@@ -14,7 +14,11 @@ export interface CallerDeps {
 }
 
 export interface Caller {
-  call(endpointId: string, params: Record<string, string>): Promise<{ status: number; body: string }>;
+  call(
+    endpointId: string,
+    params: Record<string, string>,
+    body?: unknown,
+  ): Promise<{ status: number; body: string }>;
   fetchJson(endpointId: string, params?: Record<string, string>): Promise<unknown>;
   readonly secret: Record<string, string> | null;
 }
@@ -83,12 +87,25 @@ export function createCaller(
     return true;
   }
 
-  async function call(endpointId: string, params: Record<string, string>) {
+  const READ_METHODS = new Set(["GET", "HEAD"]);
+
+  async function call(endpointId: string, params: Record<string, string>, body?: unknown) {
     const ep = endpointById(endpointId);
-    let built = buildRequest(manifest, ep, params, secret);
+    const isWrite = !READ_METHODS.has(ep.method.toUpperCase());
+    let built = buildRequest(manifest, ep, params, secret, body);
     let res = await issue(built, scheduler);
     if (res.status === 401 && secret && (await renew())) {
-      built = buildRequest(manifest, ep, params, secret);
+      // A read is safe to replay. A write is not: the server may have committed
+      // it before the token expired, so replaying could apply it twice.
+      if (isWrite) {
+        throw new CliError(
+          `${ep.method} ${ep.pathTemplate} returned HTTP 401 and the credential was renewed, ` +
+            `but the write was NOT retried. It may or may not have applied.`,
+          "verify the resource on the site before re-running this command",
+          4,
+        );
+      }
+      built = buildRequest(manifest, ep, params, secret, body);
       res = await issue(built, scheduler);
     }
     return res;
