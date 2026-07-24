@@ -14,7 +14,11 @@ export interface CallerDeps {
 }
 
 export interface Caller {
-  call(endpointId: string, params: Record<string, string>): Promise<{ status: number; body: string }>;
+  call(
+    endpointId: string,
+    params: Record<string, string>,
+    body?: unknown,
+  ): Promise<{ status: number; body: string }>;
   fetchJson(endpointId: string, params?: Record<string, string>): Promise<unknown>;
   readonly secret: Record<string, string> | null;
 }
@@ -83,13 +87,31 @@ export function createCaller(
     return true;
   }
 
-  async function call(endpointId: string, params: Record<string, string>) {
+  const READ_METHODS = new Set(["GET", "HEAD"]);
+
+  async function call(endpointId: string, params: Record<string, string>, body?: unknown) {
     const ep = endpointById(endpointId);
-    let built = buildRequest(manifest, ep, params, secret);
+    const isWrite = !READ_METHODS.has(ep.method.toUpperCase());
+    let built = buildRequest(manifest, ep, params, secret, body);
     let res = await issue(built, scheduler);
-    if (res.status === 401 && secret && (await renew())) {
-      built = buildRequest(manifest, ep, params, secret);
-      res = await issue(built, scheduler);
+    if (res.status === 401 && secret) {
+      // A read is safe to replay after renewal. A write is not: the server
+      // may have committed it before the token expired, so replaying could
+      // apply it twice -- it is refused either way. Check that BEFORE paying
+      // for renewal (a headless Chrome launch plus a secret write), since a
+      // write's renewal outcome can never change the answer.
+      if (isWrite) {
+        throw new CliError(
+          `${ep.method} ${ep.pathTemplate} returned HTTP 401. A write is not retried after ` +
+            `credential renewal (it may already have applied), so no renewal was attempted.`,
+          "verify the resource on the site before re-running this command",
+          4,
+        );
+      }
+      if (await renew()) {
+        built = buildRequest(manifest, ep, params, secret, body);
+        res = await issue(built, scheduler);
+      }
     }
     return res;
   }
@@ -100,7 +122,7 @@ export function createCaller(
       `endpoint ${endpointId} returned HTTP ${status}`,
       status === 401
         ? "run: login  (then check: auth status)"
-        : "re-run the command with --dry-run to inspect the request",
+        : "inspect the request before retrying (omit --commit for a write preview)",
       status === 401 ? 4 : 1,
     );
     try {
@@ -108,9 +130,10 @@ export function createCaller(
     } catch {
       throw new CliError(
         `endpoint ${endpointId} did not return JSON`,
-        "re-run the command with --dry-run to inspect the request",
+        "inspect the request before retrying (omit --commit for a write preview)",
       );
     }
+
   }
 
   return {

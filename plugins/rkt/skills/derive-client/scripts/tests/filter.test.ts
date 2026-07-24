@@ -93,3 +93,37 @@ test("allowWrites keeps write methods for full mode", () => {
   );
   expect(kept).toHaveLength(2);
 });
+
+test("keeps a 204 write with no body and no content-type when writes are allowed", () => {
+  const entries = [
+    {
+      url: "https://x.test/api/events/1",
+      method: "DELETE",
+      status: 204,
+      mimeType: "",
+      responseBody: "",
+      postData: null,
+      startedDateTime: "2026-07-24T00:00:00.000Z",
+      requestHeaders: {},
+    },
+  ] as never;
+  const { kept, dropped } = filterEntries(entries, { allowWrites: true });
+  expect(kept).toHaveLength(1);
+  expect(dropped).toHaveLength(0);
+});
+
+test("still drops a read with an empty body", () => {
+  const entries = [
+    {
+      url: "https://x.test/api/thing",
+      method: "GET",
+      status: 200,
+      mimeType: "application/json",
+      responseBody: "",
+      postData: null,
+      startedDateTime: "2026-07-24T00:00:00.000Z",
+      requestHeaders: {},
+    },
+  ] as never;
+  expect(filterEntries(entries, { allowWrites: true }).kept).toHaveLength(0);
+});

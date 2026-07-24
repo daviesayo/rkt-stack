@@ -49,3 +49,18 @@ test("@me with no identity surfaces the resolver's error", async () => {
   const noId = { resolveMe: async () => { throw new Error("no identity configured"); } };
   await expect(resolveToken("@me", noId, NOW)).rejects.toThrow(/identity/i);
 });
+
+test("resolves @arg from the supplied args map, verbatim", async () => {
+  const ctx = { resolveMe: async () => "me", args: { starts_at: "2026-08-01" } };
+  expect(await resolveToken("@arg:starts_at", ctx, new Date())).toBe("2026-08-01");
+});
+
+test("a missing @arg names the flag the caller must pass", async () => {
+  const ctx = { resolveMe: async () => "me", args: {} };
+  await expect(resolveToken("@arg:title", ctx, new Date())).rejects.toThrow(/--title/);
+});
+
+test("@@ still escapes a literal leading at-sign", async () => {
+  const ctx = { resolveMe: async () => "me" };
+  expect(await resolveToken("@@channel", ctx, new Date())).toBe("@channel");
+});

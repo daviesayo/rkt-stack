@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { copyFile, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { deriveManifest } from "../src/derive";
+import { deriveManifest, parseMode } from "../src/derive";
 import { recordingDir } from "../src/lib/paths";
 
 let testRoot: string;
@@ -33,7 +33,7 @@ test("derives a manifest end to end from the fixture HAR", async () => {
   const har = await stageFixture("sample.har");
   const { manifest, dropped } = await deriveManifest(har, "example");
 
-  expect(manifest.schemaVersion).toBe(2);
+  expect(manifest.schemaVersion).toBe(3);
   expect(manifest.site).toBe("example");
   expect(manifest.baseUrl).toBe("https://example.test");
 
@@ -97,4 +97,16 @@ test("the recorded DELETE never becomes an endpoint in read mode", async () => {
   const { manifest, dropped } = await deriveManifest(har, "authtest");
   expect(manifest.endpoints.some((e) => e.method === "DELETE")).toBe(false);
   expect(dropped.some((d) => /write method/i.test(d.reason))).toBe(true);
+});
+
+test("parseMode accepts read and full, defaulting to read when --mode is omitted", () => {
+  expect(parseMode(undefined)).toBe("read");
+  expect(parseMode("read")).toBe("read");
+  expect(parseMode("full")).toBe("full");
+});
+
+test("parseMode rejects an unrecognized --mode value instead of silently deriving read-only", () => {
+  expect(() => parseMode("ful")).toThrow(/--mode/);
+  expect(() => parseMode("FULL")).toThrow(/--mode/);
+  expect(() => parseMode("")).toThrow(/--mode/);
 });

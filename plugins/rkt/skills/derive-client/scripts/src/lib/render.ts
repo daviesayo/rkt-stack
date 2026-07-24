@@ -18,7 +18,7 @@ function setPath(obj: Record<string, unknown>, dottedPath: string, value: unknow
   if (keys[keys.length - 1] in cur) cur[keys[keys.length - 1]] = value;
 }
 
-function redactClone<T>(data: T, paths: string[]): T {
+export function redactClone<T>(data: T, paths: string[]): T {
   const clone = JSON.parse(JSON.stringify(data));
   const apply = (node: unknown) => {
     if (node && typeof node === "object") {

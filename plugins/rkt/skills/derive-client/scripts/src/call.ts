@@ -70,6 +70,17 @@ async function main() {
     process.exit(1);
   }
 
+  // call.ts is a read-only debug invoker. Writes must go through a curated
+  // command (preview + --commit + env gate); this tool has none of that, so it
+  // refuses them structurally regardless of manifest mode or RKT_ALLOW_WRITES.
+  if (!["GET", "HEAD"].includes(endpoint.method.toUpperCase())) {
+    console.error(
+      `refusing ${endpoint.method} ${endpoint.pathTemplate}: call.ts is read-only. ` +
+        `Writes require a curated command in commands.json, run with --commit.`,
+    );
+    process.exit(2);
+  }
+
   const secret = await readSecrets(manifest.site);
   if (manifest.auth && !secret) {
     console.error(
@@ -86,7 +97,7 @@ async function main() {
     );
   }
 
-  // Throws for any non-GET/HEAD endpoint.
+  // Read-only guard above; buildRequest also rejects writes on read-mode manifests.
   const params = parseParams(process.argv);
 
   if (process.argv.includes("--dry-run")) {

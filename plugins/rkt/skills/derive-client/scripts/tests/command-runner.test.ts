@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -47,6 +47,89 @@ function caller(
 
 const NOW = new Date("2026-07-21T12:00:00Z");
 const baseOpts = (c: RunnerCaller) => ({ manifest, site: "example", caller: c, flags: { json: false, raw: false }, timezone: "UTC", now: NOW });
+
+const FULL_MANIFEST = {
+  schemaVersion: 3,
+  site: "x",
+  baseUrl: "https://x.test",
+  recordedAt: "2026-07-24T00:00:00.000Z",
+  harSha256: "d",
+  userAgent: "UA",
+  clientHints: {},
+  auth: { kind: "cookie" as const, location: "cookie:s", mintedBy: null, expiry: null },
+  authBundle: null,
+  refresh: null,
+  mode: "full" as const,
+  endpoints: [
+    {
+      id: "post.api.events",
+      method: "POST",
+      pathTemplate: "/api/events",
+      params: [],
+      responseShape: { type: "unknown" as const },
+      source: "xhr" as const,
+      fragile: false,
+      selectors: null,
+      writeSemantics: {
+        bodyShape: {
+          type: "object" as const,
+          properties: {
+            name: { type: "string" as const },
+            count: { type: "number" as const },
+            pinned: { type: "string" as const },
+          },
+          required: [],
+        },
+        bodyHints: {},
+        contentType: "application/json",
+      },
+    },
+  ],
+};
+
+const WRITE_CMD = {
+  name: "event-create",
+  summary: "",
+  write: true,
+  call: {
+    endpoint: "post.api.events",
+    body: { name: "@arg:title", count: "@arg:count", pinned: "fixed" },
+  },
+  output: { kind: "json" as const },
+  redact: ["body.name"],
+};
+
+const HINTED_MANIFEST = {
+  ...FULL_MANIFEST,
+  endpoints: [
+    {
+      ...FULL_MANIFEST.endpoints[0],
+      writeSemantics: {
+        bodyShape: {
+          type: "object" as const,
+          properties: {
+            starts_at: { type: "string" as const },
+          },
+          required: [],
+        },
+        bodyHints: { starts_at: "iso8601" },
+        contentType: "application/json",
+      },
+    },
+  ],
+};
+
+const HINTED_CMD = {
+  ...WRITE_CMD,
+  call: { endpoint: "post.api.events", body: { starts_at: "@arg:starts_at" } },
+  redact: [],
+};
+
+const PRIOR_WRITES_ENV = process.env.RKT_ALLOW_WRITES;
+afterAll(() => {
+  if (PRIOR_WRITES_ENV === undefined) delete process.env.RKT_ALLOW_WRITES;
+  else process.env.RKT_ALLOW_WRITES = PRIOR_WRITES_ENV;
+});
 
 test("renders a table, joining and redacting", async () => {
   const c = caller({
@@ -326,4 +409,198 @@ test("runWhoami formats the identity display", async () => {
   const c = caller({ "get.me": { id: 1, first_name: "Ada", email: "ada@x.test" } });
   const line = await runWhoami("example", { endpoint: "get.me", idField: "id", display: ["first_name", "email"] }, c);
   expect(line).toBe("Ada (ada@x.test)");
+});
+
+test("a bare write previews and never calls the network", async () => {
+  let called = false;
+  const caller = {
+    call: async () => {
+      called = true;
+      return { status: 201, body: "{}" };
+    },
+    fetchJson: async () => ({}),
+    secret: { "cookie:s": "sekret" },
+  };
+  process.env.RKT_ALLOW_WRITES = "1";
+  const res = await runCommand(WRITE_CMD as never, {
+    manifest: FULL_MANIFEST,
+    site: "x",
+    caller: caller as never,
+    flags: { json: true, raw: false },
+    now: new Date(),
+    commit: false,
+    args: { title: "Party", count: "3" },
+  } as never);
+  expect(called).toBe(false);
+  expect(res.kind).toBe("preview");
+  expect(res.rendered).toContain('"method": "POST"');
+  expect(res.rendered).toContain("[REDACTED]");
+  expect(res.rendered).not.toContain("Party");
+  expect(res.rendered).not.toContain("sekret");
+});
+
+test("preview without the env flag raises the enable-writes error", async () => {
+  delete process.env.RKT_ALLOW_WRITES;
+  const caller = {
+    call: async () => ({ status: 201, body: "{}" }),
+    fetchJson: async () => ({}),
+    secret: null,
+  };
+  await expect(
+    runCommand(WRITE_CMD as never, {
+      manifest: FULL_MANIFEST,
+      site: "x",
+      caller: caller as never,
+      flags: { json: true, raw: false },
+      now: new Date(),
+      commit: false,
+      args: { title: "t", count: "1" },
+    } as never),
+  ).rejects.toThrow(/RKT_ALLOW_WRITES/);
+});
+
+test("coerces an @arg to the shape type and sends on commit", async () => {
+  let sentBody: unknown;
+  const caller = {
+    call: async (_i: string, _p: unknown, body: unknown) => {
+      sentBody = body;
+      return { status: 201, body: "{}" };
+    },
+    fetchJson: async () => ({}),
+    secret: null,
+  };
+  process.env.RKT_ALLOW_WRITES = "1";
+  const res = await runCommand(WRITE_CMD as never, {
+    manifest: FULL_MANIFEST,
+    site: "x",
+    caller: caller as never,
+    flags: { json: true, raw: false },
+    now: new Date(),
+    commit: true,
+    args: { title: "Party", count: "3" },
+  } as never);
+  expect(res.kind).toBe("sent");
+  expect(sentBody).toEqual({ name: "Party", count: 3, pinned: "fixed" });
+});
+
+test("a command missing write:true on a write endpoint STILL cannot mutate", async () => {
+  let called = false;
+  const caller = {
+    call: async () => {
+      called = true;
+      return { status: 201, body: "{}" };
+    },
+    fetchJson: async () => ({}),
+    secret: null,
+  };
+  const undeclared = { ...WRITE_CMD, write: undefined };
+  process.env.RKT_ALLOW_WRITES = "1";
+  const res = await runCommand(undeclared as never, {
+    manifest: FULL_MANIFEST,
+    site: "x",
+    caller: caller as never,
+    flags: { json: true, raw: false },
+    now: new Date(),
+    commit: false,
+    args: { title: "t", count: "1" },
+  } as never);
+  expect(called).toBe(false);
+  expect(res.kind).toBe("preview");
+});
+
+test("an @arg failing its format hint is rejected before the wire", async () => {
+  const caller = {
+    call: async () => ({ status: 201, body: "{}" }),
+    fetchJson: async () => ({}),
+    secret: null,
+  };
+  process.env.RKT_ALLOW_WRITES = "1";
+  await expect(
+    runCommand(HINTED_CMD as never, {
+      manifest: HINTED_MANIFEST,
+      site: "x",
+      caller: caller as never,
+      flags: { json: true, raw: false },
+      now: new Date(),
+      commit: false,
+      args: { starts_at: "not-a-date" },
+    } as never),
+  ).rejects.toThrow(/starts_at.*iso8601/i);
+});
+
+const ARRAY_MANIFEST = {
+  ...FULL_MANIFEST,
+  endpoints: [
+    {
+      ...FULL_MANIFEST.endpoints[0],
+      writeSemantics: {
+        bodyShape: {
+          type: "object" as const,
+          properties: {
+            items: {
+              type: "array" as const,
+              items: {
+                type: "object" as const,
+                properties: { qty: { type: "number" as const } },
+                required: [],
+              },
+            },
+          },
+          required: [],
+        },
+        bodyHints: {},
+        contentType: "application/json",
+      },
+    },
+  ],
+};
+
+const ARRAY_CMD = {
+  ...WRITE_CMD,
+  call: { endpoint: "post.api.events", body: { items: [{ qty: "@arg:count" }] } },
+  redact: [],
+};
+
+test("coerces @arg holes inside array body elements", async () => {
+  let sentBody: unknown;
+  const caller = {
+    call: async (_i: string, _p: unknown, body: unknown) => {
+      sentBody = body;
+      return { status: 201, body: "{}" };
+    },
+    fetchJson: async () => ({}),
+    secret: null,
+  };
+  process.env.RKT_ALLOW_WRITES = "1";
+  const res = await runCommand(ARRAY_CMD as never, {
+    manifest: ARRAY_MANIFEST,
+    site: "x",
+    caller: caller as never,
+    flags: { json: true, raw: false },
+    now: new Date(),
+    commit: true,
+    args: { count: "5" },
+  } as never);
+  expect(res.kind).toBe("sent");
+  expect(sentBody).toEqual({ items: [{ qty: 5 }] });
+});
+
+test("commit without the env flag raises the enable-writes error", async () => {
+  delete process.env.RKT_ALLOW_WRITES;
+  const caller = {
+    call: async () => ({ status: 201, body: "{}" }),
+    fetchJson: async () => ({}),
+    secret: null,
+  };
+  await expect(
+    runCommand(WRITE_CMD as never, {
+      manifest: FULL_MANIFEST,
+      site: "x",
+      caller: caller as never,
+      flags: { json: true, raw: false },
+      now: new Date(),
+      commit: true,
+      args: { title: "t", count: "1" },
+    } as never),
+  ).rejects.toThrow(/RKT_ALLOW_WRITES/);
 });

@@ -16,6 +16,8 @@ export interface SchedulerRequest {
   url: string;
   method: string;
   headers: Record<string, string>;
+  /** JSON payload for write methods. Never set for reads. */
+  body?: string;
 }
 
 export interface Scheduler {
@@ -23,6 +25,9 @@ export interface Scheduler {
 }
 
 const CACHEABLE = new Set(["GET", "HEAD"]);
+
+/** Methods it is safe to re-send. Deliberately separate from CACHEABLE. */
+const RETRY_SAFE_METHODS = new Set(["GET", "HEAD"]);
 
 /**
  * Serializes requests with human-shaped pacing, dedups cacheable requests by
@@ -44,12 +49,21 @@ export function createScheduler(options: SchedulerOptions = {}): Scheduler {
   const RETRYABLE = new Set([429, 503]);
 
   async function fetchWithBackoff(req: SchedulerRequest): Promise<SchedulerResponse> {
+    // A write is not idempotent: a request the server already committed before
+    // answering 429/503 would be applied twice by a retry. Use a dedicated
+    // predicate, NOT the CACHEABLE dedup set: coupling retry-safety to a caching
+    // constant means a future caching change silently changes write safety.
+    const retryable = RETRY_SAFE_METHODS.has(req.method.toUpperCase());
     for (let attempt = 0; ; attempt++) {
-      const res = await doFetch(req.url, { method: req.method, headers: req.headers });
+      const res = await doFetch(req.url, {
+        method: req.method,
+        headers: req.headers,
+        ...(req.body === undefined ? {} : { body: req.body }),
+      });
       const headers: Record<string, string> = {};
       res.headers.forEach((v, k) => (headers[k] = v));
       const out = { status: res.status, body: await res.text(), headers };
-      if (!RETRYABLE.has(res.status) || attempt >= maxRetries) return out;
+      if (!retryable || !RETRYABLE.has(res.status) || attempt >= maxRetries) return out;
 
       const retryAfter = Number(headers["retry-after"]);
       const waitMs = Number.isFinite(retryAfter) ? retryAfter * 1000 : 500 * 2 ** attempt;

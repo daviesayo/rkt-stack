@@ -1,8 +1,79 @@
-import { expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, test } from "bun:test";
 import type { Scheduler, SchedulerResponse } from "../src/lib/scheduler";
 import { createCaller } from "../src/lib/runtime";
 import { CliError } from "../src/lib/overflow";
 import { REFRESH_TOKEN_KEY } from "../src/lib/secrets";
+
+const PRIOR = process.env.RKT_ALLOW_WRITES;
+beforeAll(() => {
+  process.env.RKT_ALLOW_WRITES = "1";
+});
+afterAll(() => {
+  if (PRIOR === undefined) delete process.env.RKT_ALLOW_WRITES;
+  else process.env.RKT_ALLOW_WRITES = PRIOR;
+});
+
+const FULL_MANIFEST = {
+  schemaVersion: 3,
+  site: "x",
+  baseUrl: "https://x.test",
+  recordedAt: "2026-07-24T00:00:00.000Z",
+  harSha256: "d",
+  userAgent: "UA",
+  clientHints: {},
+  auth: { kind: "cookie" as const, location: "cookie:s", mintedBy: null, expiry: null },
+  authBundle: null,
+  refresh: null,
+  mode: "full" as const,
+  endpoints: [
+    {
+      id: "post.api.events",
+      method: "POST",
+      pathTemplate: "/api/events",
+      params: [],
+      responseShape: { type: "unknown" as const },
+      source: "xhr" as const,
+      fragile: false,
+      selectors: null,
+      writeSemantics: {
+        bodyShape: {
+          type: "object" as const,
+          properties: {
+            name: { type: "string" as const },
+            count: { type: "number" as const },
+            pinned: { type: "string" as const },
+          },
+          required: [],
+        },
+        bodyHints: {},
+        contentType: "application/json",
+      },
+    },
+    {
+      id: "get.api.events",
+      method: "GET",
+      pathTemplate: "/api/events",
+      params: [],
+      responseShape: { type: "unknown" as const },
+      source: "xhr" as const,
+      fragile: false,
+      selectors: null,
+      writeSemantics: null,
+    },
+  ],
+};
+
+const RENEWABLE = {
+  ...FULL_MANIFEST,
+  refresh: {
+    kind: "oidc" as const,
+    tokenEndpoint: "https://idp.test/token",
+    clientId: "c",
+    accessTokenCookie: "s",
+    expiresIn: 300,
+    refreshExpiresIn: 3600,
+  },
+};
 
 const baseManifest = () => ({
   schemaVersion: 2,
@@ -155,7 +226,89 @@ test("fetchJson throws CliError when response is not JSON", async () => {
   const caller = createCaller(baseManifest(), sched, null);
   const err = await caller.fetchJson("get.data").catch((e) => e);
   expect(err).toBeInstanceOf(CliError);
-  expect((err as CliError).hint).toContain("dry-run");
+  expect((err as CliError).hint).toMatch(/inspect the request|omit --commit/i);
+});
+
+test("a write is not re-issued after a 401 renewal", async () => {
+  let sends = 0;
+  const scheduler = {
+    run: async () => {
+      sends++;
+      return { status: 401, body: "{}", headers: {} };
+    },
+  };
+  const caller = createCaller(
+    RENEWABLE as never,
+    scheduler as never,
+    { "cookie:s": "v", [REFRESH_TOKEN_KEY]: "rt" },
+    {
+      refreshViaOidc: (async () => ({ accessToken: "a2", refreshToken: "rt2" })) as never,
+      reauthViaProfile: (async () => null) as never,
+      writeSecret: (async () => {}) as never,
+      log: () => {},
+    },
+  );
+  await expect(caller.call("post.api.events", {}, { a: 1 })).rejects.toThrow(/may .*have applied/i);
+  expect(sends).toBe(1);
+});
+
+test("a write's 401 never pays for renewal: it is refused before OIDC/browser re-auth run", async () => {
+  let sends = 0;
+  let refreshCalls = 0;
+  let reauthCalls = 0;
+  const scheduler = {
+    run: async () => {
+      sends++;
+      return { status: 401, body: "{}", headers: {} };
+    },
+  };
+  const caller = createCaller(
+    RENEWABLE as never,
+    scheduler as never,
+    { "cookie:s": "v", [REFRESH_TOKEN_KEY]: "rt" },
+    {
+      refreshViaOidc: (async () => {
+        refreshCalls++;
+        return { accessToken: "a2", refreshToken: "rt2" };
+      }) as never,
+      reauthViaProfile: (async () => {
+        reauthCalls++;
+        return null;
+      }) as never,
+      writeSecret: (async () => {}) as never,
+      log: () => {},
+    },
+  );
+  await expect(caller.call("post.api.events", {}, { a: 1 })).rejects.toThrow(/may .*have applied/i);
+  expect(sends).toBe(1);
+  // The write is refused outright; it must never trigger the (expensive)
+  // renewal tiers that only a retried request could make use of.
+  expect(refreshCalls).toBe(0);
+  expect(reauthCalls).toBe(0);
+});
+
+test("a read IS still re-issued after a 401 renewal", async () => {
+  let sends = 0;
+  const scheduler = {
+    run: async () => {
+      sends++;
+      return { status: sends === 1 ? 401 : 200, body: "{}", headers: {} };
+    },
+  };
+  const caller = createCaller(
+    RENEWABLE as never,
+    scheduler as never,
+    { "cookie:s": "v", [REFRESH_TOKEN_KEY]: "rt" },
+    {
+      refreshViaOidc: (async () => ({ accessToken: "a2", refreshToken: "rt2" })) as never,
+      reauthViaProfile: (async () => null) as never,
+      writeSecret: (async () => {}) as never,
+      log: () => {},
+    },
+  );
+  const res = await caller.call("get.api.events", {});
+  expect(res.status).toBe(200);
+  expect(sends).toBe(2);
 });
 
 test("fetchJson forwards params into the request URL", async () => {

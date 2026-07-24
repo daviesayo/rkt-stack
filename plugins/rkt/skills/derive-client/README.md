@@ -27,7 +27,9 @@ record ──▶ derive ──▶ generate ──▶ shape (commands.json) ─�
 - **record** (`src/record.ts`) drives a real Chrome via Playwright and captures a HAR.
 - **derive** (`src/derive.ts`) turns the HAR into `client.json`: the endpoint
   manifest (method, path, params with examples, inferred response shapes), the
-  detected credential bundle, and a renewal (`refresh`) spec.
+  detected credential bundle, and a renewal (`refresh`) spec. Pass
+  `--mode full` to derive write endpoints (POST/PUT/PATCH/DELETE) as well as
+  reads; default is read-only (`GET` and `HEAD`).
 - **generate** (`src/generate.ts`) emits the standalone client: `cli.ts`,
   `types.ts`, `install.sh`, and a copy of the shared `lib/` runtime.
 - **shape** (`src/scaffold-commands.ts` + hand/agent editing) writes
@@ -144,7 +146,23 @@ Generated clients renew credentials automatically on a 401, cheapest tier first:
 
 Rotated tokens are written back, so a scheduled job stays signed in until the
 profile itself is signed out. Read mode emits only GET and HEAD; recorded writes
-are excluded and refused.
+are excluded. `call.ts` is read-only by its own guard; writes go through curated
+commands.
+
+## Full mode
+
+Full mode (`--mode full` on `derive.ts`) derives write endpoints and emits
+curated write commands from `commands.json`. Writes are gated four ways:
+
+1. the manifest must be derived in full mode,
+2. `RKT_ALLOW_WRITES=1` must be set,
+3. the task must be authored in `commands.json` with `write: true`,
+4. `--commit` must be passed to send (a bare run previews only).
+
+A bare write run prints the built request (credentials masked, body fields
+redacted per `redact`) and sends nothing. `call.ts` stays read-only permanently.
+Writes never auto-retry; a 401 mid-write reports may-have-applied. Request bodies
+are modelled as shape plus format hints — recorded values are never persisted.
 
 ## Security
 
@@ -185,7 +203,7 @@ re-run the closure probe: generate into a temp dir, `bun install`, and
 
 ## Status
 
-Read-mode derivation is complete. Not yet built: `full` (read + write) mode,
-fully automated credential login so a cron survives SSO without a human,
-JWT-`sub` identity auto-seeding, and array-payload `/me` detection. See
+Read-mode and full-mode derivation are complete. Not yet built: fully automated
+credential login so a cron survives SSO without a human, JWT-`sub` identity
+auto-seeding, and array-payload `/me` detection. See
 [`../../CHANGELOG.md`](../../CHANGELOG.md) for release history.

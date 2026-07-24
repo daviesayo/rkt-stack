@@ -1,5 +1,31 @@
 # Changelog
 
+## [Unreleased]
+
+- derive-client: full mode (`--mode full`) derives write endpoints and emits
+  curated write commands. Writes are gated four ways: derived in full mode,
+  `RKT_ALLOW_WRITES=1`, an authored `commands.json` task, and `--commit`.
+  A bare write previews the request and sends nothing. Writes never auto-retry.
+  Request bodies are modelled as shape plus format hints; recorded values are
+  never persisted.
+- derive-client: refuse JSON bodies under a recorded non-JSON content type;
+  `flagValue` no longer swallows the next `--flag` (so `--title --commit` cannot
+  bind `"--commit"` as a body value); require `RKT_ALLOW_WRITES` for write
+  previews at the `runCommand` boundary, not only in generated CLI visibility.
+- derive-client: close nine minor review findings from full mode. An
+  array/scalar-rooted write body and a scrubbed wildcard key now scaffold an
+  `@arg:` hole that fails `assertResolvable` loudly instead of shipping a
+  silent, un-actionable stub; `_`-flattened arg names that collide within one
+  command are disambiguated; a body `@arg:` reused at two paths prints one
+  `--flag` in `--help`, not two; `emitTypes` and the fallback CLI now name
+  endpoints from the same list, so a write endpoint's collision suffix can no
+  longer diverge between a type name and a `ResponseFor` entry; an
+  unrecognized `--mode` value is rejected instead of silently deriving
+  read-only; a write's 401 is refused before paying for credential renewal,
+  not after; `generate.ts` prints one line when full mode derives write
+  endpoints that no `commands.json` exposes; and the `bodyHints` doc comment
+  now notes array paths never carry a hint.
+
 ## [0.10.0] - 2026-07-23
 
 - derive-client: generated CLIs are now agent-navigable — per-command `--help`
