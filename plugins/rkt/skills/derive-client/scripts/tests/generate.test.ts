@@ -262,3 +262,95 @@ test("emits an executable, site-agnostic regenerate.sh that finds the plugin and
   expect(body).toContain("plugins/cache"); // globs the newest installed plugin
   expect(body).not.toContain(MANIFEST.site); // stays site-agnostic
 });
+
+test("full mode with no commands.json warns that derived writes are hidden, instead of dropping them silently", async () => {
+  const out = await mkdtemp(join(tmpdir(), "rkt-gen-"));
+  const mPath = join(out, "client.json");
+  const fullManifest = {
+    ...MANIFEST,
+    site: "example-full",
+    mode: "full",
+    endpoints: [
+      ...MANIFEST.endpoints,
+      {
+        id: "post.api.roster",
+        method: "POST",
+        pathTemplate: "/api/roster",
+        params: [],
+        responseShape: { type: "object", properties: {}, required: [] },
+        source: "xhr",
+        fragile: false,
+        selectors: null,
+        writeSemantics: { bodyShape: null, bodyHints: {}, contentType: null },
+      },
+    ],
+  };
+  await writeFile(mPath, JSON.stringify(fullManifest));
+
+  const originalError = console.error;
+  const lines: string[] = [];
+  console.error = (...args: unknown[]) => {
+    lines.push(args.map(String).join(" "));
+  };
+  try {
+    await generateClient(mPath, out);
+  } finally {
+    console.error = originalError;
+  }
+  expect(lines.some((l) => /1 write endpoint/i.test(l) && /commands\.json/i.test(l))).toBe(true);
+});
+
+test("full mode with a commands.json present stays silent about hidden writes", async () => {
+  const out = await mkdtemp(join(tmpdir(), "rkt-gen-"));
+  const mPath = join(out, "client.json");
+  const fullManifest = {
+    ...MANIFEST,
+    site: "example-full-curated",
+    mode: "full",
+    endpoints: [
+      ...MANIFEST.endpoints,
+      {
+        id: "post.api.roster",
+        method: "POST",
+        pathTemplate: "/api/roster",
+        params: [],
+        responseShape: { type: "object", properties: {}, required: [] },
+        source: "xhr",
+        fragile: false,
+        selectors: null,
+        writeSemantics: { bodyShape: null, bodyHints: {}, contentType: null },
+      },
+    ],
+  };
+  await writeFile(mPath, JSON.stringify(fullManifest));
+  await mkdir(join(out, "example-full-curated"), { recursive: true });
+  await writeFile(
+    join(out, "example-full-curated", "commands.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      site: "example-full-curated",
+      commands: [
+        {
+          name: "roster-create",
+          summary: "",
+          write: true,
+          call: { endpoint: "post.api.roster", params: {} },
+          output: { kind: "json" },
+          redact: [],
+        },
+      ],
+    }),
+  );
+
+  const originalError = console.error;
+  const lines: string[] = [];
+  console.error = (...args: unknown[]) => {
+    lines.push(args.map(String).join(" "));
+  };
+  try {
+    await generateClient(mPath, out);
+  } finally {
+    console.error = originalError;
+  }
+  expect(lines.some((l) => /write endpoint/i.test(l) && /commands\.json/i.test(l))).toBe(false);
+});

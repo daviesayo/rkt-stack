@@ -123,8 +123,14 @@ export function emitCli(manifest: ClientManifest, commands?: CommandsFile): stri
 function emitEndpointCli(manifest: ClientManifest): string {
   // The fallback CLI is uncurated. A write must never appear here; writes
   // require an authored commands.json task.
+  //
+  // Name from the FULL endpoint list -- the same list emitTypes names from --
+  // then filter to reads. Naming only the read subset would let a write
+  // endpoint's collision-driven "-2" suffix diverge between the command name
+  // here and the type name in types.ts (same base, different endpoint order
+  // once writes are excluded), which silently mislabels a ResponseFor entry.
+  const names = commandNames(manifest.endpoints, { allowWrites: manifest.mode === "full" });
   const readEndpoints = manifest.endpoints.filter((e) => READ_METHODS.has(e.method.toUpperCase()));
-  const names = commandNames(readEndpoints);
   const commands = readEndpoints.map((endpoint) => ({
     command: names.get(endpoint.id)!,
     id: endpoint.id,
@@ -432,11 +438,17 @@ function argFlags(
   const shape = ep?.writeSemantics?.bodyShape ?? null;
   const hints = ep?.writeSemantics?.bodyHints ?? {};
   const out: { name: string; type?: string; hint?: string }[] = [];
+  const seen = new Set<string>();
 
   const walk = (node: unknown, path: string) => {
     if (typeof node === "string" && node.startsWith("@arg:")) {
+      // The same @arg: name can be reused at two body paths. One --flag
+      // should print once in --help, not once per occurrence.
+      const name = node.slice(5);
+      if (seen.has(name)) return;
+      seen.add(name);
       out.push({
-        name: node.slice(5),
+        name,
         type: shapeTypeAt(shape, path),
         hint: hints[path],
       });

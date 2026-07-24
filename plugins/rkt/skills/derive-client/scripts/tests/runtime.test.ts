@@ -252,6 +252,41 @@ test("a write is not re-issued after a 401 renewal", async () => {
   expect(sends).toBe(1);
 });
 
+test("a write's 401 never pays for renewal: it is refused before OIDC/browser re-auth run", async () => {
+  let sends = 0;
+  let refreshCalls = 0;
+  let reauthCalls = 0;
+  const scheduler = {
+    run: async () => {
+      sends++;
+      return { status: 401, body: "{}", headers: {} };
+    },
+  };
+  const caller = createCaller(
+    RENEWABLE as never,
+    scheduler as never,
+    { "cookie:s": "v", [REFRESH_TOKEN_KEY]: "rt" },
+    {
+      refreshViaOidc: (async () => {
+        refreshCalls++;
+        return { accessToken: "a2", refreshToken: "rt2" };
+      }) as never,
+      reauthViaProfile: (async () => {
+        reauthCalls++;
+        return null;
+      }) as never,
+      writeSecret: (async () => {}) as never,
+      log: () => {},
+    },
+  );
+  await expect(caller.call("post.api.events", {}, { a: 1 })).rejects.toThrow(/may .*have applied/i);
+  expect(sends).toBe(1);
+  // The write is refused outright; it must never trigger the (expensive)
+  // renewal tiers that only a retried request could make use of.
+  expect(refreshCalls).toBe(0);
+  expect(reauthCalls).toBe(0);
+});
+
 test("a read IS still re-issued after a 401 renewal", async () => {
   let sends = 0;
   const scheduler = {

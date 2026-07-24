@@ -232,7 +232,12 @@ test("threads full accumulated prefix for nested @arg holes", () => {
   expect(() => assertResolvable(file, manifest.endpoints)).not.toThrow();
 });
 
-test("scrubbed map keys emit a marker, not an @arg hole", () => {
+test("scrubbed map keys emit an @arg hole that fails generation, not a silent marker", () => {
+  // The old plain-string "REPLACE: ..." marker bypassed assertResolvable
+  // entirely (argPaths ignores non-@arg: strings), so an un-authored scrub
+  // could ship as a literal body field with no error. It must now be an
+  // @arg: value that resolves to no modelled shape, so generation fails
+  // loudly until the curator hand-authors it.
   const manifest: ClientManifest = {
     ...FULL_MANIFEST,
     endpoints: [{
@@ -264,10 +269,105 @@ test("scrubbed map keys emit a marker, not an @arg hole", () => {
   };
   const file = scaffoldCommands(manifest);
   const body = file.commands[0].call.body as Record<string, unknown>;
-  expect(body.meta).toEqual({
-    __scrubbed__: "REPLACE: this object was keyed by data (ids/emails); author it by hand",
-  });
+  const meta = body.meta as Record<string, unknown>;
+  expect(typeof meta.__scrubbed__).toBe("string");
+  expect(meta.__scrubbed__ as string).toMatch(/^@arg:/);
   expect(body.title).toBe("@arg:title");
-  expect(JSON.stringify(body)).not.toMatch(/@arg:\*/);
+  expect(() => assertResolvable(file, manifest.endpoints)).toThrow(/no modelled shape/i);
+});
+
+test("a non-object (array) root body fails generation loudly instead of scaffolding no body at all", () => {
+  const manifest: ClientManifest = {
+    ...FULL_MANIFEST,
+    endpoints: [{
+      id: "post.api.array-root",
+      method: "POST",
+      pathTemplate: "/api/array-root",
+      params: [],
+      responseShape: { type: "unknown" },
+      source: "xhr",
+      fragile: false,
+      selectors: null,
+      writeSemantics: {
+        bodyShape: { type: "array", items: { type: "string" } },
+        bodyHints: {},
+        contentType: "application/json",
+      },
+    }],
+  };
+  const file = scaffoldCommands(manifest);
+  const cmd = file.commands[0];
+  expect(cmd.write).toBe(true);
+  // The bug: cmd.call.body was `undefined` here, so the curator got no
+  // signal a body was expected at all. It must now be a stub that fails
+  // assertResolvable, forcing the curator to author it by hand.
+  expect(cmd.call.body).toBeDefined();
+  expect(() => assertResolvable(file, manifest.endpoints)).toThrow(/no modelled shape/i);
+});
+
+test("a non-object (scalar) root body also fails generation loudly", () => {
+  const manifest: ClientManifest = {
+    ...FULL_MANIFEST,
+    endpoints: [{
+      id: "post.api.scalar-root",
+      method: "POST",
+      pathTemplate: "/api/scalar-root",
+      params: [],
+      responseShape: { type: "unknown" },
+      source: "xhr",
+      fragile: false,
+      selectors: null,
+      writeSemantics: {
+        bodyShape: { type: "string" },
+        bodyHints: {},
+        contentType: "application/json",
+      },
+    }],
+  };
+  const file = scaffoldCommands(manifest);
+  const cmd = file.commands[0];
+  expect(cmd.call.body).toBeDefined();
+  expect(() => assertResolvable(file, manifest.endpoints)).toThrow(/no modelled shape/i);
+});
+
+test("disambiguates colliding _-flattened arg names within one command", () => {
+  // a.b and a top-level a_b both flatten to the arg name "a_b"; sharing one
+  // --a_b flag would silently write one value into two unrelated body paths.
+  const manifest: ClientManifest = {
+    ...FULL_MANIFEST,
+    endpoints: [{
+      id: "post.api.collide",
+      method: "POST",
+      pathTemplate: "/api/collide",
+      params: [],
+      responseShape: { type: "unknown" },
+      source: "xhr",
+      fragile: false,
+      selectors: null,
+      writeSemantics: {
+        bodyShape: {
+          type: "object",
+          properties: {
+            a: { type: "object", properties: { b: { type: "string" } }, required: [] },
+            a_b: { type: "string" },
+          },
+          required: [],
+        },
+        bodyHints: {},
+        contentType: "application/json",
+      },
+    }],
+  };
+  const file = scaffoldCommands(manifest);
+  const body = file.commands[0].call.body as Record<string, unknown>;
+  const names: string[] = [];
+  const collect = (node: unknown): void => {
+    if (typeof node === "string" && node.startsWith("@arg:")) names.push(node.slice(5));
+    else if (Array.isArray(node)) node.forEach(collect);
+    else if (node && typeof node === "object") Object.values(node as Record<string, unknown>).forEach(collect);
+  };
+  collect(body);
+  expect(names.length).toBe(2);
+  expect(new Set(names).size).toBe(2); // no collision: two distinct flag names
   expect(() => assertResolvable(file, manifest.endpoints)).not.toThrow();
 });

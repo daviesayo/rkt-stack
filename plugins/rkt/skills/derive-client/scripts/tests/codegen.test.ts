@@ -540,3 +540,89 @@ test("a curated write with an array body hole emits --title in ARG_HELP", () => 
   const cli = emitCli(ARRAY_BODY_MANIFEST, COMMANDS_WITH_ARRAY_BODY);
   expect(cli).toContain('"event-create":["  --title <event title>"]');
 });
+
+const DUP_ARG_MANIFEST: ClientManifest = {
+  ...FULL_MANIFEST,
+  endpoints: [
+    {
+      id: "post.api.dup",
+      method: "POST",
+      pathTemplate: "/api/dup",
+      params: [],
+      responseShape: { type: "unknown" },
+      source: "xhr",
+      fragile: false,
+      selectors: null,
+      writeSemantics: {
+        bodyShape: {
+          type: "object",
+          properties: { a: { type: "string" }, b: { type: "string" } },
+          required: [],
+        },
+        bodyHints: {},
+        contentType: "application/json",
+      },
+    },
+  ],
+};
+
+const COMMANDS_WITH_DUP_ARG: CommandsFile = {
+  schemaVersion: 1,
+  site: "x",
+  commands: [
+    {
+      name: "dup-create",
+      summary: "",
+      write: true,
+      call: { endpoint: "post.api.dup", body: { a: "@arg:x", b: "@arg:x" } },
+      output: { kind: "json" },
+      redact: [],
+    },
+  ],
+};
+
+test("an @arg reused at two body paths prints one --flag, not two", () => {
+  const cli = emitCli(DUP_ARG_MANIFEST, COMMANDS_WITH_DUP_ARG);
+  const matches = cli.match(/--x </g) ?? [];
+  expect(matches.length).toBe(1);
+});
+
+const DIVERGENT_MANIFEST: ClientManifest = {
+  ...FULL_MANIFEST,
+  endpoints: [
+    {
+      id: "post.items",
+      method: "POST",
+      pathTemplate: "/items",
+      params: [],
+      responseShape: { type: "unknown" },
+      source: "xhr",
+      fragile: false,
+      selectors: null,
+      writeSemantics: { bodyShape: null, bodyHints: {}, contentType: null },
+    },
+    {
+      id: "get.post.items",
+      method: "GET",
+      pathTemplate: "/post/items",
+      params: [],
+      responseShape: { type: "unknown" },
+      source: "xhr",
+      fragile: false,
+      selectors: null,
+      writeSemantics: null,
+    },
+  ],
+};
+
+test("emitTypes and the fallback CLI name a collision-prone GET endpoint identically", () => {
+  // POST /items and GET /post/items both base-name to "post-items"; the POST
+  // wins the base name (it comes first in manifest order over the full
+  // endpoint list), so the GET must collide to "post-items-2" everywhere.
+  const types = emitTypes(DIVERGENT_MANIFEST);
+  const cli = emitCli(DIVERGENT_MANIFEST, undefined);
+  expect(types).toContain("export type PostItems2Response");
+  expect(cli).toContain('"command": "post-items-2"');
+  // Not the un-collided name a read-only-list naming pass would have given it.
+  expect(cli).not.toContain('"command": "post-items"');
+});

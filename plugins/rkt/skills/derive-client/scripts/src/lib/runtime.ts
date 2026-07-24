@@ -94,19 +94,24 @@ export function createCaller(
     const isWrite = !READ_METHODS.has(ep.method.toUpperCase());
     let built = buildRequest(manifest, ep, params, secret, body);
     let res = await issue(built, scheduler);
-    if (res.status === 401 && secret && (await renew())) {
-      // A read is safe to replay. A write is not: the server may have committed
-      // it before the token expired, so replaying could apply it twice.
+    if (res.status === 401 && secret) {
+      // A read is safe to replay after renewal. A write is not: the server
+      // may have committed it before the token expired, so replaying could
+      // apply it twice -- it is refused either way. Check that BEFORE paying
+      // for renewal (a headless Chrome launch plus a secret write), since a
+      // write's renewal outcome can never change the answer.
       if (isWrite) {
         throw new CliError(
-          `${ep.method} ${ep.pathTemplate} returned HTTP 401 and the credential was renewed, ` +
-            `but the write was NOT retried. It may or may not have applied.`,
+          `${ep.method} ${ep.pathTemplate} returned HTTP 401. A write is not retried after ` +
+            `credential renewal (it may already have applied), so no renewal was attempted.`,
           "verify the resource on the site before re-running this command",
           4,
         );
       }
-      built = buildRequest(manifest, ep, params, secret, body);
-      res = await issue(built, scheduler);
+      if (await renew()) {
+        built = buildRequest(manifest, ep, params, secret, body);
+        res = await issue(built, scheduler);
+      }
     }
     return res;
   }

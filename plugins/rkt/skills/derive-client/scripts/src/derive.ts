@@ -113,6 +113,18 @@ function arg(name: string): string | undefined {
   return i === -1 ? undefined : process.argv[i + 1];
 }
 
+/**
+ * `--mode` is optional (omitted means "read"), but a value that IS given
+ * must be recognized. A typo like `--mode ful` used to silently derive a
+ * read-only client with no error, and the mistake only surfaced much later
+ * as a missing endpoint.
+ */
+export function parseMode(raw: string | undefined): "read" | "full" {
+  if (raw === undefined || raw === "read") return "read";
+  if (raw === "full") return "full";
+  throw new Error(`--mode must be "read" or "full" (got "${raw}")`);
+}
+
 async function main() {
   const site = arg("site");
   const har = arg("har");
@@ -121,7 +133,7 @@ async function main() {
     process.exit(1);
   }
 
-  const mode = arg("mode") === "full" ? "full" : "read";
+  const mode = parseMode(arg("mode"));
   if (mode === "full") {
     console.error(
       "FULL MODE: write endpoints (POST/PUT/PATCH/DELETE) will be derived. " +

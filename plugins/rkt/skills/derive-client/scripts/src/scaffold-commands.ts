@@ -15,26 +15,60 @@ import type { CommandsFile, IdentitySpec } from "./lib/commands-schema";
 
 const READ_METHODS = new Set(["GET", "HEAD"]);
 
+/**
+ * Make an arg name unique within one command's body. `stubBody`'s `_`-joined
+ * names can collide across branches (e.g. `a.b` and a top-level `a_b` both
+ * flatten to "a_b"); a shared flag would silently write one value into two
+ * unrelated body paths, so a collision is disambiguated with a numeric
+ * suffix instead.
+ */
+function uniqueArgName(name: string, used: Set<string>): string {
+  if (!used.has(name)) {
+    used.add(name);
+    return name;
+  }
+  let i = 2;
+  while (used.has(`${name}_${i}`)) i += 1;
+  const disambiguated = `${name}_${i}`;
+  used.add(disambiguated);
+  return disambiguated;
+}
+
 /** Every scalar leaf becomes an editable hole; the curator prunes and pins. */
-function stubBody(shape: JsonShape | null, prefix = ""): unknown {
-  if (!shape || shape.type !== "object") return undefined;
+function stubBody(shape: JsonShape | null, prefix = "", used: Set<string> = new Set()): unknown {
+  if (!shape) return undefined;
+  if (shape.type !== "object") {
+    // Array- or scalar-rooted bodies aren't modelled by this scaffolder. A
+    // bare `@arg:` value AT THE ROOT would resolve fine (shapeTypeAt("") just
+    // returns the shape's own type), so it can't be made to fail loudly the
+    // way a nested hole can. Wrap it in a probe key instead: assertResolvable
+    // walks into it, finds no matching property on a non-object shape, and
+    // rejects -- forcing the curator to author the body by hand rather than
+    // silently shipping a write with no body at all.
+    return { __unsupported_root_shape__: "@arg:__unsupported_root_shape__" };
+  }
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(shape.properties)) {
     if (k === "*") {
-      out["__scrubbed__"] =
-        "REPLACE: this object was keyed by data (ids/emails); author it by hand";
+      // A scrubbed wildcard key has no real property name to author a
+      // matching arg for. Emit an @arg: value anyway (rather than a plain
+      // string) so it flows through argPaths/shapeTypeAt like every other
+      // hole: the wildcard property never resolves in the modelled shape, so
+      // assertResolvable rejects it instead of letting it ship unnoticed.
+      const scrubName = uniqueArgName(prefix ? `${prefix}_scrubbed` : "scrubbed", used);
+      out["__scrubbed__"] = `@arg:${scrubName}`;
       continue;
     }
     const path = prefix ? `${prefix}_${k}` : k;
     if (v.type === "object") {
-      out[k] = stubBody(v, path);
+      out[k] = stubBody(v, path, used);
     } else if (v.type === "array") {
       out[k] =
         v.items.type === "object"
-          ? [stubBody(v.items, `${path}_0`)]
-          : [`@arg:${path}_0`];
+          ? [stubBody(v.items, `${path}_0`, used)]
+          : [`@arg:${uniqueArgName(`${path}_0`, used)}`];
     } else {
-      out[k] = `@arg:${path}`;
+      out[k] = `@arg:${uniqueArgName(path, used)}`;
     }
   }
   return out;

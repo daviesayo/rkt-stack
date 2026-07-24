@@ -11,6 +11,8 @@ import { assertResolvable, validateCommandsFile, type CommandsFile } from "./lib
 import { detectDrift } from "./lib/drift";
 import { validateManifest } from "./lib/manifest";
 
+const READ_METHODS = new Set(["GET", "HEAD"]);
+
 export interface GeneratedFiles {
   siteDir: string;
   written: string[];
@@ -210,6 +212,19 @@ export async function generateClient(
       );
     }
     assertResolvable(commands, manifest.endpoints);
+  } else if (manifest.mode === "full") {
+    // The fallback (uncurated) CLI silently drops every write endpoint --
+    // that's correct (writes need an authored task to be safely exposed),
+    // but with no commands.json at all the result is a read-only CLI and no
+    // explanation why. One line closes the loop.
+    const writeCount = manifest.endpoints.filter(
+      (e) => !READ_METHODS.has(e.method.toUpperCase()),
+    ).length;
+    if (writeCount > 0) {
+      console.error(
+        `${writeCount} write endpoint(s) derived; author commands.json to expose them.`,
+      );
+    }
   }
 
   await write(join(siteDir, "cli.ts"), emitCli(manifest, commands), written);

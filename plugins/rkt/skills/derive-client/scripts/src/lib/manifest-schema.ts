@@ -57,7 +57,13 @@ export interface WriteSemantics {
    * or when the recorded body was not JSON.
    */
   bodyShape: JsonShape | null;
-  /** Dotted body path -> format hint, e.g. "starts_at" -> "iso8601". */
+  /**
+   * Dotted body path -> format hint, e.g. "starts_at" -> "iso8601". Object
+   * paths only: collectHints returns immediately on any array, so a path
+   * that runs through an array index (as argFlags and materialiseBody both
+   * compute) never carries a hint here. No hint just means no format
+   * validation for that path, not that the path is unmodelled.
+   */
   bodyHints: Record<string, string>;
   /** Observed request Content-Type; null when there is no body. */
   contentType: string | null;
