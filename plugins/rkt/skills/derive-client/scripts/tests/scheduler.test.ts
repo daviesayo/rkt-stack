@@ -128,3 +128,30 @@ test("does not cache a failed response", async () => {
   const second = await s.run({ url: "https://x.test/a", method: "GET", headers: {} });
   expect(second.status).toBe(200); // not served from cache
 });
+
+test("does not retry a write on 503", async () => {
+  let calls = 0;
+  const scheduler = createScheduler({
+    fetchImpl: (async () => {
+      calls++;
+      return new Response("", { status: 503 });
+    }) as never,
+    sleepImpl: async () => {},
+  });
+  await scheduler.run({ url: "https://x.test/a", method: "POST", headers: {}, body: "{}" });
+  expect(calls).toBe(1);
+});
+
+test("still retries a read on 503", async () => {
+  let calls = 0;
+  const scheduler = createScheduler({
+    maxRetries: 2,
+    fetchImpl: (async () => {
+      calls++;
+      return new Response("", { status: 503 });
+    }) as never,
+    sleepImpl: async () => {},
+  });
+  await scheduler.run({ url: "https://x.test/b", method: "GET", headers: {} });
+  expect(calls).toBe(3);
+});

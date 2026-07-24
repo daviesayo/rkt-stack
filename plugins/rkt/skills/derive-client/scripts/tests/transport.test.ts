@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import type { ClientManifest, ManifestEndpoint } from "../src/lib/manifest";
 import { createScheduler } from "../src/lib/scheduler";
-import { buildRequest, issue } from "../src/lib/transport";
+import { buildRequest, issue, writesEnabled } from "../src/lib/transport";
 
 const endpoint: ManifestEndpoint = {
   id: "get.api.items.id",
@@ -141,11 +141,11 @@ test("issue calls the scheduler and returns status and body", async () => {
   expect(body).toBe('{"ok":true}');
 });
 
-test("issue still refuses a non-read method", async () => {
+test("issue still refuses a non-read method when writes are disabled", async () => {
   const scheduler = createScheduler({ minDelayMs: 0, maxDelayMs: 0 });
   await expect(
-    issue({ url: "https://x.test/api", method: "DELETE", headers: {} }, scheduler),
-  ).rejects.toThrow(/GET and HEAD only/i);
+    issue({ url: "https://x.test/api", method: "DELETE", headers: {} }, scheduler, { env: {} as never }),
+  ).rejects.toThrow(/writes are disabled/i);
 });
 
 test("supplies recorded values for params the API requires", () => {
@@ -171,4 +171,58 @@ test("an explicit param overrides the recorded example", () => {
   };
   const built = buildRequest(manifest(null), ep, { keys: "other" }, null);
   expect(built.url).toBe("https://x.test/api/v2/settings?keys=other");
+});
+
+const BASE_MANIFEST = manifest({ kind: "cookie", location: "cookie:s", mintedBy: null, expiry: null }, "https://x.test");
+const FULL = { ...BASE_MANIFEST, mode: "full" as const };
+
+const WRITE_EP = {
+  id: "post.api.events",
+  method: "POST",
+  pathTemplate: "/api/events",
+  params: [],
+  responseShape: { type: "unknown" as const },
+  source: "xhr" as const,
+  fragile: false,
+  selectors: null,
+  writeSemantics: { bodyShape: null, bodyHints: {}, contentType: "application/json" },
+};
+
+test("writesEnabled is fail-closed", () => {
+  expect(writesEnabled({} as never)).toBe(false);
+  expect(writesEnabled({ RKT_ALLOW_WRITES: "" } as never)).toBe(false);
+  expect(writesEnabled({ RKT_ALLOW_WRITES: "0" } as never)).toBe(false);
+  expect(writesEnabled({ RKT_ALLOW_WRITES: "false" } as never)).toBe(false);
+  expect(writesEnabled({ RKT_ALLOW_WRITES: "1" } as never)).toBe(true);
+  expect(writesEnabled({ RKT_ALLOW_WRITES: "true" } as never)).toBe(true);
+});
+
+test("buildRequest serialises a body and sets content-type for a write", () => {
+  const built = buildRequest(FULL, WRITE_EP as never, {}, null, { name: "x" });
+  expect(built.method).toBe("POST");
+  expect(built.body).toBe('{"name":"x"}');
+  expect(built.headers["content-type"]).toBe("application/json");
+});
+
+test("buildRequest still refuses a write on a read-mode manifest", () => {
+  expect(() => buildRequest(BASE_MANIFEST, WRITE_EP as never, {}, null, {})).toThrow(/read mode/i);
+});
+
+test("issue refuses a write when RKT_ALLOW_WRITES is not enabled", async () => {
+  const built = buildRequest(FULL, WRITE_EP as never, {}, null, {});
+  const scheduler = { run: async () => ({ status: 200, body: "{}", headers: {} }) };
+  await expect(issue(built, scheduler, { env: {} as never })).rejects.toThrow(/RKT_ALLOW_WRITES/);
+});
+
+test("issue sends the body when writes are enabled", async () => {
+  const built = buildRequest(FULL, WRITE_EP as never, {}, null, { a: 1 });
+  let seen: unknown;
+  const scheduler = {
+    run: async (req: unknown) => {
+      seen = req;
+      return { status: 201, body: "{}", headers: {} };
+    },
+  };
+  await issue(built, scheduler, { env: { RKT_ALLOW_WRITES: "1" } as never });
+  expect((seen as { body: string }).body).toBe('{"a":1}');
 });

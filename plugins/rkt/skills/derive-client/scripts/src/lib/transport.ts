@@ -5,9 +5,20 @@ export interface BuiltRequest {
   url: string;
   method: string;
   headers: Record<string, string>;
+  /** Serialised JSON payload for write methods. */
+  body?: string;
 }
 
 const READ_METHODS = new Set(["GET", "HEAD"]);
+
+/**
+ * Fail-closed: only an explicit "1"/"true" enables writes. Reading any
+ * non-empty string as truthy would turn RKT_ALLOW_WRITES=0 into "enabled".
+ */
+export function writesEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const v = env.RKT_ALLOW_WRITES;
+  return v === "1" || v === "true";
+}
 
 function assertSecureTransport(baseUrl: string): void {
   let parsed: URL;
@@ -74,10 +85,12 @@ export function buildRequest(
   endpoint: ManifestEndpoint,
   params: Record<string, string>,
   secret: Record<string, string> | string | null,
+  body?: unknown,
 ): BuiltRequest {
-  // Defence in depth: the filter pass should already have excluded writes,
-  // but nothing reaches the network without passing this check too.
-  if (!READ_METHODS.has(endpoint.method.toUpperCase())) {
+  const isWrite = !READ_METHODS.has(endpoint.method.toUpperCase());
+  // A read-mode client has no business issuing a write regardless of the env
+  // flag: structural check on the manifest, never on names.
+  if (isWrite && manifest.mode !== "full") {
     throw new Error(
       `refusing ${endpoint.method} ${endpoint.pathTemplate}: read mode issues GET and HEAD only`,
     );
@@ -110,22 +123,33 @@ export function buildRequest(
 
   applyCredentials(manifest, headers, secret);
 
-  return { url, method: endpoint.method, headers };
+  if (!isWrite) return { url, method: endpoint.method, headers };
+
+  const serialised = body === undefined ? undefined : JSON.stringify(body);
+  if (serialised !== undefined) {
+    headers["content-type"] = endpoint.writeSemantics?.contentType ?? "application/json";
+  }
+  return { url, method: endpoint.method, headers, body: serialised };
 }
 
 export async function issue(
   built: BuiltRequest,
   scheduler: Scheduler,
+  opts: { env?: NodeJS.ProcessEnv } = {},
 ): Promise<{ status: number; body: string }> {
-  if (!READ_METHODS.has(built.method.toUpperCase())) {
+  // The gate lives here, at the send, not in buildRequest: a dry-run preview
+  // must still be able to BUILD the request in order to display it.
+  if (!READ_METHODS.has(built.method.toUpperCase()) && !writesEnabled(opts.env)) {
     throw new Error(
-      `refusing ${built.method} ${built.url}: read mode issues GET and HEAD only`,
+      `refusing ${built.method} ${built.url}: writes are disabled. ` +
+        `Set RKT_ALLOW_WRITES=1 to enable them.`,
     );
   }
   const { status, body } = await scheduler.run({
     url: built.url,
     method: built.method,
     headers: built.headers,
+    ...(built.body === undefined ? {} : { body: built.body }),
   });
   return { status, body };
 }
