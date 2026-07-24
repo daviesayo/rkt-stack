@@ -1,4 +1,5 @@
-import type { CommandsFile } from "./commands-schema";
+import type { CommandSpec, CommandsFile } from "./commands-schema";
+import { shapeTypeAt } from "./commands-schema";
 import type { ClientManifest, JsonShape, ManifestEndpoint } from "./manifest-schema";
 
 const GENERATED_HEADER = (manifest: ClientManifest) =>
@@ -17,13 +18,16 @@ const READ_METHODS = new Set(["GET", "HEAD"]);
  * Collisions are resolved by appending -2, -3 in manifest order, so the same
  * manifest always regenerates the same names.
  */
-export function commandNames(endpoints: ManifestEndpoint[]): Map<string, string> {
+export function commandNames(
+  endpoints: ManifestEndpoint[],
+  opts: { allowWrites?: boolean } = {},
+): Map<string, string> {
   const out = new Map<string, string>();
   const used = new Map<string, number>();
 
   for (const endpoint of endpoints) {
     const method = endpoint.method.toUpperCase();
-    if (!READ_METHODS.has(method)) {
+    if (!READ_METHODS.has(method) && !opts.allowWrites) {
       throw new Error(
         `refusing ${endpoint.method} ${endpoint.pathTemplate}: read mode derives GET and HEAD only`,
       );
@@ -95,7 +99,7 @@ export function emitType(shape: JsonShape, name: string): string {
 }
 
 export function emitTypes(manifest: ClientManifest): string {
-  const names = commandNames(manifest.endpoints);
+  const names = commandNames(manifest.endpoints, { allowWrites: manifest.mode === "full" });
   const blocks = manifest.endpoints.map((endpoint) =>
     emitType(endpoint.responseShape, typeName(names.get(endpoint.id)!)),
   );
@@ -103,11 +107,13 @@ export function emitTypes(manifest: ClientManifest): string {
 }
 
 export function emitCli(manifest: ClientManifest, commands?: CommandsFile): string {
-  for (const endpoint of manifest.endpoints) {
-    if (!READ_METHODS.has(endpoint.method.toUpperCase())) {
-      throw new Error(
-        `cannot generate ${endpoint.method} ${endpoint.pathTemplate}: read mode emits GET and HEAD only`,
-      );
+  if (manifest.mode !== "full") {
+    for (const endpoint of manifest.endpoints) {
+      if (!READ_METHODS.has(endpoint.method.toUpperCase())) {
+        throw new Error(
+          `cannot generate ${endpoint.method} ${endpoint.pathTemplate}: read mode emits GET and HEAD only`,
+        );
+      }
     }
   }
   const body = commands ? emitTaskCli(manifest, commands) : emitEndpointCli(manifest);
@@ -115,8 +121,11 @@ export function emitCli(manifest: ClientManifest, commands?: CommandsFile): stri
 }
 
 function emitEndpointCli(manifest: ClientManifest): string {
-  const names = commandNames(manifest.endpoints);
-  const commands = manifest.endpoints.map((endpoint) => ({
+  // The fallback CLI is uncurated. A write must never appear here; writes
+  // require an authored commands.json task.
+  const readEndpoints = manifest.endpoints.filter((e) => READ_METHODS.has(e.method.toUpperCase()));
+  const names = commandNames(readEndpoints);
+  const commands = readEndpoints.map((endpoint) => ({
     command: names.get(endpoint.id)!,
     id: endpoint.id,
     method: endpoint.method,
@@ -124,17 +133,17 @@ function emitEndpointCli(manifest: ClientManifest): string {
     params: endpoint.params,
   }));
 
-  const responseTypes = manifest.endpoints.map((e) => typeName(names.get(e.id)!));
-  const responseMap = manifest.endpoints.map(
+  const responseTypes = readEndpoints.map((e) => typeName(names.get(e.id)!));
+  const responseMap = readEndpoints.map(
     (e) => `  ${JSON.stringify(names.get(e.id)!)}: ${typeName(names.get(e.id)!)};`,
   );
 
   const typeImport =
-    manifest.endpoints.length > 0
+    readEndpoints.length > 0
       ? `import type { ${responseTypes.join(", ")} } from "./types";\n`
       : "";
   const responseFor =
-    manifest.endpoints.length > 0
+    readEndpoints.length > 0
       ? `/** Response type per command, for callers importing this module. */
 export type ResponseFor = {
 ${responseMap.join("\n")}
@@ -415,6 +424,46 @@ if (import.meta.main) {
 `;
 }
 
+function argFlags(
+  cmd: Pick<CommandSpec, "call">,
+  manifest: ClientManifest,
+): { name: string; type?: string; hint?: string }[] {
+  const ep = manifest.endpoints.find((e) => e.id === cmd.call.endpoint);
+  const shape = ep?.writeSemantics?.bodyShape ?? null;
+  const hints = ep?.writeSemantics?.bodyHints ?? {};
+  const out: { name: string; type?: string; hint?: string }[] = [];
+
+  const walk = (node: unknown, path: string) => {
+    if (typeof node === "string" && node.startsWith("@arg:")) {
+      out.push({
+        name: node.slice(5),
+        type: shapeTypeAt(shape, path),
+        hint: hints[path],
+      });
+      return;
+    }
+    if (node && typeof node === "object" && !Array.isArray(node)) {
+      for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
+        walk(v, path ? `${path}.${k}` : k);
+      }
+    }
+  };
+  walk(cmd.call.body, "");
+  return out;
+}
+
+function emitArgHelp(commands: CommandsFile, manifest: ClientManifest): string {
+  const byCmd = Object.fromEntries(
+    commands.commands.map((c) => [
+      c.name,
+      argFlags(c, manifest).map(
+        ({ name, type, hint }) => `  --${name} <${hint ?? type ?? "string"}>`,
+      ),
+    ]),
+  );
+  return JSON.stringify(byCmd);
+}
+
 function emitTaskCli(manifest: ClientManifest, commands: CommandsFile): string {
   const hasIdentity = !!commands.identity;
   const identityLiteral = hasIdentity ? JSON.stringify(commands.identity) : "undefined";
@@ -438,11 +487,33 @@ import { CliError, footer } from "../lib/overflow";
 import type { CommandSpec, IdentitySpec } from "../lib/commands-schema";
 import { readSecrets } from "../lib/secrets";
 import { runLifecycle } from "../lib/session";
+import { writesEnabled } from "../lib/transport";
 
 const COMMANDS: CommandSpec[] = ${JSON.stringify(commands.commands, null, 2)};
 const IDENTITY: IdentitySpec | undefined = ${identityLiteral};
 const SITE = ${JSON.stringify(manifest.site)};
+const ARG_HELP: Record<string, string[]> = ${emitArgHelp(commands, manifest)};
 const STARTED_AT = Date.now();
+
+const WRITES_ENABLED = writesEnabled();
+// With writes disabled the write commands are not registered at all: they do
+// not appear in help and dispatch treats them as unknown.
+const VISIBLE: CommandSpec[] = COMMANDS.filter((c) => WRITES_ENABLED || !c.write);
+const HAS_HIDDEN_WRITES = COMMANDS.some((c) => c.write) && !WRITES_ENABLED;
+
+function argNames(cmd: CommandSpec): string[] {
+  const found = new Set<string>();
+  const walk = (node: unknown) => {
+    if (typeof node === "string") {
+      if (node.startsWith("@arg:")) found.add(node.slice(5));
+      return;
+    }
+    if (node && typeof node === "object") Object.values(node as Record<string, unknown>).forEach(walk);
+  };
+  walk(cmd.call.body);
+  Object.values(cmd.call.params ?? {}).forEach(walk);
+  return [...found];
+}
 
 function hasFlag(name: string): boolean {
   return process.argv.includes(\`--\${name}\`);
@@ -490,10 +561,17 @@ function commandHelp(cmd: (typeof COMMANDS)[number]): string {
   } else {
     lines.push("params: none declared (nothing is overridable)");
   }
+  // Write holes: one flag per @arg: leaf in the body template.
+  for (const line of ARG_HELP[cmd.name] ?? []) lines.push(line);
   if (cmd.output.kind === "table" && cmd.output.columns?.length) {
     lines.push(\`columns: \${cmd.output.columns.join(", ")}\`);
   }
-  lines.push("global flags: --json --raw --limit <n> --full --dry-run");
+  lines.push("global flags: --json --raw --limit <n> --full");
+  if (cmd.write) lines.push("write flags:  --commit (send it; without this the write only previews)");
+  if (HAS_HIDDEN_WRITES) {
+    lines.push("");
+    lines.push("write commands are hidden; set RKT_ALLOW_WRITES=1 to enable them");
+  }
   const example = params.length
     ? \`\${cmd.name} \${params.map(([k]) => \`--\${k} <value>\`).join(" ")}\`
     : cmd.name;
@@ -514,7 +592,11 @@ function usage(exitCode = 1): never {
   console.error("  help                     show this message");
   console.error("");
   console.error("commands:");
-  for (const c of COMMANDS) console.error(\`  \${c.name.padEnd(22)} \${c.summary}\`);
+  for (const c of VISIBLE) console.error(\`  \${c.name.padEnd(22)} \${c.summary}\`);
+  if (HAS_HIDDEN_WRITES) {
+    console.error("");
+    console.error("write commands are hidden; set RKT_ALLOW_WRITES=1 to enable them");
+  }
   console.error("");
   console.error("run: bun cli.ts <command> --help for params and an example");
   process.exit(exitCode);
@@ -528,9 +610,9 @@ async function main() {
   if (name === "help" || name === "--help" || name === "-h") usage(0);
   if (!name || name.startsWith("-")) usage();
 
-  const cmd = COMMANDS.find((c) => c.name === name);
+  const cmd = VISIBLE.find((c) => c.name === name);
   if (name !== "whoami" && !cmd) {
-    const near = suggest(name, COMMANDS.map((c) => c.name));
+    const near = suggest(name, VISIBLE.map((c) => c.name));
     fail(
       \`unknown command: \${name}\${near ? \`. did you mean \${near}?\` : ""}\`,
       "run: bun cli.ts help for the command list",
@@ -560,6 +642,13 @@ ${whoamiDispatch}
     if (v !== undefined) overrideParams[key] = v;
   }
 
+  // Collect --<name> values for every @arg: hole in this command's body.
+  const args: Record<string, string> = {};
+  for (const name of argNames(cmd)) {
+    const v = flagValue(name);
+    if (v !== undefined) args[name] = v;
+  }
+
   const limitRaw = flagValue("limit");
   const limitNum = limitRaw !== undefined ? Number(limitRaw) : NaN;
   const flags = {
@@ -579,7 +668,14 @@ ${whoamiDispatch}
     flags,
     now: new Date(),
     overrideParams,
+    commit: hasFlag("commit"),
+    args,
   });
+  if (result.kind === "preview") {
+    process.stdout.write(result.rendered + "\\n");
+    console.error("preview only. Nothing was sent. Re-run with --commit to apply.");
+    return;
+  }
   const done = await finishRun(SITE, cmd.name, result, { full: hasFlag("full"), now: new Date() });
   process.stdout.write(done.stdout);
   if (done.hint) console.error(\`hint: \${done.hint}\`);

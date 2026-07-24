@@ -397,3 +397,84 @@ test("endpoint CLI emits reduced-tier navigation", () => {
   expect(src).not.toContain("--full");
   expect(src).toContain("missing required param");
 });
+
+const FULL_MANIFEST: ClientManifest = {
+  schemaVersion: 3,
+  site: "x",
+  baseUrl: "https://x.test",
+  recordedAt: "2026-07-24T00:00:00.000Z",
+  harSha256: "d",
+  userAgent: "UA",
+  clientHints: {},
+  auth: { kind: "cookie", location: "cookie:s", mintedBy: null, expiry: null },
+  authBundle: null,
+  refresh: null,
+  mode: "full",
+  endpoints: [
+    {
+      id: "post.api.events",
+      method: "POST",
+      pathTemplate: "/api/events",
+      params: [],
+      responseShape: { type: "unknown" },
+      source: "xhr",
+      fragile: false,
+      selectors: null,
+      writeSemantics: {
+        bodyShape: {
+          type: "object",
+          properties: {
+            name: { type: "string" },
+            count: { type: "number" },
+            pinned: { type: "string" },
+          },
+          required: [],
+        },
+        bodyHints: {},
+        contentType: "application/json",
+      },
+    },
+  ],
+};
+
+const COMMANDS_WITH_WRITE: CommandsFile = {
+  schemaVersion: 1,
+  site: "x",
+  commands: [
+    {
+      name: "event-create",
+      summary: "",
+      write: true,
+      call: {
+        endpoint: "post.api.events",
+        body: { name: "@arg:title", count: "@arg:count", pinned: "fixed" },
+      },
+      output: { kind: "json" },
+      redact: ["body.name"],
+    },
+  ],
+};
+
+test("full mode no longer throws on a write endpoint", () => {
+  expect(() => emitCli(FULL_MANIFEST, COMMANDS_WITH_WRITE)).not.toThrow();
+});
+
+test("read mode still refuses a write endpoint", () => {
+  expect(() => emitCli({ ...FULL_MANIFEST, mode: undefined }, undefined)).toThrow(/GET and HEAD only/i);
+});
+
+test("the uncurated fallback never emits a write command", () => {
+  const cli = emitCli(FULL_MANIFEST, undefined);
+  expect(cli).not.toContain("post.api.events");
+});
+
+test("a curated write command emits --commit and its @arg flags", () => {
+  const cli = emitCli(FULL_MANIFEST, COMMANDS_WITH_WRITE);
+  expect(cli).toContain("--commit");
+  expect(cli).toContain("--title");
+});
+
+test("the generated main gates the command list on writesEnabled", () => {
+  const cli = emitCli(FULL_MANIFEST, COMMANDS_WITH_WRITE);
+  expect(cli).toContain("writesEnabled");
+});
