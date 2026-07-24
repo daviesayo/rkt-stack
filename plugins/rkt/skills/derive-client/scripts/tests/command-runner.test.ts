@@ -505,6 +505,63 @@ test("an @arg failing its format hint is rejected before the wire", async () => 
   ).rejects.toThrow(/starts_at.*iso8601/i);
 });
 
+const ARRAY_MANIFEST = {
+  ...FULL_MANIFEST,
+  endpoints: [
+    {
+      ...FULL_MANIFEST.endpoints[0],
+      writeSemantics: {
+        bodyShape: {
+          type: "object" as const,
+          properties: {
+            items: {
+              type: "array" as const,
+              items: {
+                type: "object" as const,
+                properties: { qty: { type: "number" as const } },
+                required: [],
+              },
+            },
+          },
+          required: [],
+        },
+        bodyHints: {},
+        contentType: "application/json",
+      },
+    },
+  ],
+};
+
+const ARRAY_CMD = {
+  ...WRITE_CMD,
+  call: { endpoint: "post.api.events", body: { items: [{ qty: "@arg:count" }] } },
+  redact: [],
+};
+
+test("coerces @arg holes inside array body elements", async () => {
+  let sentBody: unknown;
+  const caller = {
+    call: async (_i: string, _p: unknown, body: unknown) => {
+      sentBody = body;
+      return { status: 201, body: "{}" };
+    },
+    fetchJson: async () => ({}),
+    secret: null,
+  };
+  process.env.RKT_ALLOW_WRITES = "1";
+  const res = await runCommand(ARRAY_CMD as never, {
+    manifest: ARRAY_MANIFEST,
+    site: "x",
+    caller: caller as never,
+    flags: { json: true, raw: false },
+    now: new Date(),
+    commit: true,
+    args: { count: "5" },
+  } as never);
+  expect(res.kind).toBe("sent");
+  expect(sentBody).toEqual({ items: [{ qty: 5 }] });
+});
+
 test("commit without the env flag raises the enable-writes error", async () => {
   delete process.env.RKT_ALLOW_WRITES;
   const caller = {

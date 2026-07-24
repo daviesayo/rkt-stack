@@ -152,7 +152,11 @@ async function materialiseBody(
   path = "",
 ): Promise<unknown> {
   if (Array.isArray(template)) {
-    return Promise.all(template.map((v) => materialiseBody(v, shape, hints, ctx, now, path)));
+    return Promise.all(
+      template.map((v, i) =>
+        materialiseBody(v, shape, hints, ctx, now, path ? `${path}.${i}` : String(i)),
+      ),
+    );
   }
   if (template && typeof template === "object") {
     const out: Record<string, unknown> = {};
