@@ -168,7 +168,8 @@ export function shapeTypeAt(shape: JsonShape | null | undefined, path: string): 
 function argPaths(body: unknown, prefix = ""): string[] {
   if (body === undefined || body === null) return [];
   if (typeof body === "string") {
-    return body.startsWith("@arg:") && prefix ? [prefix] : [];
+    if (!body.startsWith("@arg:")) return [];
+    return prefix ? [prefix] : [""];
   }
   if (Array.isArray(body)) {
     return body.flatMap((item, i) => {

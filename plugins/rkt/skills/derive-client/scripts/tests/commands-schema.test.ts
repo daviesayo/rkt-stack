@@ -249,3 +249,37 @@ test("assertResolvable accepts an @arg hole in a modelled array body", () => {
   }];
   expect(() => assertResolvable(f as never, endpoints as never)).not.toThrow();
 });
+
+test("assertResolvable accepts a root-level @arg string body hole", () => {
+  const f = { schemaVersion: 1, site: "x", commands: [{
+    name: "note-create", summary: "", write: true,
+    call: { endpoint: "post.api.notes", body: "@arg:name" },
+    output: { kind: "json" }, redact: [],
+  }] };
+  const endpoints = [{
+    id: "post.api.notes",
+    params: [],
+    method: "POST",
+    writeSemantics: {
+      bodyShape: { type: "string" },
+      bodyHints: {},
+      contentType: "application/json",
+    },
+  }];
+  expect(() => assertResolvable(f as never, endpoints as never)).not.toThrow();
+});
+
+test("assertResolvable rejects a root-level @arg hole with no modelled body shape", () => {
+  const f = { schemaVersion: 1, site: "x", commands: [{
+    name: "note-create", summary: "", write: true,
+    call: { endpoint: "post.api.notes", body: "@arg:name" },
+    output: { kind: "json" }, redact: [],
+  }] };
+  const endpoints = [{
+    id: "post.api.notes",
+    params: [],
+    method: "POST",
+    writeSemantics: { bodyShape: null, bodyHints: {}, contentType: "application/json" },
+  }];
+  expect(() => assertResolvable(f as never, endpoints as never)).toThrow(/no modelled shape/);
+});
