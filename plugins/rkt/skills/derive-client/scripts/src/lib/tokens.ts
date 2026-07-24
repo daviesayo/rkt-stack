@@ -1,6 +1,8 @@
 export interface TokenContext {
   resolveMe: () => Promise<string>;
   timezone?: string;
+  /** Parsed --<name> flag values, for @arg: holes in a curated body. */
+  args?: Record<string, string>;
 }
 
 export function isToken(value: string): boolean {
@@ -42,6 +44,15 @@ export async function resolveToken(value: string, ctx: TokenContext, now: Date):
   if (!isToken(value)) return value;
   if (value.startsWith("@@")) return value.slice(1);
 
+  if (value.startsWith("@arg:")) {
+    const name = value.slice("@arg:".length);
+    const supplied = ctx.args?.[name];
+    if (supplied === undefined) {
+      throw new Error(`missing required argument --${name} (body field wants ${value})`);
+    }
+    return supplied;
+  }
+
   if (value === "@me") return ctx.resolveMe();
 
   const m = TODAY.exec(value);
@@ -50,5 +61,7 @@ export async function resolveToken(value: string, ctx: TokenContext, now: Date):
     return formatDate(base, ctx.timezone ?? process.env.TZ);
   }
 
-  throw new Error(`unresolvable param token ${value}: not one of @me, @today, @today±<n><d|w|m|y>`);
+  throw new Error(
+    `unresolvable param token ${value}: not one of @me, @today, @today±<n><d|w|m|y>, @arg:<name>`,
+  );
 }
