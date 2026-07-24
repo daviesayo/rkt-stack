@@ -221,14 +221,26 @@ const WILDCARD = "*";
 function scrubShape(shape: JsonShape): JsonShape {
   if (shape.type === "array") return { type: "array", items: scrubShape(shape.items) };
   if (shape.type !== "object") return shape;
-  const keys = Object.keys(shape.properties);
-  if (keys.length > 0 && keys.every(isDataKey)) {
-    const merged = keys.map((k) => shape.properties[k]).reduce(mergeShapes);
-    return { type: "object", properties: { [WILDCARD]: scrubShape(merged) }, required: [] };
+
+  const dataKeys: string[] = [];
+  const schemaKeys: string[] = [];
+  for (const k of Object.keys(shape.properties)) {
+    if (isDataKey(k)) dataKeys.push(k);
+    else schemaKeys.push(k);
   }
+
   const properties: Record<string, JsonShape> = {};
-  for (const [k, v] of Object.entries(shape.properties)) properties[k] = scrubShape(v);
-  return { type: "object", properties, required: shape.required };
+  if (dataKeys.length > 0) {
+    const merged = dataKeys.map((k) => shape.properties[k]).reduce(mergeShapes);
+    properties[WILDCARD] = scrubShape(merged);
+  }
+  for (const k of schemaKeys) properties[k] = scrubShape(shape.properties[k]);
+
+  return {
+    type: "object",
+    properties,
+    required: shape.required.filter((k) => !isDataKey(k)),
+  };
 }
 
 function collectHints(value: unknown, prefix: string, out: Record<string, string>): void {

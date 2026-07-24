@@ -148,3 +148,20 @@ test("scrubs data-derived object keys so PII never lands in the schema", () => {
   const ws = inferWriteSemantics(group([sample('{"guests":{"alice@x.com":{"rsvp":true}}}')]))!;
   expect(JSON.stringify(ws)).not.toContain("alice@x.com");
 });
+
+test("scrubs data-derived keys in mixed objects while preserving schema keys", () => {
+  const ws = inferWriteSemantics(
+    group([sample('{"guests":{"alice@x.com":{"rsvp":true},"bob@y.com":{"rsvp":false},"count":3}}')]),
+  )!;
+  expect(JSON.stringify(ws)).not.toContain("alice@x.com");
+  expect(JSON.stringify(ws)).not.toContain("bob@y.com");
+  const guests = (ws.bodyShape as { properties: Record<string, unknown> }).properties.guests as {
+    properties: Record<string, unknown>;
+    required: string[];
+  };
+  expect(guests.properties).toEqual({
+    "*": { type: "object", properties: { rsvp: { type: "boolean" } }, required: ["rsvp"] },
+    count: { type: "number" },
+  });
+  expect(guests.required).toEqual(["count"]);
+});
