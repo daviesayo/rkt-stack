@@ -713,3 +713,141 @@ if (import.meta.main) {
 }
 `;
 }
+
+export function emitMcp(manifest: ClientManifest): string {
+  return `#!/usr/bin/env bun
+${GENERATED_HEADER(manifest)}
+// MCP entrypoint: RKT_MCP_TOKEN authenticates remote HTTP callers; DNS rebinding
+// protection (allowedHosts/allowedOrigins) defends the local-browser case. They are
+// not substitutes. For tunnel access, add the tunnel hostname to RKT_MCP_ALLOWED_HOSTS
+// (comma-separated) or every remote call is rejected by the exact-string Host check.
+
+import { timingSafeEqual } from "node:crypto";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { buildServer } from "../lib/mcp-server";
+
+const clientDir = import.meta.dir;
+
+function parseArgs(): { http: boolean; port: number } {
+  const args = process.argv.slice(2);
+  const http = args.includes("--http");
+  const portIdx = args.indexOf("--port");
+  const port = portIdx !== -1 ? Number(args[portIdx + 1]) : 3000;
+  return { http, port };
+}
+
+function checkBearer(req: Request, expected: string): Response | null {
+  const auth = req.headers.get("authorization");
+  if (!auth?.startsWith("Bearer ")) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+  const got = auth.slice("Bearer ".length);
+  const a = Buffer.from(expected);
+  const b = Buffer.from(got);
+  if (a.length !== b.length || !timingSafeEqual(a, b)) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+  return null;
+}
+
+async function runStdio(): Promise<void> {
+  const { server } = await buildServer(clientDir);
+  const transport = new StdioServerTransport();
+  await server.server.connect(transport);
+}
+
+async function runHttp(port: number): Promise<void> {
+  const token = process.env.RKT_MCP_TOKEN;
+  if (!token) {
+    console.error("HTTP mode refuses to start without the required authentication environment variable");
+    process.exit(1);
+  }
+
+  const extra = (process.env.RKT_MCP_ALLOWED_HOSTS ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const allowedHosts = [\`127.0.0.1:\${port}\`, \`localhost:\${port}\`, ...extra];
+  const allowedOrigins = allowedHosts.map((h) => \`http://\${h}\`);
+
+  type SessionEntry = {
+    server: McpServer;
+    transport: WebStandardStreamableHTTPServerTransport;
+  };
+  const sessions = new Map<string, SessionEntry>();
+
+  async function reapSession(sessionId: string): Promise<void> {
+    const entry = sessions.get(sessionId);
+    if (!entry) return;
+    await entry.server.server.close();
+    await entry.transport.close();
+    sessions.delete(sessionId);
+  }
+
+  Bun.serve({
+    hostname: "127.0.0.1",
+    port,
+    async fetch(req) {
+      const denied = checkBearer(req, token);
+      if (denied) return denied;
+
+      const sessionId = req.headers.get("mcp-session-id");
+      if (sessionId && sessions.has(sessionId)) {
+        return sessions.get(sessionId)!.transport.handleRequest(req);
+      }
+
+      if (req.method !== "POST") {
+        return new Response("Bad Request", { status: 400 });
+      }
+
+      const body = await req.json();
+      if (!isInitializeRequest(body)) {
+        return new Response("Bad Request", { status: 400 });
+      }
+
+      let entry!: SessionEntry;
+      const transport = new WebStandardStreamableHTTPServerTransport({
+        sessionIdGenerator: () => crypto.randomUUID(),
+        enableDnsRebindingProtection: true,
+        allowedHosts,
+        allowedOrigins,
+        onsessioninitialized: (sid) => {
+          sessions.set(sid, entry);
+        },
+        onsessionclosed: async (sid) => {
+          if (sid) await reapSession(sid);
+        },
+      });
+
+      transport.onclose = async () => {
+        const sid = transport.sessionId;
+        if (sid) await reapSession(sid);
+      };
+
+      const built = await buildServer(clientDir);
+      entry = { server: built.server, transport };
+      await built.server.server.connect(transport);
+      return transport.handleRequest(req, { parsedBody: body });
+    },
+  });
+
+  console.error(\`MCP HTTP listening on http://127.0.0.1:\${port}\`);
+}
+
+async function main(): Promise<void> {
+  const { http, port } = parseArgs();
+  if (http) await runHttp(port);
+  else await runStdio();
+}
+
+if (import.meta.main) {
+  main().catch((err) => {
+    console.error((err as Error).message);
+    process.exit(1);
+  });
+}
+`;
+}
