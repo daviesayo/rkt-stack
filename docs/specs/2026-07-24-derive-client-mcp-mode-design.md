@@ -296,7 +296,7 @@ MCP mode:
 does not gain it: the adapter slices the surfaced rows after `runCommand` returns.
 `_limit` is likewise applied by the adapter over rows, so it composes with
 `output.sort` deterministically (sort happens inside `runCommand`, before
-slicing). An out-of-range _offset returns an empty page plus the notice, not an
+slicing). An out-of-range offset returns an empty page plus the notice, not an
 error.
 
 **Other per-call disk writes exist** and are not spills but must be understood as
@@ -429,7 +429,7 @@ its quality depends entirely on each client's UI. Reads first.
   exposed; `_limit`/`_offset` present.
 - **Token injection:** an agent-supplied param value of `@me` is sent as the
   literal string `@me`, not resolved to the operator's identity.
-- **Overflow:** truncation notice; `_offset` pages; out-of-range _offset yields an
+- **Overflow:** truncation notice; `_offset` pages; out-of-range offset yields an
   empty page; no spill file and no host path in any result or error.
 - **Process lifetime:** two identical successive tool calls hit the network twice;
   inter-call pacing is preserved (scheduler is not per-call); a tool call after the
