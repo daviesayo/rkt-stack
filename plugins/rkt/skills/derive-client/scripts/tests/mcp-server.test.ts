@@ -291,3 +291,37 @@ test("malformed client.json is rejected by validateManifest", async () => {
   });
   await expect(buildServer(dir, STUBS)).rejects.toThrow(/schemaVersion|schema version/i);
 });
+
+test("events tool inputSchema exposes q, _limit, and _offset over the protocol", async () => {
+  const dir = await fixtureClient({
+    commands: [
+      {
+        name: "events",
+        summary: "list events",
+        call: { endpoint: "get.api.events", params: { q: "@arg:q" } },
+        output: { kind: "table", rows: "data.items", columns: ["id"] },
+        redact: [],
+      },
+    ],
+  });
+  const events = (await toolsOf(dir)).find((t) => t.name === "events");
+  expect(events).toBeDefined();
+  const props =
+    (events!.inputSchema as { properties?: Record<string, unknown> }).properties ?? {};
+  expect(Object.keys(props).sort()).toEqual(["_limit", "_offset", "q"]);
+});
+
+test("callTool round-trips injected runTool output over the protocol", async () => {
+  const sentinel = "mcp-handler-round-trip";
+  const dir = await fixtureClient();
+  const { server } = await buildServer(dir, {
+    runTool: async () => sentinel,
+    runWhoamiTool: async () => "me",
+  });
+  const client = new Client({ name: "t", version: "1.0" });
+  const [ct, st] = InMemoryTransport.createLinkedPair();
+  await Promise.all([client.connect(ct), server.server.connect(st)]);
+  const result = await client.callTool({ name: "events", arguments: {} });
+  expect(result.content).toEqual([{ type: "text", text: sentinel }]);
+  await client.close();
+});
