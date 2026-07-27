@@ -9,7 +9,7 @@ import { runCommand, runWhoami, type RunnerCaller } from "./command-runner";
 import { CliError, MAX_BYTES, MAX_ROWS, capText } from "./overflow";
 import { createCaller } from "./runtime";
 import { refreshViaOidc as realRefreshViaOidc } from "./refresh";
-import { readSecrets, redactAll, writeSecret as realWriteSecret } from "./secrets";
+import { readSecrets, redactAll, serializeCredentialWrite, writeSecret as realWriteSecret } from "./secrets";
 import { createScheduler, type Scheduler } from "./scheduler";
 
 const READ_METHODS = new Set(["GET", "HEAD"]);
@@ -97,16 +97,6 @@ export async function buildServer(
     })();
   const readSecretsFn = opts.readSecrets ?? readSecrets;
 
-  // In-process serialization. Two concurrent renewals would otherwise race on
-  // the same "<path>.<pid>.tmp" file, where one error handler removes the
-  // other's temp file. lock.ts is not part of the client runtime by design.
-  let writeChain: Promise<unknown> = Promise.resolve();
-  function serialize<T>(fn: () => Promise<T>): Promise<T> {
-    const next = writeChain.then(fn, fn);
-    writeChain = next.catch(() => {});
-    return next;
-  }
-
   async function callerForCall() {
     // Re-read per call: a long-lived process would otherwise hold a stale
     // bundle forever and the "run login" remediation would never take effect.
@@ -120,8 +110,9 @@ export async function buildServer(
           return null;
         },
         refreshViaOidc: opts.refreshViaOidc,
+        readSecrets: readSecretsFn,
         writeSecret: (site, values) =>
-          serialize(() => (opts.writeSecret ?? realWriteSecret)(site, values)),
+          serializeCredentialWrite(() => (opts.writeSecret ?? realWriteSecret)(site, values)),
       })
     );
   }

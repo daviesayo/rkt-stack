@@ -5,7 +5,7 @@ const originalWriteFile = realFs.writeFile.bind(realFs);
 const originalReadFile = realFs.readFile.bind(realFs);
 
 function isIdentityTmp(path: unknown): boolean {
-  return String(path).endsWith(`.${process.pid}.tmp`);
+  return String(path).endsWith(`.identity.json.${process.pid}.tmp`);
 }
 
 function isIdentityCache(path: unknown): boolean {

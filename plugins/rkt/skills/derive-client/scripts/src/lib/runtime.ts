@@ -2,14 +2,23 @@ import type { ClientManifest, ManifestEndpoint } from "./manifest-schema";
 import type { Scheduler } from "./scheduler";
 import { buildRequest, issue } from "./transport";
 import { CliError } from "./overflow";
-import { REFRESH_TOKEN_KEY, writeSecret as realWriteSecret } from "./secrets";
+import {
+  REFRESH_TOKEN_KEY,
+  readSecrets as realReadSecrets,
+  writeSecret as realWriteSecret,
+} from "./secrets";
 import { refreshViaOidc as realRefresh } from "./refresh";
 import { reauthViaProfile as realReauth } from "./reauth";
+
+// Per-site renewal flights. Two concurrent 401s must share one OIDC refresh
+// and one persisted write; keying by site prevents cross-site credential bleed.
+const renewFlights = new Map<string, Promise<boolean>>();
 
 export interface CallerDeps {
   refreshViaOidc?: typeof realRefresh;
   reauthViaProfile?: typeof realReauth;
   writeSecret?: typeof realWriteSecret;
+  readSecrets?: typeof realReadSecrets;
   log?: (msg: string) => void;
 }
 
@@ -32,6 +41,7 @@ export function createCaller(
   const refresh = deps.refreshViaOidc ?? realRefresh;
   const reauth = deps.reauthViaProfile ?? realReauth;
   const writeSecret = deps.writeSecret ?? realWriteSecret;
+  const readSecretsFn = deps.readSecrets ?? realReadSecrets;
   const log = deps.log ?? ((m: string) => console.error(m));
   let secret = initialSecret;
 
@@ -47,7 +57,7 @@ export function createCaller(
   // Tiered renewal: OIDC refresh first (one POST), browser re-auth second
   // (a headless Chrome launch that survives an expired refresh token). Returns
   // true when `secret` was replaced with a fresh, persisted bundle.
-  async function renew(): Promise<boolean> {
+  async function doRenew(): Promise<boolean> {
     if (!secret) return false;
     let renewed: Record<string, string> | null = null;
 
@@ -85,6 +95,24 @@ export function createCaller(
     await writeSecret(manifest.site, renewed);
     secret = renewed;
     return true;
+  }
+
+  async function renew(): Promise<boolean> {
+    if (!secret) return false;
+    const site = manifest.site;
+    let flight = renewFlights.get(site);
+    if (!flight) {
+      flight = doRenew().finally(() => {
+        renewFlights.delete(site);
+      });
+      renewFlights.set(site, flight);
+    }
+    const ok = await flight;
+    if (ok) {
+      const fresh = await readSecretsFn(site);
+      if (fresh) secret = fresh;
+    }
+    return ok;
   }
 
   const READ_METHODS = new Set(["GET", "HEAD"]);

@@ -4,6 +4,18 @@ import { secretsDir, secretsFile } from "./paths";
 /** Reserved secrets key for the OAuth refresh token. */
 export const REFRESH_TOKEN_KEY = "@refresh_token";
 
+// In-process serialization. Two concurrent credential writes would otherwise
+// race on the same "<path>.<pid>.tmp" file, where one error handler removes the
+// other's temp file. lock.ts is not part of the client runtime by design.
+let credentialWriteChain: Promise<unknown> = Promise.resolve();
+
+/** Serialize credential writes across every server in the process. */
+export function serializeCredentialWrite<T>(fn: () => Promise<T>): Promise<T> {
+  const next = credentialWriteChain.then(fn, fn);
+  credentialWriteChain = next.catch(() => {});
+  return next;
+}
+
 interface SecretBody {
   /** location -> value, e.g. {"cookie:PHPSESSID": "...", "x-csrf-token": "..."} */
   values: Record<string, string>;

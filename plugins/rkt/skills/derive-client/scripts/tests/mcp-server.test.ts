@@ -463,12 +463,17 @@ function authHeader(init?: RequestInit): string | undefined {
 function renewalDeps(
   overrides: Parameters<typeof buildServer>[1] = {},
 ): Parameters<typeof buildServer>[1] {
+  let bundle: Record<string, string> = {
+    authorization: "Bearer old",
+    [REFRESH_TOKEN_KEY]: "r1",
+    "cookie:s": "x",
+  };
+  const baseWriteSecret = async (_site: string, values: string | Record<string, string>) => {
+    bundle = typeof values === "string" ? { default: values } : { ...values };
+  };
+  const { writeSecret: overrideWrite, readSecrets: overrideRead, ...rest } = overrides;
   return {
-    readSecrets: async () => ({
-      authorization: "Bearer old",
-      [REFRESH_TOKEN_KEY]: "r1",
-      "cookie:s": "x",
-    }),
+    readSecrets: overrideRead ?? (async () => ({ ...bundle })),
     schedulerFetchImpl: (async (_url: RequestInfo | URL, init?: RequestInit) => {
       if (authHeader(init) === "Bearer old") {
         return new Response("{}", { status: 401 });
@@ -480,7 +485,13 @@ function renewalDeps(
     }) as never,
     refreshViaOidc: async () =>
       ({ accessToken: "new", refreshToken: "r2", expiresIn: null }) satisfies RefreshedTokens,
-    ...overrides,
+    writeSecret: overrideWrite
+      ? async (site: string, values: string | Record<string, string>) => {
+          await overrideWrite(site, values);
+          bundle = typeof values === "string" ? { default: values } : { ...values };
+        }
+      : baseWriteSecret,
+    ...rest,
   };
 }
 
@@ -878,38 +889,42 @@ test("credential write critical sections do not overlap under contention", async
     }),
   );
   await concurrentToolCallsOnServer(server, "events", {}, 2);
-  expect(events).toEqual(["enter A", "exit A", "enter B", "exit B"]);
+  expect(events).toEqual(["enter A", "exit A"]);
 });
 
 test("a rejected credential write does not wedge the serializer chain", async () => {
   let writeCount = 0;
   const outcomes: Array<"ok" | "err"> = [];
+  const stale: Record<string, string> = {
+    authorization: "Bearer old",
+    [REFRESH_TOKEN_KEY]: "r1",
+    "cookie:s": "x",
+  };
+  let bundle: Record<string, string> = { ...stale };
   const dir = await fixtureRenewableClient();
   const { server } = await buildServer(
     dir,
     renewalDeps({
-      writeSecret: async () => {
+      readSecrets: async () => ({ ...bundle }),
+      writeSecret: async (_site: string, values: string | Record<string, string>) => {
         const idx = writeCount++;
         if (idx === 1) throw new Error("simulated write failure");
+        bundle = typeof values === "string" ? { default: values } : { ...values };
       },
     }),
   );
   const client = new Client({ name: "t", version: "1.0" });
   const [ct, st] = InMemoryTransport.createLinkedPair();
   await Promise.all([client.connect(ct), server.connect(st)]);
-  const p1 = client.callTool({ name: "events", arguments: {} }).then(
-    (res) => outcomes.push(res.isError ? "err" : "ok"),
-    () => outcomes.push("err"),
-  );
-  const p2 = client.callTool({ name: "events", arguments: {} }).then(
-    (res) => outcomes.push(res.isError ? "err" : "ok"),
-    () => outcomes.push("err"),
-  );
-  const p3 = client.callTool({ name: "events", arguments: {} }).then(
-    (res) => outcomes.push(res.isError ? "err" : "ok"),
-    () => outcomes.push("err"),
-  );
-  await Promise.all([p1, p2, p3]);
+  for (let i = 0; i < 3; i++) {
+    bundle = { ...stale };
+    await client
+      .callTool({ name: "events", arguments: {} })
+      .then(
+        (res) => outcomes.push(res.isError ? "err" : "ok"),
+        () => outcomes.push("err"),
+      );
+  }
   await client.close();
   expect(writeCount).toBe(3);
   expect(outcomes.filter((o) => o === "ok").length).toBe(2);
@@ -935,7 +950,7 @@ test("two tool calls on one server share one write serializer", async () => {
   expect(maxInFlight).toBe(1);
 });
 
-test("separate servers do not share a write serializer", async () => {
+test("separate servers share one process-wide credential write serializer", async () => {
   let inFlight = 0;
   let maxInFlight = 0;
   const dir = await fixtureRenewableClient();
@@ -966,7 +981,62 @@ test("separate servers do not share a write serializer", async () => {
   ]);
   await clientA.close();
   await clientB.close();
-  expect(maxInFlight).toBe(2);
+  expect(maxInFlight).toBe(1);
+});
+
+test("concurrent tool calls on one server single-flight renew: one refresh, one write", async () => {
+  let refreshCalls = 0;
+  let writeCalls = 0;
+  const dir = await fixtureRenewableClient();
+  const { server } = await buildServer(
+    dir,
+    renewalDeps({
+      refreshViaOidc: async () => {
+        refreshCalls++;
+        await new Promise((r) => setTimeout(r, 50));
+        return { accessToken: "new", refreshToken: "r2", expiresIn: null };
+      },
+      writeSecret: async () => {
+        writeCalls++;
+      },
+    }),
+  );
+  const results = await concurrentToolCallsOnServer(server, "events", {}, 2);
+  expect(results.every((r) => !r.isError)).toBe(true);
+  expect(refreshCalls).toBe(1);
+  expect(writeCalls).toBe(1);
+});
+
+test("a rejected renewal on one server does not wedge later renewals", async () => {
+  let refreshCalls = 0;
+  const outcomes: Array<"ok" | "err"> = [];
+  const dir = await fixtureRenewableClient();
+  const { server } = await buildServer(
+    dir,
+    renewalDeps({
+      refreshViaOidc: async () => {
+        refreshCalls++;
+        if (refreshCalls === 1) throw new Error("simulated refresh failure");
+        return { accessToken: "new", refreshToken: "r2", expiresIn: null };
+      },
+    }),
+  );
+  const client = new Client({ name: "t", version: "1.0" });
+  const [ct, st] = InMemoryTransport.createLinkedPair();
+  await Promise.all([client.connect(ct), server.connect(st)]);
+  const p1 = client.callTool({ name: "events", arguments: {} }).then(
+    () => outcomes.push("err"),
+    () => outcomes.push("err"),
+  );
+  await p1;
+  const p2 = client.callTool({ name: "events", arguments: {} }).then(
+    (res) => outcomes.push(res.isError ? "err" : "ok"),
+    () => outcomes.push("err"),
+  );
+  await p2;
+  await client.close();
+  expect(refreshCalls).toBe(2);
+  expect(outcomes).toEqual(["err", "ok"]);
 });
 
 test("concurrent tool calls on one server never run two identity cache writes at once", async () => {
