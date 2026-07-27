@@ -38,6 +38,12 @@ export interface RunResult {
    * as text.
    */
   renderCapped?: (n: number) => string;
+  /**
+   * Shaped rows as DATA (extracted, joined, sorted, limited, secret-masked,
+   * redacted). Present only on the row-shaped branch. Consumers needing
+   * structure rather than text read this instead of parsing `rendered`.
+   */
+  rows?: Record<string, unknown>[];
 }
 
 export interface RunOpts {
@@ -53,6 +59,12 @@ export interface RunOpts {
   commit?: boolean;
   /** Parsed --<name> flag values, for @arg: holes. */
   args?: Record<string, string>;
+  /**
+   * Write the full error body to a spill file and name its path in the hint.
+   * Correct for a CLI; wrong for an MCP tool, whose caller cannot read the host
+   * disk and must not receive host paths. Default true.
+   */
+  spill?: boolean;
 }
 
 /** One memoized identity resolution per run, layered over identity's on-disk cache. */
@@ -251,7 +263,9 @@ export async function runCommand(cmd: CommandSpec, opts: RunOpts): Promise<RunRe
     } catch {
       redactedBody = redactAll(body, caller.secret ?? null);
     }
-    const spill = await writeSpill(site, cmd.name, redactedBody, now).catch(() => undefined);
+    const spill = opts.spill === false
+      ? undefined
+      : await writeSpill(site, cmd.name, redactedBody, now).catch(() => undefined);
     const head = redactedBody.slice(0, 2000);
     let hint: string;
     let exitCode = 1;
@@ -285,13 +299,13 @@ export async function runCommand(cmd: CommandSpec, opts: RunOpts): Promise<RunRe
       data = (data as unknown[]).slice(0, flags.limit);
     }
     data = maskSecretValues(data, secrets);
-    const rendered = mask(renderJson(data, { redact, raw: flags.raw }));
+    const rendered = mask(renderJson(data, { redact, raw: flags.raw, rowsPath: cmd.output.rows }));
     const rowCount = Array.isArray(data) ? (data as unknown[]).length : undefined;
     // Line-slicing pretty-printed JSON would emit an unparseable fragment;
     // re-render a sliced array instead so capped stdout stays valid JSON.
     const renderCapped =
       rowCount !== undefined
-        ? (n: number) => mask(renderJson((data as unknown[]).slice(0, n), { redact, raw: flags.raw }))
+        ? (n: number) => mask(renderJson((data as unknown[]).slice(0, n), { redact, raw: flags.raw, rowsPath: cmd.output.rows }))
         : undefined;
     return { kind: "sent", rendered, rowCount, fullPayload: rendered, renderCapped };
   }
@@ -314,7 +328,8 @@ export async function runCommand(cmd: CommandSpec, opts: RunOpts): Promise<RunRe
   const fullPayload = mask(renderJson(maskedRows, { redact, raw: flags.raw }));
   const renderCapped = (n: number) =>
     mask(renderTable(rows.slice(0, n), cmd.output.columns ?? [], { redact, raw: flags.raw }));
-  return { kind: "sent", rendered, rowCount: rows.length, fullPayload, renderCapped };
+  const redactedRows = (flags.raw ? maskedRows : redactClone(maskedRows, redact)) as Record<string, unknown>[];
+  return { kind: "sent", rendered, rowCount: rows.length, fullPayload, renderCapped, rows: redactedRows };
 }
 
 /** Apply overflow caps to a finished run; spill the full payload when capped. */
