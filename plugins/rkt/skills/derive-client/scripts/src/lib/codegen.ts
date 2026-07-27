@@ -657,6 +657,13 @@ async function main() {
   const scheduler = createScheduler();
   const caller = createCaller(manifest, scheduler, secret);
 ${whoamiDispatch}
+  if (!cmd) {
+    fail(
+      \`unknown command: \${name}\`,
+      "run: bun cli.ts help for the command list",
+      2,
+    );
+  }
 
   // Override declared params from --name value; global flags are never treated as params.
   const overrideParams: Record<string, string> = {};
