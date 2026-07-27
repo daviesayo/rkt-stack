@@ -119,7 +119,7 @@ export async function buildServer(
           opts.onReauth?.();
           return null;
         },
-        ...(opts.refreshViaOidc ? { refreshViaOidc: opts.refreshViaOidc } : {}),
+        refreshViaOidc: opts.refreshViaOidc,
         writeSecret: (site, values) =>
           serialize(() => (opts.writeSecret ?? realWriteSecret)(site, values)),
       })

@@ -11,7 +11,7 @@ import { outDir } from "../src/lib/paths";
 import { createScheduler } from "../src/lib/scheduler";
 import { REFRESH_TOKEN_KEY } from "../src/lib/secrets";
 import type { RefreshedTokens } from "../src/lib/refresh";
-import { identityWriteTest } from "../src/lib/identity";
+import { installIdentityWriteMock, restoreIdentityWriteMock } from "./identity-write-mock";
 
 const MANIFEST = {
   schemaVersion: 3,
@@ -338,12 +338,14 @@ const ORIG_ROOT = process.env.RKT_CLIENTS_ROOT;
 const ORIG_NODE_ENV = process.env.NODE_ENV;
 
 beforeEach(async () => {
+  restoreIdentityWriteMock();
   spillRoot = await mkdtemp(join(tmpdir(), "rkt-mcp-spill-"));
   process.env.RKT_CLIENTS_ROOT = spillRoot;
   process.env.NODE_ENV = "test";
 });
 
 afterEach(async () => {
+  restoreIdentityWriteMock();
   if (ORIG_ROOT === undefined) delete process.env.RKT_CLIENTS_ROOT;
   else process.env.RKT_CLIENTS_ROOT = ORIG_ROOT;
   if (ORIG_NODE_ENV === undefined) delete process.env.NODE_ENV;
@@ -968,19 +970,19 @@ test("separate servers do not share a write serializer", async () => {
 });
 
 test("concurrent tool calls on one server never run two identity cache writes at once", async () => {
-  identityWriteTest.delayMs = 0;
-  identityWriteTest.failOnCall = null;
-  identityWriteTest.writeCallCount = 0;
   let inFlight = 0;
   let maxInFlight = 0;
-  identityWriteTest.delayMs = 50;
-  identityWriteTest.onWriteEnter = () => {
-    inFlight++;
-    maxInFlight = Math.max(maxInFlight, inFlight);
-  };
-  identityWriteTest.onWriteExit = () => {
-    inFlight--;
-  };
+  const tracker = installIdentityWriteMock({
+    delayMs: 50,
+    forceCacheMiss: true,
+    onWriteEnter: () => {
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+    },
+    onWriteExit: () => {
+      inFlight--;
+    },
+  });
   const scheduler = createScheduler({
     minDelayMs: 0,
     maxDelayMs: 0,
@@ -997,8 +999,6 @@ test("concurrent tool calls on one server never run two identity cache writes at
     readSecrets: async () => ({ "cookie:s": "x" }),
   });
   await concurrentToolCallsOnServer(server, "whoami", {}, 2);
+  expect(tracker.writeCallCount).toBe(2);
   expect(maxInFlight).toBe(1);
-  identityWriteTest.delayMs = 0;
-  identityWriteTest.onWriteEnter = null;
-  identityWriteTest.onWriteExit = null;
 });
