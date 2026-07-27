@@ -4,11 +4,37 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { assertResolvable, validateCommandsFile, type CommandSpec } from "./commands-schema";
 import { validateManifest, type ManifestEndpoint } from "./manifest-schema";
-import { RESERVED_ARGS, exposedParams, unsatisfiableArgs } from "./mcp-params";
-import type { Scheduler } from "./scheduler";
+import { RESERVED_ARGS, escapeAgentValue, exposedParams, unsatisfiableArgs } from "./mcp-params";
+import { runCommand, runWhoami, type RunnerCaller } from "./command-runner";
+import { CliError, MAX_BYTES, MAX_ROWS } from "./overflow";
+import { createCaller } from "./runtime";
+import { readSecrets, redactAll } from "./secrets";
+import { createScheduler, type Scheduler } from "./scheduler";
 
 const READ_METHODS = new Set(["GET", "HEAD"]);
 const TOOL_NAME = /^[A-Za-z0-9_-]{1,64}$/;
+
+/** Strip host filesystem paths from an error string before it reaches an agent. */
+function stripHostPaths(text: string): string {
+  return text
+    .replace(/[^\s]*\.rkt-clients[^\s]*/g, "[path]")
+    .replace(/\/(?:Users|tmp|var|home|private)[^\s]*/g, "[path]");
+}
+
+/** Turn a thrown CliError into an agent-safe message. Never includes secrets or host paths. */
+export function authAwareMessage(err: unknown, site: string): string {
+  if (err instanceof CliError && err.exitCode === 4) {
+    return (
+      `the stored session for ${site} has expired. Run '${site} login' on the host machine; ` +
+      "the next call picks up the new credential."
+    );
+  }
+  const parts: string[] = [];
+  if (err instanceof Error) parts.push(err.message);
+  else parts.push(String(err));
+  if (err instanceof CliError && err.hint) parts.push(err.hint);
+  return stripHostPaths(parts.join(" "));
+}
 
 export interface BuildOpts {
   /** Overrides the real handler; lets registration be tested standalone. */
@@ -19,6 +45,10 @@ export interface BuildOpts {
   scheduler?: Scheduler;
   /** Injected in tests; Task 5 defaults it to the real readSecrets. */
   readSecrets?: (site: string) => Promise<Record<string, string> | null>;
+  /** Injected caller for tests; defaults to createCaller per call. */
+  caller?: RunnerCaller;
+  /** Observed when the browser re-auth tier would run; must never launch Chrome in MCP mode. */
+  onReauth?: () => void;
 }
 
 export async function buildServer(
@@ -37,9 +67,92 @@ export async function buildServer(
 
   const byId = new Map(manifest.endpoints.map((e) => [e.id, e]));
 
-  // Task 5 replaces these bodies with the real per-call implementation.
-  const runTool = opts.runTool ?? (async () => "{}");
-  const runWhoamiTool = opts.runWhoamiTool ?? (async () => "");
+  // ONE scheduler for the server: it owns pacing and request serialisation as
+  // well as the cache. Per-call construction would reset the `first` flag and
+  // remove serialisation, giving unbounded parallel bursts, which is exactly
+  // the detection risk this project cares about.
+  const scheduler = opts.scheduler ?? createScheduler({ cache: false });
+  const readSecretsFn = opts.readSecrets ?? readSecrets;
+
+  async function callerForCall() {
+    // Re-read per call: a long-lived process would otherwise hold a stale
+    // bundle forever and the "run login" remediation would never take effect.
+    const secret = await readSecretsFn(manifest.site);
+    return (
+      opts.caller ??
+      createCaller(manifest, scheduler, secret, {
+        // An agent must never launch a browser. OIDC refresh may still run.
+        reauthViaProfile: async () => {
+          opts.onReauth?.();
+          return null;
+        },
+      })
+    );
+  }
+
+  const realRunTool = async (cmd: CommandSpec, args: Record<string, unknown>): Promise<string> => {
+    const caller = await callerForCall();
+    const { _limit, _offset, ...rest } = args;
+    const overrideParams: Record<string, string> = {};
+    for (const [k, v] of Object.entries(rest)) {
+      if (v !== undefined) overrideParams[k] = escapeAgentValue(String(v));
+    }
+
+    let res;
+    try {
+      res = await runCommand(cmd, {
+        manifest,
+        site: manifest.site,
+        caller,
+        identity: commands.identity,
+        flags: { json: cmd.output.kind === "json", raw: false },
+        now: new Date(),
+        overrideParams,
+        spill: false, // no spill file, no host path in any hint
+      });
+    } catch (err) {
+      throw new Error(authAwareMessage(err, manifest.site));
+    }
+
+    const secrets = caller.secret ?? null;
+    // A json-kind command never computes rows; return its raw rendered body,
+    // matching CLI --json semantics rather than an empty rows array.
+    if (res.rows === undefined) return redactAll(res.rendered, secrets);
+
+    const all = res.rows;
+    const start = typeof _offset === "number" ? _offset : 0;
+    const size = typeof _limit === "number" ? Math.min(_limit, MAX_ROWS) : MAX_ROWS;
+    let page = all.slice(start, start + size);
+    let text = JSON.stringify({ rows: page }, null, 2);
+    // Row count alone does not bound context: shrink until the payload fits.
+    while (page.length > 1 && Buffer.byteLength(text) > MAX_BYTES) {
+      page = page.slice(0, Math.floor(page.length / 2));
+      text = JSON.stringify({ rows: page }, null, 2);
+    }
+    const truncated = start + page.length < all.length;
+    return redactAll(
+      JSON.stringify(
+        {
+          rows: page,
+          truncated,
+          ...(truncated || start > 0
+            ? {
+                notice: `${all.length} row(s) available; showing ${page.length} from offset ${start}. Use _offset/_limit to page.`,
+              }
+            : {}),
+        },
+        null,
+        2,
+      ),
+      secrets,
+    );
+  };
+
+  const realRunWhoamiTool = async (): Promise<string> =>
+    runWhoami(manifest.site, commands.identity, await callerForCall());
+
+  const runTool = opts.runTool ?? realRunTool;
+  const runWhoamiTool = opts.runWhoamiTool ?? realRunWhoamiTool;
 
   let skippedWrites = 0;
   const registered = new Set<string>(commands.identity ? ["whoami"] : []);
