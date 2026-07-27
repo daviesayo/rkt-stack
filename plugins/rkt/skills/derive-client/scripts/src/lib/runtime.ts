@@ -1,5 +1,4 @@
-import type { ClientManifest, ManifestEndpoint } from "./manifest-schema";
-import { READ_METHODS } from "./manifest-schema";
+import { READ_METHODS, type ClientManifest, type ManifestEndpoint } from "./manifest-schema";
 import type { Scheduler } from "./scheduler";
 import { buildRequest, issue } from "./transport";
 import { CliError } from "./overflow";

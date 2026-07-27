@@ -1,5 +1,5 @@
 import { shapeTypeAt, type CommandSpec, type IdentitySpec } from "./commands-schema";
-import type { ClientManifest, JsonShape } from "./manifest-schema";
+import { READ_METHODS, type ClientManifest, type JsonShape } from "./manifest-schema";
 import { applyJoins, type Lookup } from "./join";
 import { resolveIdentity, whoamiLine } from "./identity";
 import { capText, CliError, MAX_BYTES, MAX_ROWS, writeSpill } from "./overflow";
@@ -194,7 +194,7 @@ export async function runCommand(cmd: CommandSpec, opts: RunOpts): Promise<RunRe
 
   const ep = manifest.endpoints.find((e) => e.id === cmd.call.endpoint);
   if (!ep) throw new Error(`${cmd.name}: endpoint ${cmd.call.endpoint} is missing from client.json`);
-  const isWrite = !["GET", "HEAD"].includes(ep.method.toUpperCase());
+  const isWrite = !READ_METHODS.has(ep.method.toUpperCase());
 
   if (isWrite) {
     // Both preview and commit require the env gate. The generated CLI also

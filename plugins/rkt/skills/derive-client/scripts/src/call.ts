@@ -11,6 +11,7 @@ import { assertUnderRktRoot } from "./lib/paths";
 import { createScheduler } from "./lib/scheduler";
 import { maskHeaders, readSecrets, redactAll } from "./lib/secrets";
 import { createCaller } from "./lib/runtime";
+import { READ_METHODS } from "./lib/manifest-schema";
 import { buildRequest, type BuiltRequest } from "./lib/transport";
 
 export function parseParams(argv: string[]): Record<string, string> {
@@ -73,7 +74,7 @@ async function main() {
   // call.ts is a read-only debug invoker. Writes must go through a curated
   // command (preview + --commit + env gate); this tool has none of that, so it
   // refuses them structurally regardless of manifest mode or RKT_ALLOW_WRITES.
-  if (!["GET", "HEAD"].includes(endpoint.method.toUpperCase())) {
+  if (!READ_METHODS.has(endpoint.method.toUpperCase())) {
     console.error(
       `refusing ${endpoint.method} ${endpoint.pathTemplate}: call.ts is read-only. ` +
         `Writes require a curated command in commands.json, run with --commit.`,
