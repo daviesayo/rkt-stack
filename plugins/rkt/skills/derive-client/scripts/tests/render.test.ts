@@ -88,3 +88,27 @@ test("redactCloneAt with no rowsPath behaves exactly like redactClone", () => {
 test("redactCloneAt leaves data alone when the rows path does not resolve", () => {
   expect(redactCloneAt({ other: 1 }, "data.items", ["email"])).toEqual({ other: 1 });
 });
+
+test("redactCloneAt returns null unchanged with a dotted rowsPath", () => {
+  expect(redactCloneAt(null, "data.items", ["email"])).toBe(null);
+});
+
+test("redactCloneAt returns null unchanged with a single-segment rowsPath", () => {
+  expect(redactCloneAt(null, "items", ["email"])).toBe(null);
+});
+
+test("redactCloneAt returns a number unchanged with a dotted rowsPath", () => {
+  expect(redactCloneAt(42, "data.items", ["email"])).toBe(42);
+});
+
+test("redactCloneAt returns a number unchanged with a single-segment rowsPath", () => {
+  expect(redactCloneAt(42, "items", ["email"])).toBe(42);
+});
+
+test("redactCloneAt returns a string unchanged with a dotted rowsPath", () => {
+  expect(redactCloneAt("ok", "data.items", ["email"])).toBe("ok");
+});
+
+test("redactCloneAt returns a string unchanged with a single-segment rowsPath", () => {
+  expect(redactCloneAt("ok", "items", ["email"])).toBe("ok");
+});

@@ -41,6 +41,7 @@ export function redactClone<T>(data: T, paths: string[]): T {
  */
 export function redactCloneAt<T>(data: T, rowsPath: string | undefined, paths: string[]): T {
   const clone = redactClone(data, paths) as T;
+  if (!clone || typeof clone !== "object") return clone;
   if (!rowsPath) return clone;
   const keys = rowsPath.split(".");
   let cur = clone as unknown as Record<string, unknown>;
