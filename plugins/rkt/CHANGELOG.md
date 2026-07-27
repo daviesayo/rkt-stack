@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- derive-client MCP: cap json-kind tool results at MAX_BYTES with a truncation
+  notice; sanitise whoami errors through authAwareMessage; close test gaps for
+  browser-stub consultation, callToolError sentinel, server-scoped scheduler,
+  and whoami error paths.
 - derive-client: full mode (`--mode full`) derives write endpoints and emits
   curated write commands. Writes are gated four ways: derived in full mode,
   `RKT_ALLOW_WRITES=1`, an authored `commands.json` task, and `--commit`.

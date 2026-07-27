@@ -6,7 +6,7 @@ import { assertResolvable, validateCommandsFile, type CommandSpec } from "./comm
 import { validateManifest, type ManifestEndpoint } from "./manifest-schema";
 import { RESERVED_ARGS, escapeAgentValue, exposedParams, unsatisfiableArgs } from "./mcp-params";
 import { runCommand, runWhoami, type RunnerCaller } from "./command-runner";
-import { CliError, MAX_BYTES, MAX_ROWS } from "./overflow";
+import { CliError, MAX_BYTES, MAX_ROWS, capText } from "./overflow";
 import { createCaller } from "./runtime";
 import { readSecrets, redactAll } from "./secrets";
 import { createScheduler, type Scheduler } from "./scheduler";
@@ -49,6 +49,10 @@ export interface BuildOpts {
   caller?: RunnerCaller;
   /** Observed when the browser re-auth tier would run; must never launch Chrome in MCP mode. */
   onReauth?: () => void;
+  /** Observed when the server-scoped default scheduler is created (tests only). */
+  onCreateScheduler?: () => void;
+  /** Injected fetch for the default server scheduler (tests only). */
+  schedulerFetchImpl?: typeof fetch;
 }
 
 export async function buildServer(
@@ -71,7 +75,21 @@ export async function buildServer(
   // well as the cache. Per-call construction would reset the `first` flag and
   // remove serialisation, giving unbounded parallel bursts, which is exactly
   // the detection risk this project cares about.
-  const scheduler = opts.scheduler ?? createScheduler({ cache: false });
+  const scheduler =
+    opts.scheduler ??
+    (() => {
+      opts.onCreateScheduler?.();
+      if (opts.schedulerFetchImpl) {
+        return createScheduler({
+          cache: false,
+          minDelayMs: 0,
+          maxDelayMs: 0,
+          fetchImpl: opts.schedulerFetchImpl,
+          sleepImpl: async () => {},
+        });
+      }
+      return createScheduler({ cache: false });
+    })();
   const readSecretsFn = opts.readSecrets ?? readSecrets;
 
   async function callerForCall() {
@@ -117,7 +135,12 @@ export async function buildServer(
     const secrets = caller.secret ?? null;
     // A json-kind command never computes rows; return its raw rendered body,
     // matching CLI --json semantics rather than an empty rows array.
-    if (res.rows === undefined) return redactAll(res.rendered, secrets);
+    if (res.rows === undefined) {
+      const notice = `\n\n${MAX_BYTES} byte limit exceeded; body truncated. Use narrower queries or paging where available.`;
+      const budget = MAX_BYTES - Buffer.byteLength(notice);
+      const { text, capped } = capText(redactAll(res.rendered, secrets), budget);
+      return capped ? text + notice : text;
+    }
 
     const all = res.rows;
     const start = typeof _offset === "number" ? _offset : 0;
@@ -148,8 +171,13 @@ export async function buildServer(
     );
   };
 
-  const realRunWhoamiTool = async (): Promise<string> =>
-    runWhoami(manifest.site, commands.identity, await callerForCall());
+  const realRunWhoamiTool = async (): Promise<string> => {
+    try {
+      return await runWhoami(manifest.site, commands.identity, await callerForCall());
+    } catch (err) {
+      throw new Error(authAwareMessage(err, manifest.site));
+    }
+  };
 
   const runTool = opts.runTool ?? realRunTool;
   const runWhoamiTool = opts.runWhoamiTool ?? realRunWhoamiTool;

@@ -382,18 +382,37 @@ async function callTool(
   return JSON.parse(text);
 }
 
+async function callToolText(
+  dir: string,
+  name: string,
+  args: Record<string, unknown>,
+  deps: Parameters<typeof buildServer>[1] = {},
+): Promise<string> {
+  const { server } = await buildServer(dir, deps);
+  const client = new Client({ name: "t", version: "1.0" });
+  const [ct, st] = InMemoryTransport.createLinkedPair();
+  await Promise.all([client.connect(ct), server.server.connect(st)]);
+  const res = await client.callTool({ name, arguments: args });
+  await client.close();
+  const text = (res.content as { text: string }[])[0].text;
+  if (res.isError) throw new Error(text);
+  return text;
+}
+
 async function callToolError(
   dir: string,
   name: string,
   args: Record<string, unknown>,
   deps: Parameters<typeof buildServer>[1] = {},
 ): Promise<string> {
+  let msg: string | undefined;
   try {
     await callTool(dir, name, args, deps);
-    throw new Error("expected tool call to fail");
   } catch (e) {
-    return (e as Error).message;
+    msg = (e as Error).message;
   }
+  if (msg === undefined) throw new Error("expected tool call to fail");
+  return msg;
 }
 
 async function callToolOnServer(
@@ -637,25 +656,102 @@ test("byte cap shrinks a page that fits the row cap but exceeds MAX_BYTES", asyn
 });
 
 test("reuses one scheduler with cache disabled across tool calls", async () => {
+  let createSchedulerCalls = 0;
   let fetches = 0;
-  const scheduler = createScheduler({
-    cache: false,
-    minDelayMs: 0,
-    maxDelayMs: 0,
-    fetchImpl: (async () => {
+  const dir = await fixtureClient();
+  const { server } = await buildServer(dir, {
+    readSecrets: async () => null,
+    onCreateScheduler: () => createSchedulerCalls++,
+    schedulerFetchImpl: (async () => {
       fetches++;
       return new Response(JSON.stringify({ data: { items: [{ id: 1 }] } }), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
     }) as never,
-    sleepImpl: async () => {},
   });
-  const dir = await fixtureClient();
-  const { server } = await buildServer(dir, { scheduler, readSecrets: async () => null });
   await callToolOnServer(server, "events", {});
   await callToolOnServer(server, "events", {});
   expect(fetches).toBe(2);
+  expect(createSchedulerCalls).toBe(1);
+});
+
+test("a 401 with stored credentials consults the disabled browser stub", async () => {
+  let reauthCalls = 0;
+  const scheduler = createScheduler({
+    minDelayMs: 0,
+    maxDelayMs: 0,
+    fetchImpl: (async () => new Response("{}", { status: 401 })) as never,
+    sleepImpl: async () => {},
+  });
+  const dir = await fixtureClient();
+  const msg = await callToolError(dir, "events", {}, {
+    scheduler,
+    readSecrets: async () => ({ "cookie:s": "x" }),
+    onReauth: () => reauthCalls++,
+  });
+  expect(reauthCalls).toBe(1);
+  expect(msg).toMatch(/expired|login/i);
+});
+
+test("a json-kind response exceeding MAX_BYTES is capped with a notice", async () => {
+  const bigPayload = { data: { blob: "x".repeat(MAX_BYTES) } };
+  const dir = await fixtureClient({
+    commands: [
+      {
+        name: "raw",
+        summary: "",
+        call: { endpoint: "get.api.events", params: {} },
+        output: { kind: "json" },
+        redact: [],
+      },
+    ],
+  });
+  const caller: RunnerCaller = {
+    call: async () => ({ status: 200, body: JSON.stringify(bigPayload) }),
+    fetchJson: async () => ({}),
+    secret: null,
+  };
+  const text = await callToolText(dir, "raw", {}, { caller });
+  expect(Buffer.byteLength(text)).toBeLessThanOrEqual(MAX_BYTES);
+  expect(text).toMatch(/truncat/i);
+});
+
+test("whoami maps a 401 to login remediation", async () => {
+  const scheduler = createScheduler({
+    minDelayMs: 0,
+    maxDelayMs: 0,
+    fetchImpl: (async () => new Response("{}", { status: 401 })) as never,
+    sleepImpl: async () => {},
+  });
+  const dir = await fixtureClient({ withIdentity: true });
+  const msg = await callToolError(dir, "whoami", {}, {
+    scheduler,
+    readSecrets: async () => ({ "cookie:s": "x" }),
+  });
+  expect(msg).toMatch(/expired|login/i);
+  expect(msg).not.toMatch(/^HTTP 401/i);
+});
+
+test("whoami strips host paths from filesystem errors", async () => {
+  await writeFile(join(spillRoot, "secrets"), "not-a-directory");
+  const scheduler = createScheduler({
+    minDelayMs: 0,
+    maxDelayMs: 0,
+    fetchImpl: (async () =>
+      new Response(JSON.stringify({ id: "u1", name: "Ada" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })) as never,
+    sleepImpl: async () => {},
+  });
+  const dir = await fixtureClient({ withIdentity: true });
+  const msg = await callToolError(dir, "whoami", {}, {
+    scheduler,
+    readSecrets: async () => null,
+  });
+  expect(msg).not.toMatch(/expired|login/i);
+  expect(msg).not.toContain(spillRoot);
 });
 
 test("authAwareMessage maps exhausted credentials to a login remediation", () => {
