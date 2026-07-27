@@ -76,5 +76,8 @@ export function unsatisfiableArgs(cmd: CommandSpec, endpoint: ManifestEndpoint):
     else if (k.kind === "arg" && !specs.has(name)) bad.push(name);
     else if (RESERVED.has(name) && specs.has(name)) bad.push(name);
   }
+  for (const param of endpoint.params) {
+    if (RESERVED.has(param.name) && !bad.includes(param.name)) bad.push(param.name);
+  }
   return bad;
 }

@@ -203,7 +203,7 @@ say so loudly), and the packaging test must cover this ordering, not just
 | name | `command.name` |
 | description | `command.summary` |
 | `annotations` | `{ readOnlyHint: true }` |
-| `inputSchema` | exposed params (below), plus `limit` and `offset` |
+| `inputSchema` | exposed params (below), plus `_limit` and `_offset` |
 
 **Exposed params.** Join `call.params` (a `Record<string,string>`) to the
 endpoint's `ParamSpec` list by name:
@@ -287,16 +287,16 @@ MCP mode:
 - **does not call `finishRun`** (stated, not inferred);
 - caps rows using the existing `MAX_ROWS` / `MAX_BYTES` constants;
 - returns an actionable truncation notice: rows returned, more available,
-  `offset`/`limit` to page;
+  `_offset`/`_limit` to page;
 - writes **no spill file**; the error-path spill needs an opt-out on `RunOpts`
   (default = today's behavior) set false by the adapter. Do not suppress it by
   rewriting the hint downstream, which still writes the file.
 
-**`offset` is adapter-side.** It does not exist in the codebase and `RunFlags`
+**`_offset` is adapter-side.** It does not exist in the codebase and `RunFlags`
 does not gain it: the adapter slices the surfaced rows after `runCommand` returns.
-`limit` is likewise applied by the adapter over rows, so it composes with
+`_limit` is likewise applied by the adapter over rows, so it composes with
 `output.sort` deterministically (sort happens inside `runCommand`, before
-slicing). An out-of-range offset returns an empty page plus the notice, not an
+slicing). An out-of-range _offset returns an empty page plus the notice, not an
 error.
 
 **Other per-call disk writes exist** and are not spills but must be understood as
@@ -306,7 +306,7 @@ temp files, which are unique per *process*, not per call, so two concurrent call
 collide and one error handler removes the other's temp file. Serialize these
 writes in-process (§7).
 
-**Honest limitation:** `limit`/`offset` are applied after the fetch. Paging
+**Honest limitation:** `_limit`/`_offset` are applied after the fetch. Paging
 reduces context cost, not network cost. Not real pagination.
 
 ### 7. Process lifetime
@@ -426,10 +426,10 @@ its quality depends entirely on each client's UI. Reads first.
   without `write: true` **fails startup** with a clear message.
 - **Schema:** `@arg:` exposed and required; `@me`, `@today`, `@today+14d` hidden;
   `@@x` treated as a literal; a `call.params` key with no `ParamSpec` is **not**
-  exposed; `limit`/`offset` present.
+  exposed; `_limit`/`_offset` present.
 - **Token injection:** an agent-supplied param value of `@me` is sent as the
   literal string `@me`, not resolved to the operator's identity.
-- **Overflow:** truncation notice; `offset` pages; out-of-range offset yields an
+- **Overflow:** truncation notice; `_offset` pages; out-of-range _offset yields an
   empty page; no spill file and no host path in any result or error.
 - **Process lifetime:** two identical successive tool calls hit the network twice;
   inter-call pacing is preserved (scheduler is not per-call); a tool call after the

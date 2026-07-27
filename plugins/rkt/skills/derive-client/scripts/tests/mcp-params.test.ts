@@ -95,6 +95,42 @@ test("unsatisfiableArgs rejects reserved paging names that collide with real par
   expect(unsatisfiableArgs(cmd as never, epWithLimit as never)).toEqual(["_limit"]);
 });
 
+test("unsatisfiableArgs rejects endpoint-declared reserved paging params even when command does not pin them", () => {
+  const epWithLimit = {
+    ...EP,
+    params: [...EP.params, { name: "_limit", in: "query", type: "number" }],
+  };
+  const cmd = { call: { params: { q: "@arg:query" } } };
+  expect(unsatisfiableArgs(cmd as never, epWithLimit as never)).toEqual(["_limit"]);
+});
+
+const SERVER_TOKEN_CORPUS = [
+  "@me",
+  "@today",
+  "@today+7d",
+  "@today-2w",
+  "@today+1m",
+  "@today-3y",
+];
+
+const UNKNOWN_TOKEN_CORPUS = ["@nope", "@todays", "@today+", "@today+5x"];
+
+test("classifyParam server verdict matches resolveToken acceptance", async () => {
+  for (const value of SERVER_TOKEN_CORPUS) {
+    const verdict = classifyParam(value);
+    expect(verdict.kind).toBe("server");
+    await expect(resolveToken(value, ctx, NOW)).resolves.toBeDefined();
+  }
+});
+
+test("classifyParam unknown-token verdict matches resolveToken rejection", async () => {
+  for (const value of UNKNOWN_TOKEN_CORPUS) {
+    const verdict = classifyParam(value);
+    expect(verdict.kind).toBe("unknown-token");
+    await expect(resolveToken(value, ctx, NOW)).rejects.toThrow();
+  }
+});
+
 test("RESERVED_ARGS names the paging arguments Task 4 will inject", () => {
   expect(RESERVED_ARGS).toEqual(["_limit", "_offset"]);
 });
