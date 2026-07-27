@@ -11,6 +11,7 @@ import { outDir } from "../src/lib/paths";
 import { createScheduler } from "../src/lib/scheduler";
 import { REFRESH_TOKEN_KEY } from "../src/lib/secrets";
 import type { RefreshedTokens } from "../src/lib/refresh";
+import { identityWriteTest } from "../src/lib/identity";
 
 const MANIFEST = {
   schemaVersion: 3,
@@ -964,4 +965,40 @@ test("separate servers do not share a write serializer", async () => {
   await clientA.close();
   await clientB.close();
   expect(maxInFlight).toBe(2);
+});
+
+test("concurrent tool calls on one server never run two identity cache writes at once", async () => {
+  identityWriteTest.delayMs = 0;
+  identityWriteTest.failOnCall = null;
+  identityWriteTest.writeCallCount = 0;
+  let inFlight = 0;
+  let maxInFlight = 0;
+  identityWriteTest.delayMs = 50;
+  identityWriteTest.onWriteEnter = () => {
+    inFlight++;
+    maxInFlight = Math.max(maxInFlight, inFlight);
+  };
+  identityWriteTest.onWriteExit = () => {
+    inFlight--;
+  };
+  const scheduler = createScheduler({
+    minDelayMs: 0,
+    maxDelayMs: 0,
+    fetchImpl: (async () =>
+      new Response(JSON.stringify({ id: "u1", name: "Ada" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })) as never,
+    sleepImpl: async () => {},
+  });
+  const dir = await fixtureClient({ withIdentity: true });
+  const { server } = await buildServer(dir, {
+    scheduler,
+    readSecrets: async () => ({ "cookie:s": "x" }),
+  });
+  await concurrentToolCallsOnServer(server, "whoami", {}, 2);
+  expect(maxInFlight).toBe(1);
+  identityWriteTest.delayMs = 0;
+  identityWriteTest.onWriteEnter = null;
+  identityWriteTest.onWriteExit = null;
 });
