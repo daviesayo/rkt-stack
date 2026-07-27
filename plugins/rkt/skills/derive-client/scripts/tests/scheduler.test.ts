@@ -155,3 +155,32 @@ test("still retries a read on 503", async () => {
   await scheduler.run({ url: "https://x.test/b", method: "GET", headers: {} });
   expect(calls).toBe(3);
 });
+
+test("cache:false re-fetches an identical GET", async () => {
+  let calls = 0;
+  const scheduler = createScheduler({
+    cache: false, minDelayMs: 0, maxDelayMs: 0,
+    fetchImpl: (async () => { calls++; return new Response("{}", { status: 200 }); }) as never,
+    sleepImpl: async () => {},
+  });
+  await scheduler.run({ url: "https://x.test/a", method: "GET", headers: {} });
+  await scheduler.run({ url: "https://x.test/a", method: "GET", headers: {} });
+  expect(calls).toBe(2);
+});
+
+test("cache:false returns the latest response body", async () => {
+  let calls = 0;
+  const scheduler = createScheduler({
+    cache: false, minDelayMs: 0, maxDelayMs: 0,
+    fetchImpl: (async () => {
+      calls++;
+      return new Response(calls === 1 ? '{"v":1}' : '{"v":2}', { status: 200 });
+    }) as never,
+    sleepImpl: async () => {},
+  });
+  const first = await scheduler.run({ url: "https://x.test/a", method: "GET", headers: {} });
+  const second = await scheduler.run({ url: "https://x.test/a", method: "GET", headers: {} });
+  expect(calls).toBe(2);
+  expect(first.body).toBe('{"v":1}');
+  expect(second.body).toBe('{"v":2}');
+});

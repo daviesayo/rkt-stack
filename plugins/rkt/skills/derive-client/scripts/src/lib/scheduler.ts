@@ -4,6 +4,12 @@ export interface SchedulerOptions {
   maxRetries?: number;
   fetchImpl?: typeof fetch;
   sleepImpl?: (ms: number) => Promise<void>;
+  /**
+   * Dedup identical GET/HEAD by URL for the scheduler's lifetime. Correct for a
+   * one-shot CLI; wrong for a long-lived server, where it returns the first
+   * response forever and grows unbounded. Default true.
+   */
+  cache?: boolean;
 }
 
 export interface SchedulerResponse {
@@ -41,6 +47,7 @@ export function createScheduler(options: SchedulerOptions = {}): Scheduler {
   const maxRetries = options.maxRetries ?? 3;
   const doFetch = options.fetchImpl ?? fetch;
   const sleep = options.sleepImpl ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const useCache = options.cache ?? true;
 
   let tail: Promise<unknown> = Promise.resolve();
   let first = true;
@@ -90,7 +97,7 @@ export function createScheduler(options: SchedulerOptions = {}): Scheduler {
 
   return {
     run(req) {
-      const cacheable = CACHEABLE.has(req.method.toUpperCase());
+      const cacheable = useCache && CACHEABLE.has(req.method.toUpperCase());
       if (cacheable) {
         const hit = cache.get(req.url);
         if (hit) return hit;
