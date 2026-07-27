@@ -10,6 +10,7 @@ import {
   redactAll,
   maskHeaders,
   maskSecretValues,
+  serializeCredentialWrite,
   writeSecret,
 } from "../src/lib/secrets";
 
@@ -140,4 +141,28 @@ test("readSecretMeta exposes storedAt", async () => {
 test("readSecrets still returns just the values for existing callers", async () => {
   await writeSecret("metatest4", { "cookie:sid": "opaquevalue" });
   expect(await readSecrets("metatest4")).toEqual({ "cookie:sid": "opaquevalue" });
+});
+
+test("serializeCredentialWrite critical sections do not overlap", async () => {
+  let inFlight = 0;
+  let maxInFlight = 0;
+  const sections: string[] = [];
+
+  const slowWrite = async (label: string) => {
+    sections.push(`enter ${label}`);
+    inFlight++;
+    maxInFlight = Math.max(maxInFlight, inFlight);
+    await new Promise((r) => setTimeout(r, 50));
+    inFlight--;
+    sections.push(`exit ${label}`);
+    return label;
+  };
+
+  await Promise.all([
+    serializeCredentialWrite(() => slowWrite("A")),
+    serializeCredentialWrite(() => slowWrite("B")),
+  ]);
+
+  expect(maxInFlight).toBe(1);
+  expect(sections).toEqual(["enter A", "exit A", "enter B", "exit B"]);
 });

@@ -950,38 +950,36 @@ test("two tool calls on one server share one write serializer", async () => {
   expect(maxInFlight).toBe(1);
 });
 
-test("separate servers share one process-wide credential write serializer", async () => {
-  let inFlight = 0;
-  let maxInFlight = 0;
-  const dir = await fixtureRenewableClient();
-  const writeSecret = async () => {
-    inFlight++;
-    maxInFlight = Math.max(maxInFlight, inFlight);
-    await new Promise((r) => setTimeout(r, 50));
-    inFlight--;
-  };
-  const deps = renewalDeps({ writeSecret });
-  const [{ server: serverA }, { server: serverB }] = await Promise.all([
-    buildServer(dir, deps),
-    buildServer(dir, deps),
-  ]);
-  const clientA = new Client({ name: "a", version: "1.0" });
-  const clientB = new Client({ name: "b", version: "1.0" });
-  const [ctA, stA] = InMemoryTransport.createLinkedPair();
-  const [ctB, stB] = InMemoryTransport.createLinkedPair();
-  await Promise.all([
-    clientA.connect(ctA),
-    serverA.connect(stA),
-    clientB.connect(ctB),
-    serverB.connect(stB),
-  ]);
-  await Promise.all([
-    clientA.callTool({ name: "events", arguments: {} }),
-    clientB.callTool({ name: "events", arguments: {} }),
-  ]);
-  await clientA.close();
-  await clientB.close();
-  expect(maxInFlight).toBe(1);
+test("table-kind tools expose _limit and _offset; json-kind tools do not", async () => {
+  const dir = await fixtureClient({
+    commands: [
+      {
+        name: "events",
+        summary: "list events",
+        call: { endpoint: "get.api.events", params: {} },
+        output: { kind: "table", rows: "data.items", columns: ["id"] },
+        redact: [],
+      },
+      {
+        name: "stats",
+        summary: "site stats",
+        call: { endpoint: "get.api.events", params: {} },
+        output: { kind: "json" },
+        redact: [],
+      },
+    ],
+  });
+  const tools = await toolsOf(dir);
+  const events = tools.find((t) => t.name === "events");
+  const stats = tools.find((t) => t.name === "stats");
+  expect(events).toBeDefined();
+  expect(stats).toBeDefined();
+  const eventProps =
+    (events!.inputSchema as { properties?: Record<string, unknown> }).properties ?? {};
+  const statsProps =
+    (stats!.inputSchema as { properties?: Record<string, unknown> }).properties ?? {};
+  expect(Object.keys(eventProps).sort()).toEqual(["_limit", "_offset"]);
+  expect(Object.keys(statsProps)).toEqual([]);
 });
 
 test("concurrent tool calls on one server single-flight renew: one refresh, one write", async () => {

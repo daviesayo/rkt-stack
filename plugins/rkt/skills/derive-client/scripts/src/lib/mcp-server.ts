@@ -233,12 +233,13 @@ export async function buildServer(
   const server = new McpServer({ name: `rkt-${manifest.site}`, version: "1.0.0" }, { instructions });
 
   for (const { cmd, ep } of toRegister) {
-    const shape: Record<string, z.ZodTypeAny> = {
-      _limit: z.number().int().positive().optional(),
-      _offset: z.number().int().nonnegative().optional(),
-    };
-    if (RESERVED_ARGS[0] !== "_limit" || RESERVED_ARGS[1] !== "_offset") {
-      throw new Error("RESERVED_ARGS drifted from paging arg names");
+    const shape: Record<string, z.ZodTypeAny> = {};
+    if (cmd.output.kind !== "json") {
+      if (RESERVED_ARGS[0] !== "_limit" || RESERVED_ARGS[1] !== "_offset") {
+        throw new Error("RESERVED_ARGS drifted from paging arg names");
+      }
+      shape._limit = z.number().int().positive().optional();
+      shape._offset = z.number().int().nonnegative().optional();
     }
     for (const p of exposedParams(cmd, ep)) {
       const base = p.type === "number" ? z.number() : z.string();
