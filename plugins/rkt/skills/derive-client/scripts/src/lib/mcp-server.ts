@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { assertResolvable, validateCommandsFile, type CommandSpec } from "./commands-schema";
-import { validateManifest, type ManifestEndpoint } from "./manifest-schema";
+import { validateManifest, READ_METHODS, type ManifestEndpoint } from "./manifest-schema";
 import { RESERVED_ARGS, escapeAgentValue, exposedParams, unsatisfiableArgs } from "./mcp-params";
 import { runCommand, runWhoami, type RunnerCaller } from "./command-runner";
 import { CliError, MAX_BYTES, MAX_ROWS, capText } from "./overflow";
@@ -12,7 +12,6 @@ import { refreshViaOidc as realRefreshViaOidc } from "./refresh";
 import { readSecrets, redactAll, serializeCredentialWrite, writeSecret as realWriteSecret } from "./secrets";
 import { createScheduler, type Scheduler } from "./scheduler";
 
-const READ_METHODS = new Set(["GET", "HEAD"]);
 const TOOL_NAME = /^[A-Za-z0-9_-]{1,64}$/;
 
 /** Strip host filesystem paths from an error string before it reaches an agent. */
@@ -76,10 +75,13 @@ export async function buildServer(
 
   const byId = new Map(manifest.endpoints.map((e) => [e.id, e]));
 
-  // ONE scheduler for the server: it owns pacing and request serialisation as
-  // well as the cache. Per-call construction would reset the `first` flag and
+  // ONE scheduler per buildServer call: it owns pacing and request serialisation
+  // as well as the cache. Per-call construction would reset the `first` flag and
   // remove serialisation, giving unbounded parallel bursts, which is exactly
-  // the detection risk this project cares about.
+  // the detection risk this project cares about. HTTP mode calls buildServer once
+  // per session, so concurrent sessions are paced independently, not globally;
+  // that is acceptable for loopback-bound, token-gated, single-operator use.
+  // Stdio mode (the default) is unaffected: one server, one scheduler.
   const scheduler =
     opts.scheduler ??
     (() => {

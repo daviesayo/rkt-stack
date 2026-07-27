@@ -1,4 +1,4 @@
-import type { ClientManifest, ManifestEndpoint } from "./manifest-schema";
+import { READ_METHODS, type ClientManifest, type ManifestEndpoint } from "./manifest-schema";
 import type { Scheduler } from "./scheduler";
 
 export interface BuiltRequest {
@@ -8,8 +8,6 @@ export interface BuiltRequest {
   /** Serialised JSON payload for write methods. */
   body?: string;
 }
-
-const READ_METHODS = new Set(["GET", "HEAD"]);
 
 /**
  * Fail-closed: only an explicit "1"/"true" enables writes. Reading any

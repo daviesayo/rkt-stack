@@ -10,10 +10,8 @@
 import { access, readFile, writeFile } from "node:fs/promises";
 import { commandNames } from "./lib/codegen";
 import { validateManifest } from "./lib/manifest";
-import type { ClientManifest, JsonShape, ManifestEndpoint, ParamSpec } from "./lib/manifest-schema";
+import { READ_METHODS, type ClientManifest, type JsonShape, type ManifestEndpoint, type ParamSpec } from "./lib/manifest-schema";
 import type { CommandsFile, IdentitySpec } from "./lib/commands-schema";
-
-const READ_METHODS = new Set(["GET", "HEAD"]);
 
 /**
  * Make an arg name unique within one command's body. `stubBody`'s `_`-joined

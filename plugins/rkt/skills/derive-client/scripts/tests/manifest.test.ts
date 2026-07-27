@@ -3,7 +3,7 @@ import { analyzeAuth } from "../src/lib/auth";
 import type { HarEntry } from "../src/lib/har";
 import { groupEndpoints } from "../src/lib/synthesize";
 import { buildManifest } from "../src/lib/manifest";
-import { SCHEMA_VERSION, validateManifest } from "../src/lib/manifest-schema";
+import { READ_METHODS, SCHEMA_VERSION, validateManifest } from "../src/lib/manifest-schema";
 
 function entry(url: string, body: string): HarEntry {
   return {
@@ -204,6 +204,14 @@ test("rejects an unknown mode value", () => {
   expect(() =>
     validateManifest({ schemaVersion: 3, site: "x", mode: "write", endpoints: [] }),
   ).toThrow(/mode/i);
+});
+
+test("READ_METHODS contains read verbs only", () => {
+  expect(READ_METHODS.has("GET")).toBe(true);
+  expect(READ_METHODS.has("HEAD")).toBe(true);
+  for (const method of ["POST", "PUT", "PATCH", "DELETE"]) {
+    expect(READ_METHODS.has(method)).toBe(false);
+  }
 });
 
 test("manifest-schema exports the schema half independently", () => {

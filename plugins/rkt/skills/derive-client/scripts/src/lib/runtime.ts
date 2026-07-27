@@ -1,4 +1,5 @@
 import type { ClientManifest, ManifestEndpoint } from "./manifest-schema";
+import { READ_METHODS } from "./manifest-schema";
 import type { Scheduler } from "./scheduler";
 import { buildRequest, issue } from "./transport";
 import { CliError } from "./overflow";
@@ -114,8 +115,6 @@ export function createCaller(
     }
     return ok;
   }
-
-  const READ_METHODS = new Set(["GET", "HEAD"]);
 
   async function call(endpointId: string, params: Record<string, string>, body?: unknown) {
     const ep = endpointById(endpointId);

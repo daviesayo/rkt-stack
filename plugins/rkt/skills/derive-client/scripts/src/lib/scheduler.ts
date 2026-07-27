@@ -1,3 +1,5 @@
+import { READ_METHODS } from "./manifest-schema";
+
 export interface SchedulerOptions {
   minDelayMs?: number;
   maxDelayMs?: number;
@@ -30,10 +32,11 @@ export interface Scheduler {
   run(req: SchedulerRequest): Promise<SchedulerResponse>;
 }
 
-const CACHEABLE = new Set(["GET", "HEAD"]);
+/** Dedup identical GET/HEAD by URL for the scheduler's lifetime. */
+const CACHEABLE = READ_METHODS;
 
 /** Methods it is safe to re-send. Deliberately separate from CACHEABLE. */
-const RETRY_SAFE_METHODS = new Set(["GET", "HEAD"]);
+const RETRY_SAFE_METHODS = READ_METHODS;
 
 /**
  * Serializes requests with human-shaped pacing, dedups cacheable requests by

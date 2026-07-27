@@ -1,9 +1,8 @@
 import type { HarEntry } from "./har";
 import type { JsonShape, ParamSpec, WriteSemantics } from "./manifest-schema";
+import { READ_METHODS } from "./manifest-schema";
 
 export type { JsonShape, ParamSpec } from "./manifest-schema";
-
-const READ_METHODS = new Set(["GET", "HEAD"]);
 
 const ISO8601 = /^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)?$/;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;

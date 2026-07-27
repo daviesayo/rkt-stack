@@ -11,8 +11,7 @@ import { emitCli, emitMcp, emitTypes } from "./lib/codegen";
 import { assertResolvable, validateCommandsFile, type CommandsFile } from "./lib/commands-schema";
 import { detectDrift } from "./lib/drift";
 import { validateManifest } from "./lib/manifest";
-
-const READ_METHODS = new Set(["GET", "HEAD"]);
+import { READ_METHODS } from "./lib/manifest-schema";
 
 export interface GeneratedFiles {
   siteDir: string;
