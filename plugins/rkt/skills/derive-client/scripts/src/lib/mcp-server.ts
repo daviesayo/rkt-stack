@@ -8,7 +8,8 @@ import { RESERVED_ARGS, escapeAgentValue, exposedParams, unsatisfiableArgs } fro
 import { runCommand, runWhoami, type RunnerCaller } from "./command-runner";
 import { CliError, MAX_BYTES, MAX_ROWS, capText } from "./overflow";
 import { createCaller } from "./runtime";
-import { readSecrets, redactAll } from "./secrets";
+import { refreshViaOidc as realRefreshViaOidc } from "./refresh";
+import { readSecrets, redactAll, writeSecret as realWriteSecret } from "./secrets";
 import { createScheduler, type Scheduler } from "./scheduler";
 
 const READ_METHODS = new Set(["GET", "HEAD"]);
@@ -53,6 +54,10 @@ export interface BuildOpts {
   onCreateScheduler?: () => void;
   /** Injected fetch for the default server scheduler (tests only). */
   schedulerFetchImpl?: typeof fetch;
+  /** Injected credential writer; serialized across concurrent tool calls. */
+  writeSecret?: typeof realWriteSecret;
+  /** Injected OIDC refresh for tests that exercise the renewal path. */
+  refreshViaOidc?: typeof realRefreshViaOidc;
 }
 
 export async function buildServer(
@@ -92,6 +97,16 @@ export async function buildServer(
     })();
   const readSecretsFn = opts.readSecrets ?? readSecrets;
 
+  // In-process serialization. Two concurrent renewals would otherwise race on
+  // the same "<path>.<pid>.tmp" file, where one error handler removes the
+  // other's temp file. lock.ts is not part of the client runtime by design.
+  let writeChain: Promise<unknown> = Promise.resolve();
+  function serialize<T>(fn: () => Promise<T>): Promise<T> {
+    const next = writeChain.then(fn, fn);
+    writeChain = next.catch(() => {});
+    return next;
+  }
+
   async function callerForCall() {
     // Re-read per call: a long-lived process would otherwise hold a stale
     // bundle forever and the "run login" remediation would never take effect.
@@ -104,6 +119,9 @@ export async function buildServer(
           opts.onReauth?.();
           return null;
         },
+        ...(opts.refreshViaOidc ? { refreshViaOidc: opts.refreshViaOidc } : {}),
+        writeSecret: (site, values) =>
+          serialize(() => (opts.writeSecret ?? realWriteSecret)(site, values)),
       })
     );
   }

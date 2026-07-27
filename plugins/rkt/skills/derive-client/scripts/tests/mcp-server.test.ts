@@ -9,6 +9,8 @@ import { authAwareMessage, buildServer } from "../src/lib/mcp-server";
 import { CliError, MAX_BYTES, MAX_ROWS } from "../src/lib/overflow";
 import { outDir } from "../src/lib/paths";
 import { createScheduler } from "../src/lib/scheduler";
+import { REFRESH_TOKEN_KEY } from "../src/lib/secrets";
+import type { RefreshedTokens } from "../src/lib/refresh";
 
 const MANIFEST = {
   schemaVersion: 3,
@@ -428,6 +430,72 @@ async function callToolOnServer(
   return JSON.parse((res.content as { text: string }[])[0].text);
 }
 
+async function fixtureRenewableClient(): Promise<string> {
+  return fixtureClient({
+    manifest: {
+      ...MANIFEST,
+      refresh: {
+        kind: "oidc",
+        tokenEndpoint: "https://idp.test/token",
+        clientId: "c",
+        accessTokenCookie: "s",
+        expiresIn: 300,
+        refreshExpiresIn: 3600,
+      },
+      authBundle: {
+        credentials: [{ kind: "bearer", location: "authorization" }],
+      },
+    },
+  });
+}
+
+function authHeader(init?: RequestInit): string | undefined {
+  const headers = init?.headers;
+  if (!headers) return undefined;
+  if (headers instanceof Headers) return headers.get("authorization") ?? undefined;
+  const rec = headers as Record<string, string>;
+  return rec.authorization ?? rec.Authorization;
+}
+
+function renewalDeps(
+  overrides: Parameters<typeof buildServer>[1] = {},
+): Parameters<typeof buildServer>[1] {
+  return {
+    readSecrets: async () => ({
+      authorization: "Bearer old",
+      [REFRESH_TOKEN_KEY]: "r1",
+      "cookie:s": "x",
+    }),
+    schedulerFetchImpl: (async (_url: RequestInfo | URL, init?: RequestInit) => {
+      if (authHeader(init) === "Bearer old") {
+        return new Response("{}", { status: 401 });
+      }
+      return new Response(JSON.stringify({ data: { items: [{ id: 1 }] } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as never,
+    refreshViaOidc: async () =>
+      ({ accessToken: "new", refreshToken: "r2", expiresIn: null }) satisfies RefreshedTokens,
+    ...overrides,
+  };
+}
+
+async function concurrentToolCallsOnServer(
+  server: Awaited<ReturnType<typeof buildServer>>["server"],
+  name: string,
+  args: Record<string, unknown>,
+  count: number,
+) {
+  const client = new Client({ name: "t", version: "1.0" });
+  const [ct, st] = InMemoryTransport.createLinkedPair();
+  await Promise.all([client.connect(ct), server.connect(st)]);
+  const promises = Array.from({ length: count }, () => client.callTool({ name, arguments: args }));
+  const results = await Promise.all(promises);
+  await client.close();
+  return results;
+}
+
 test("a tool call returns shaped rows as JSON", async () => {
   const out = await callTool(await fixtureClient(), "events", {}, {
     caller: rowsCaller([{ id: 1 }, { id: 2 }, { id: 3 }]),
@@ -770,4 +838,130 @@ test("authAwareMessage strips host paths from other errors", () => {
   const msg = authAwareMessage(err, "x");
   expect(msg).not.toMatch(/\/Users|\.rkt-clients/);
   expect(msg).toMatch(/403/);
+});
+
+test("concurrent tool calls never run two credential writes at once", async () => {
+  let inFlight = 0;
+  let maxInFlight = 0;
+  const dir = await fixtureRenewableClient();
+  const { server } = await buildServer(
+    dir,
+    renewalDeps({
+      writeSecret: async () => {
+        inFlight++;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise((r) => setTimeout(r, 5));
+        inFlight--;
+      },
+    }),
+  );
+  await concurrentToolCallsOnServer(server, "events", {}, 2);
+  expect(maxInFlight).toBe(1);
+});
+
+test("credential write critical sections do not overlap under contention", async () => {
+  const events: string[] = [];
+  let writeIndex = 0;
+  const dir = await fixtureRenewableClient();
+  const { server } = await buildServer(
+    dir,
+    renewalDeps({
+      writeSecret: async () => {
+        const label = String.fromCharCode(65 + writeIndex++);
+        events.push(`enter ${label}`);
+        await new Promise((r) => setTimeout(r, 50));
+        events.push(`exit ${label}`);
+      },
+    }),
+  );
+  await concurrentToolCallsOnServer(server, "events", {}, 2);
+  expect(events).toEqual(["enter A", "exit A", "enter B", "exit B"]);
+});
+
+test("a rejected credential write does not wedge the serializer chain", async () => {
+  let writeCount = 0;
+  const outcomes: Array<"ok" | "err"> = [];
+  const dir = await fixtureRenewableClient();
+  const { server } = await buildServer(
+    dir,
+    renewalDeps({
+      writeSecret: async () => {
+        const idx = writeCount++;
+        if (idx === 1) throw new Error("simulated write failure");
+      },
+    }),
+  );
+  const client = new Client({ name: "t", version: "1.0" });
+  const [ct, st] = InMemoryTransport.createLinkedPair();
+  await Promise.all([client.connect(ct), server.connect(st)]);
+  const p1 = client.callTool({ name: "events", arguments: {} }).then(
+    (res) => outcomes.push(res.isError ? "err" : "ok"),
+    () => outcomes.push("err"),
+  );
+  const p2 = client.callTool({ name: "events", arguments: {} }).then(
+    (res) => outcomes.push(res.isError ? "err" : "ok"),
+    () => outcomes.push("err"),
+  );
+  const p3 = client.callTool({ name: "events", arguments: {} }).then(
+    (res) => outcomes.push(res.isError ? "err" : "ok"),
+    () => outcomes.push("err"),
+  );
+  await Promise.all([p1, p2, p3]);
+  await client.close();
+  expect(writeCount).toBe(3);
+  expect(outcomes.filter((o) => o === "ok").length).toBe(2);
+  expect(outcomes.filter((o) => o === "err").length).toBe(1);
+});
+
+test("two tool calls on one server share one write serializer", async () => {
+  let inFlight = 0;
+  let maxInFlight = 0;
+  const dir = await fixtureRenewableClient();
+  const { server } = await buildServer(
+    dir,
+    renewalDeps({
+      writeSecret: async () => {
+        inFlight++;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise((r) => setTimeout(r, 20));
+        inFlight--;
+      },
+    }),
+  );
+  await concurrentToolCallsOnServer(server, "events", {}, 2);
+  expect(maxInFlight).toBe(1);
+});
+
+test("separate servers do not share a write serializer", async () => {
+  let inFlight = 0;
+  let maxInFlight = 0;
+  const dir = await fixtureRenewableClient();
+  const writeSecret = async () => {
+    inFlight++;
+    maxInFlight = Math.max(maxInFlight, inFlight);
+    await new Promise((r) => setTimeout(r, 50));
+    inFlight--;
+  };
+  const deps = renewalDeps({ writeSecret });
+  const [{ server: serverA }, { server: serverB }] = await Promise.all([
+    buildServer(dir, deps),
+    buildServer(dir, deps),
+  ]);
+  const clientA = new Client({ name: "a", version: "1.0" });
+  const clientB = new Client({ name: "b", version: "1.0" });
+  const [ctA, stA] = InMemoryTransport.createLinkedPair();
+  const [ctB, stB] = InMemoryTransport.createLinkedPair();
+  await Promise.all([
+    clientA.connect(ctA),
+    serverA.connect(stA),
+    clientB.connect(ctB),
+    serverB.connect(stB),
+  ]);
+  await Promise.all([
+    clientA.callTool({ name: "events", arguments: {} }),
+    clientB.callTool({ name: "events", arguments: {} }),
+  ]);
+  await clientA.close();
+  await clientB.close();
+  expect(maxInFlight).toBe(2);
 });
