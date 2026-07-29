@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtemp, readdir, rm, writeFile, mkdir } from "node:fs/promises";
+import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtemp, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -39,6 +39,14 @@ const MANIFEST = {
   ],
 };
 
+const trackedTempDirs: string[] = [];
+
+afterAll(async () => {
+  for (const dir of trackedTempDirs) {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 /** Writes a temp client dir and returns its path. */
 async function fixtureClient(
   opts: {
@@ -49,7 +57,7 @@ async function fixtureClient(
   } = {},
 ): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "rkt-mcp-"));
-  await mkdir(dir, { recursive: true });
+  trackedTempDirs.push(dir);
   const endpoints: unknown[] = [...MANIFEST.endpoints];
   if (opts.withWriteEndpoint) {
     endpoints.push({
@@ -98,6 +106,7 @@ async function toolsOf(dir: string) {
   await Promise.all([client.connect(ct), server.server.connect(st)]);
   const { tools } = await client.listTools();
   await client.close();
+  await server.close();
   return tools;
 }
 
@@ -260,7 +269,7 @@ test("a tool name beginning with _ is rejected", async () => {
 
 test("an exposed param beginning with _ is rejected", async () => {
   const dir = await mkdtemp(join(tmpdir(), "rkt-mcp-"));
-  await mkdir(dir, { recursive: true });
+  trackedTempDirs.push(dir);
   await writeFile(
     join(dir, "client.json"),
     JSON.stringify({
@@ -333,13 +342,14 @@ test("callTool round-trips injected runTool output over the protocol", async () 
   await client.close();
 });
 
+describe("MCP tool runtime with spill-root isolation", () => {
 let spillRoot: string;
 const ORIG_ROOT = process.env.RKT_CLIENTS_ROOT;
 const ORIG_NODE_ENV = process.env.NODE_ENV;
 
 beforeEach(async () => {
   restoreIdentityWriteMock();
-  spillRoot = await mkdtemp(join(tmpdir(), "rkt-mcp-spill-"));
+  spillRoot = await realpath(await mkdtemp(join(tmpdir(), "rkt-mcp-spill-")));
   process.env.RKT_CLIENTS_ROOT = spillRoot;
   process.env.NODE_ENV = "test";
 });
@@ -618,7 +628,7 @@ test("a numeric MCP argument is coerced before escaping", async () => {
     secret: null,
   };
   const dir = await mkdtemp(join(tmpdir(), "rkt-mcp-num-"));
-  await mkdir(dir, { recursive: true });
+  trackedTempDirs.push(dir);
   await writeFile(
     join(dir, "client.json"),
     JSON.stringify({
@@ -854,26 +864,7 @@ test("authAwareMessage strips host paths from other errors", () => {
   expect(msg).toMatch(/403/);
 });
 
-test("concurrent tool calls never run two credential writes at once", async () => {
-  let inFlight = 0;
-  let maxInFlight = 0;
-  const dir = await fixtureRenewableClient();
-  const { server } = await buildServer(
-    dir,
-    renewalDeps({
-      writeSecret: async () => {
-        inFlight++;
-        maxInFlight = Math.max(maxInFlight, inFlight);
-        await new Promise((r) => setTimeout(r, 5));
-        inFlight--;
-      },
-    }),
-  );
-  await concurrentToolCallsOnServer(server, "events", {}, 2);
-  expect(maxInFlight).toBe(1);
-});
-
-test("credential write critical sections do not overlap under contention", async () => {
+test("single-flight collapses concurrent same-site renewals to one credential write", async () => {
   const events: string[] = [];
   let writeIndex = 0;
   const dir = await fixtureRenewableClient();
@@ -1069,4 +1060,5 @@ test("concurrent tool calls on one server never run two identity cache writes at
   await concurrentToolCallsOnServer(server, "whoami", {}, 2);
   expect(tracker.writeCallCount).toBe(2);
   expect(maxInFlight).toBe(1);
+});
 });

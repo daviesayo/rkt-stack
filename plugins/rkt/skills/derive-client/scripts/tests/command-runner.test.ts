@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readdir, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { RunnerCaller } from "../src/lib/command-runner";
@@ -11,7 +11,7 @@ let root: string;
 const ORIG_ROOT = process.env.RKT_CLIENTS_ROOT;
 const ORIG_NODE_ENV = process.env.NODE_ENV;
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), "rkt-id-"));
+  root = await realpath(await mkdtemp(join(tmpdir(), "rkt-id-")));
   process.env.RKT_CLIENTS_ROOT = root;
   process.env.NODE_ENV = "test";
 });
@@ -283,16 +283,20 @@ test("HTTP 401 throws CliError with exit code 4 and login hint", async () => {
     call: { endpoint: "get.shifts", params: {} },
     output: { kind: "json" as const },
   };
+  let err: unknown;
+  let threw = false;
   try {
     await runCommand(cmd, baseOpts(c));
-    throw new Error("expected CliError");
-  } catch (err) {
-    expect(err).toBeInstanceOf(CliError);
-    const e = err as CliError;
-    expect(e.exitCode).toBe(4);
-    expect(e.hint).toContain("login");
-    expect(e.hint).toContain("auth status");
+  } catch (e) {
+    threw = true;
+    err = e;
   }
+  expect(threw).toBe(true);
+  expect(err).toBeInstanceOf(CliError);
+  const e = err as CliError;
+  expect(e.exitCode).toBe(4);
+  expect(e.hint).toContain("login");
+  expect(e.hint).toContain("auth status");
 });
 
 test("HTTP 403 throws CliError with exit code 1 and permission hint", async () => {
@@ -305,15 +309,19 @@ test("HTTP 403 throws CliError with exit code 1 and permission hint", async () =
     call: { endpoint: "get.shifts", params: {} },
     output: { kind: "json" as const },
   };
+  let err: unknown;
+  let threw = false;
   try {
     await runCommand(cmd, baseOpts(c));
-    throw new Error("expected CliError");
-  } catch (err) {
-    expect(err).toBeInstanceOf(CliError);
-    const e = err as CliError;
-    expect(e.exitCode).toBe(1);
-    expect(e.hint).toMatch(/permission/i);
+  } catch (e) {
+    threw = true;
+    err = e;
   }
+  expect(threw).toBe(true);
+  expect(err).toBeInstanceOf(CliError);
+  const e = err as CliError;
+  expect(e.exitCode).toBe(1);
+  expect(e.hint).toMatch(/permission/i);
 });
 
 test("HTTP 500 JSON error masks secrets with quote and backslash before spill", async () => {
@@ -329,24 +337,28 @@ test("HTTP 500 JSON error masks secrets with quote and backslash before spill", 
     call: { endpoint: "get.shifts", params: {} },
     output: { kind: "json" as const },
   };
+  let err: unknown;
+  let threw = false;
   try {
     await runCommand(cmd, baseOpts(c));
-    throw new Error("expected CliError");
-  } catch (err) {
-    expect(err).toBeInstanceOf(CliError);
-    const e = err as CliError;
-    expect(e.exitCode).toBe(1);
-    expect(e.hint).toMatch(/full body:/);
-    const spillMatch = e.hint.match(/full body: (.+\.json)/);
-    expect(spillMatch).not.toBeNull();
-    const spillPath = spillMatch![1];
-    const spillText = await Bun.file(spillPath).text();
-    expect(e.message).not.toContain(TOKEN);
-    expect(e.message).not.toContain('va\\"lue');
-    expect(spillText).not.toContain(TOKEN);
-    expect(spillText).not.toContain('va\\"lue');
-    expect(spillText).toContain("[REDACTED]");
+  } catch (e) {
+    threw = true;
+    err = e;
   }
+  expect(threw).toBe(true);
+  expect(err).toBeInstanceOf(CliError);
+  const e = err as CliError;
+  expect(e.exitCode).toBe(1);
+  expect(e.hint).toMatch(/full body:/);
+  const spillMatch = e.hint.match(/full body: (.+\.json)/);
+  expect(spillMatch).not.toBeNull();
+  const spillPath = spillMatch![1];
+  const spillText = await Bun.file(spillPath).text();
+  expect(e.message).not.toContain(TOKEN);
+  expect(e.message).not.toContain('va\\"lue');
+  expect(spillText).not.toContain(TOKEN);
+  expect(spillText).not.toContain('va\\"lue');
+  expect(spillText).toContain("[REDACTED]");
 });
 
 test("HTTP error spills redacted body and mentions spill path in hint", async () => {
@@ -359,21 +371,25 @@ test("HTTP error spills redacted body and mentions spill path in hint", async ()
     call: { endpoint: "get.shifts", params: {} },
     output: { kind: "json" as const },
   };
+  let err: unknown;
+  let threw = false;
   try {
     await runCommand(cmd, baseOpts(c));
-    throw new Error("expected CliError");
-  } catch (err) {
-    expect(err).toBeInstanceOf(CliError);
-    const e = err as CliError;
-    expect(e.exitCode).toBe(1);
-    expect(e.hint).toMatch(/full body:/);
-    const spillMatch = e.hint.match(/full body: (.+\.json)/);
-    expect(spillMatch).not.toBeNull();
-    const spillPath = spillMatch![1];
-    expect(await Bun.file(spillPath).text()).toBe("error details here");
-    expect(e.message).toContain("HTTP 500");
-    expect(e.message).toContain("error details here");
+  } catch (e) {
+    threw = true;
+    err = e;
   }
+  expect(threw).toBe(true);
+  expect(err).toBeInstanceOf(CliError);
+  const e = err as CliError;
+  expect(e.exitCode).toBe(1);
+  expect(e.hint).toMatch(/full body:/);
+  const spillMatch = e.hint.match(/full body: (.+\.json)/);
+  expect(spillMatch).not.toBeNull();
+  const spillPath = spillMatch![1];
+  expect(await Bun.file(spillPath).text()).toBe("error details here");
+  expect(e.message).toContain("HTTP 500");
+  expect(e.message).toContain("error details here");
 });
 
 test("finishRun passes small results through untouched, no spill", async () => {
@@ -679,17 +695,23 @@ test("spill:false writes no file and leaks no host path on a 403", async () => {
     fetchJson: async () => ({}), secret: null,
   };
   const before = await spillFileCount("x");
-  let err: { message: string; hint?: string };
+  let err: unknown;
+  let threw = false;
   try {
     await runCommand(ROWS_CMD as never, {
       manifest: READ_MANIFEST, site: "x", caller: caller as never,
       flags: { json: true, raw: false }, now: new Date(), spill: false,
     } as never);
-    throw new Error("expected CliError");
   } catch (e) {
-    err = e as { message: string; hint?: string };
+    threw = true;
+    err = e;
   }
-  expect(`${err.message} ${err.hint ?? ""}`).not.toMatch(/\.rkt-clients|\/tmp|\/Users/);
+  expect(threw).toBe(true);
+  expect(err).toBeInstanceOf(CliError);
+  const combined = `${(err as CliError).message} ${(err as CliError).hint ?? ""}`;
+  expect(combined).not.toContain(root);
+  expect(combined).not.toMatch(/full body:/);
+  expect(combined).not.toMatch(/\.rkt-clients|\/tmp|\/Users/);
   expect(await spillFileCount("x")).toBe(before);   // no file written
 });
 
@@ -698,15 +720,18 @@ test("spill defaults to on (regression: CLI behaviour unchanged)", async () => {
     call: async () => ({ status: 403, body: JSON.stringify({ error: "nope" }) }),
     fetchJson: async () => ({}), secret: null,
   };
-  let err: { hint?: string };
+  let err: unknown;
+  let threw = false;
   try {
     await runCommand(ROWS_CMD as never, {
       manifest: READ_MANIFEST, site: "x", caller: caller as never,
       flags: { json: true, raw: false }, now: new Date(),
     } as never);
-    throw new Error("expected CliError");
   } catch (e) {
-    err = e as { hint?: string };
+    threw = true;
+    err = e;
   }
-  expect(err.hint ?? "").toMatch(/full body:/);
+  expect(threw).toBe(true);
+  expect(err).toBeInstanceOf(CliError);
+  expect((err as CliError).hint ?? "").toMatch(/full body:/);
 });

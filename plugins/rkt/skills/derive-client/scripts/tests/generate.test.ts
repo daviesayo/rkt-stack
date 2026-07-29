@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { generateClient } from "../src/generate";
 
@@ -471,6 +471,8 @@ test("deleting mcp.ts and running regenerate.sh does not recreate it", async () 
   const out = await mkdtemp(join(tmpdir(), "rkt-mcp-"));
   await generateClient(await manifestWithCommands(out, "a"), out, { mcp: true });
   await rm(join(out, "a", "mcp.ts"));
+  const install = Bun.spawn(["bun", "install"], { cwd: out, stdout: "pipe", stderr: "pipe" });
+  if ((await install.exited) !== 0) return; // offline: skip, same pattern as generated-runs.test.ts
   const regen = Bun.spawn(["bash", join(out, "a", "regenerate.sh")], {
     cwd: join(out, "a"),
     env: { ...process.env, RKT_PLUGIN_ROOT: PLUGIN_ROOT },
@@ -509,4 +511,16 @@ test("a generated MCP client typechecks (closure probe with the SDK present)", a
   if ((await install.exited) !== 0) return; // offline: skip, same pattern as generated-runs.test.ts
   const tsc = Bun.spawn(["bunx", "tsc", "--noEmit"], { cwd: out, stdout: "pipe", stderr: "pipe" });
   expect(await tsc.exited).toBe(0);
+});
+
+test("generates into a fresh --out root that no helper pre-created", async () => {
+  const base = await mkdtemp(join(tmpdir(), "rkt-fresh-out-"));
+  const site = "freshsite";
+  const manifestPath = join(base, "rec", "client.json");
+  await mkdir(dirname(manifestPath), { recursive: true });
+  await writeFile(manifestPath, JSON.stringify({ ...MANIFEST, site }));
+  const out = join(base, "brand-new-out");
+  const { siteDir } = await generateClient(manifestPath, out);
+  expect(siteDir).toBe(join(out, site));
+  expect(await readFile(join(siteDir, "cli.ts"), "utf8")).toContain("api-roster");
 });

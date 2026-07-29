@@ -777,7 +777,7 @@ test("HTTP mode refuses to start when RKT_MCP_TOKEN is unset", async () => {
   const { siteDir } = await setupMcpFixture();
   const port = await getFreePort();
   const secret = "super-secret-token-value-12345";
-  const env = { ...process.env, RKT_MCP_TOKEN: undefined };
+  const env: Record<string, string | undefined> = { ...process.env, HOST_SIDE_DECOY: secret };
   delete env.RKT_MCP_TOKEN;
   const proc = Bun.spawn(["bun", join(siteDir, "mcp.ts"), "--http", "--port", String(port)], {
     stdout: "pipe",

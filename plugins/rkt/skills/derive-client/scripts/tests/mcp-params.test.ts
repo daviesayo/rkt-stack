@@ -29,7 +29,7 @@ test("escapeAgentValue neutralises tokens in agent input", () => {
 });
 
 test("escapeAgentValue round-trip preserves token-shaped agent literals", async () => {
-  for (const original of ["@me", "@today", "@today+7d", "@arg:something", "@@"]) {
+  for (const original of ["", "@", "@@me", "@me", "@today", "@today+7d", "@arg:something", "@@"]) {
     const escaped = escapeAgentValue(original);
     expect(await resolveToken(escaped, ctx, NOW)).toBe(original);
   }
@@ -71,9 +71,9 @@ test("exposedParams lists every @arg hole the command requires", () => {
 test("exposedParams never advertises a param the command does not consume", () => {
   const cmd = { call: { params: { q: "@arg:query" } } };
   const exposed = exposedParams(cmd as never, EP as never);
-  for (const p of exposed) {
-    expect(cmd.call.params).toHaveProperty(p.name);
-  }
+  // Direct equality, not a per-element loop: the loop passed vacuously when
+  // `exposed` was empty, and could not catch an EXTRA advertised param.
+  expect(exposed.map((p) => p.name)).toEqual(["q"]);
 });
 
 test("unsatisfiableArgs flags an @arg hole that can never reach the wire", () => {
