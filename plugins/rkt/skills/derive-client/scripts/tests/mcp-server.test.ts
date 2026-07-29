@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { RunnerCaller } from "../src/lib/command-runner";
-import { authAwareMessage, buildServer } from "../src/lib/mcp-server";
+import { RESERVED_ARGS } from "../src/lib/mcp-params";
+import { authAwareMessage, buildServer, stripHostPaths } from "../src/lib/mcp-server";
 import { CliError, MAX_BYTES, MAX_ROWS } from "../src/lib/overflow";
 import { outDir } from "../src/lib/paths";
 import { createScheduler } from "../src/lib/scheduler";
@@ -252,7 +253,7 @@ test("duplicate tool names fail startup instead of last-one-wins", async () => {
   await expect(buildServer(dir, STUBS)).rejects.toThrow(/collides/i);
 });
 
-test("a tool name beginning with _ is rejected", async () => {
+test("a tool name beginning with _ is rejected as reserved by this server", async () => {
   const dir = await fixtureClient({
     commands: [
       {
@@ -264,7 +265,7 @@ test("a tool name beginning with _ is rejected", async () => {
       },
     ],
   });
-  await expect(buildServer(dir, STUBS)).rejects.toThrow(/_secret|valid MCP tool name/i);
+  await expect(buildServer(dir, STUBS)).rejects.toThrow(/_secret.*reserved.*_/i);
 });
 
 test("an exposed param beginning with _ is rejected", async () => {
@@ -325,6 +326,9 @@ test("events tool inputSchema exposes q, _limit, and _offset over the protocol",
   const props =
     (events!.inputSchema as { properties?: Record<string, unknown> }).properties ?? {};
   expect(Object.keys(props).sort()).toEqual(["_limit", "_offset", "q"]);
+  // The paging keys are DERIVED from RESERVED_ARGS, not written as literals, so
+  // the published schema and the names realRunTool destructures cannot drift.
+  for (const name of RESERVED_ARGS) expect(Object.keys(props)).toContain(name);
 });
 
 test("callTool round-trips injected runTool output over the protocol", async () => {
@@ -739,12 +743,140 @@ test("byte cap shrinks a page that fits the row cap but exceeds MAX_BYTES", asyn
   const rows = Array.from({ length: 80 }, (_, i) => ({ id: i, pad }));
   const out = await callTool(await fixtureClient(), "events", {}, { caller: rowsCaller(rows) });
   expect(out.rows.length).toBeLessThan(80);
-  expect(out.rows.length).toBeGreaterThan(1);
+  expect(out.rows.length).toBeGreaterThan(10);
   expect(Buffer.byteLength(JSON.stringify({ rows: out.rows }, null, 2))).toBeLessThanOrEqual(
     MAX_BYTES,
   );
   expect(out.truncated).toBe(true);
   expect(out.notice).toMatch(/row/i);
+});
+
+test("a single oversized row is capped with truncated true", async () => {
+  const row = { id: 1, pad: "x".repeat(MAX_BYTES) };
+  const out = await callTool(await fixtureClient(), "events", {}, { caller: rowsCaller([row]) });
+  expect(out.rows).toHaveLength(1);
+  expect(out.truncated).toBe(true);
+  expect(Buffer.byteLength(JSON.stringify(out))).toBeLessThanOrEqual(MAX_BYTES);
+});
+
+test("a single oversized row whose bulk is NOT a string is still capped", async () => {
+  // The field-shrinking pass only shortens strings. A large array or nested
+  // object holds the envelope over the cap unless it is handled separately.
+  const row = { id: 1, blob: Array.from({ length: MAX_BYTES }, (_, i) => i) };
+  const out = await callTool(await fixtureClient(), "events", {}, { caller: rowsCaller([row]) });
+  expect(out.rows).toHaveLength(1);
+  expect(out.truncated).toBe(true);
+  expect(Buffer.byteLength(JSON.stringify(out))).toBeLessThanOrEqual(MAX_BYTES);
+});
+
+test("stripHostPaths preserves URL path segments", () => {
+  expect(stripHostPaths("failed at https://x.test/var/x")).toBe("failed at https://x.test/var/x");
+});
+
+test("stripHostPaths strips a /var temp path that is not under rktRoot", () => {
+  // macOS temp dirs live under /var/folders. A path from outside rktRoot (a
+  // stack trace, an OS temp file) must not survive just because the exact-root
+  // pass missed it.
+  expect(stripHostPaths("wrote /var/folders/ab/cd/T/leak.json")).toBe("wrote [path]");
+});
+
+test("stripHostPaths removes paths under a custom RKT_CLIENTS_ROOT", () => {
+  const custom = "/opt/rkt-custom-root/secrets/x.json";
+  process.env.RKT_CLIENTS_ROOT = "/opt/rkt-custom-root";
+  process.env.NODE_ENV = "test";
+  expect(stripHostPaths(`read failed: ${custom}`)).toBe("read failed: [path]/secrets/x.json");
+});
+
+test("tool errors redact embedded secrets", async () => {
+  const TOKEN = "super-secret-token-value";
+  const caller: RunnerCaller = {
+    call: async () => ({ status: 500, body: JSON.stringify({ error: TOKEN }) }),
+    fetchJson: async () => ({}),
+    secret: { authorization: `Bearer ${TOKEN}` },
+  };
+  const msg = await callToolError(await fixtureClient(), "events", {}, { caller });
+  expect(msg).not.toContain(TOKEN);
+  expect(msg).toContain("[REDACTED]");
+});
+
+test("readSecrets throw surfaces as a curated tool error", async () => {
+  const msg = await callToolError(await fixtureClient(), "events", {}, {
+    readSecrets: async () => {
+      throw new Error("simulated secrets read failure");
+    },
+  });
+  expect(msg).toMatch(/simulated secrets read failure/i);
+});
+
+test("the paging reserved-arg guard runs for json-only curations", async () => {
+  let guardRan = false;
+  const dir = await fixtureClient({
+    commands: [
+      {
+        name: "stats",
+        summary: "",
+        call: { endpoint: "get.api.events", params: {} },
+        output: { kind: "json" },
+        redact: [],
+      },
+    ],
+  });
+  await buildServer(dir, {
+    ...STUBS,
+    onReservedPagingCheck: () => {
+      guardRan = true;
+    },
+  });
+  expect(guardRan).toBe(true);
+});
+
+test("the paging reserved-arg guard runs when every command is skipped as write", async () => {
+  let guardRan = false;
+  const dir = await fixtureClient({
+    withWriteEndpoint: true,
+    commands: [
+      {
+        name: "create",
+        summary: "",
+        write: true,
+        call: { endpoint: "post.api.events", params: {} },
+        output: { kind: "json" },
+        redact: [],
+      },
+    ],
+  });
+  await buildServer(dir, {
+    ...STUBS,
+    onReservedPagingCheck: () => {
+      guardRan = true;
+    },
+  });
+  expect(guardRan).toBe(true);
+});
+
+test("a missing endpoint reference fails with a curated message", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "rkt-mcp-missing-ep-"));
+  trackedTempDirs.push(dir);
+  await writeFile(join(dir, "client.json"), JSON.stringify(MANIFEST));
+  await writeFile(
+    join(dir, "commands.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      site: "x",
+      commands: [
+        {
+          name: "events",
+          summary: "",
+          call: { endpoint: "get.api.missing", params: {} },
+          output: { kind: "json" },
+          redact: [],
+        },
+      ],
+    }),
+  );
+  await expect(buildServer(dir, STUBS)).rejects.toThrow(
+    /references endpoint 'get\.api\.missing', which is not in client\.json/i,
+  );
 });
 
 test("reuses one scheduler with cache disabled across tool calls", async () => {

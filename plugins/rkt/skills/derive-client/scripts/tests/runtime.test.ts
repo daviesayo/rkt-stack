@@ -450,6 +450,30 @@ test("the one-shot CLI path still performs a single renewal on 401", async () =>
   expect(seen).toEqual(["Bearer old", "Bearer new"]);
 });
 
+test("renew reports failure when post-renewal readSecrets returns null", async () => {
+  const seen: string[] = [];
+  const sched = auth401Scheduler(seen, "Bearer new");
+  const sharedDeps = {
+    refreshViaOidc: async () => {
+      await new Promise((r) => setTimeout(r, 30));
+      return { accessToken: "new", refreshToken: "r2", expiresIn: null };
+    },
+    writeSecret: async () => {},
+    readSecrets: async () => null,
+  };
+  const initial = { authorization: "Bearer old", [REFRESH_TOKEN_KEY]: "r1" };
+  const callerA = createCaller(baseManifest(), sched, { ...initial }, sharedDeps);
+  const callerB = createCaller(baseManifest(), sched, { ...initial }, sharedDeps);
+  const [resA, resB] = await Promise.all([
+    callerA.call("get.data", {}),
+    callerB.call("get.data", {}),
+  ]);
+  expect(resA.status).toBe(200);
+  expect(resB.status).toBe(401);
+  expect(callerB.secret?.authorization).toBe("Bearer old");
+  expect(seen.length).toBe(3);
+});
+
 test("fetchJson forwards params into the request URL", async () => {
   const seen: string[] = [];
   const sched: Scheduler = {

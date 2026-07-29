@@ -100,6 +100,7 @@ export function createCaller(
   async function renew(): Promise<boolean> {
     if (!secret) return false;
     const site = manifest.site;
+    const beforeRenew = secret;
     let flight = renewFlights.get(site);
     if (!flight) {
       flight = doRenew().finally(() => {
@@ -108,11 +109,16 @@ export function createCaller(
       renewFlights.set(site, flight);
     }
     const ok = await flight;
-    if (ok) {
-      const fresh = await readSecretsFn(site);
-      if (fresh) secret = fresh;
+    if (!ok) return false;
+    const fresh = await readSecretsFn(site);
+    if (fresh) {
+      secret = fresh;
+      return true;
     }
-    return ok;
+    // A follower can await a leader's flight without receiving the renewed bundle;
+    // if the post-renewal re-read yields nothing and our secret is unchanged, do
+    // not report success.
+    return secret !== beforeRenew;
   }
 
   async function call(endpointId: string, params: Record<string, string>, body?: unknown) {

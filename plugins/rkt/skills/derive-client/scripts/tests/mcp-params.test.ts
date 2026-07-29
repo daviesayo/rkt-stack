@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { resolveToken } from "../src/lib/tokens";
 import {
   RESERVED_ARGS,
+  assertReservedPagingArgs,
   classifyParam,
   escapeAgentValue,
   exposedParams,
@@ -133,4 +134,8 @@ test("classifyParam unknown-token verdict matches resolveToken rejection", async
 
 test("RESERVED_ARGS names the paging arguments Task 4 will inject", () => {
   expect(RESERVED_ARGS).toEqual(["_limit", "_offset"]);
+});
+
+test("assertReservedPagingArgs accepts the canonical paging names", () => {
+  expect(() => assertReservedPagingArgs()).not.toThrow();
 });

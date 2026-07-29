@@ -622,6 +622,31 @@ test("commit without the env flag raises the enable-writes error", async () => {
   ).rejects.toThrow(/RKT_ALLOW_WRITES/);
 });
 
+test("write error bodies mask embedded secrets", async () => {
+  const TOKEN = "super-secret-token-value";
+  const caller = {
+    call: async () => ({
+      status: 400,
+      body: JSON.stringify({ error: TOKEN, detail: "bad request" }),
+    }),
+    fetchJson: async () => ({}),
+    secret: { authorization: `Bearer ${TOKEN}` },
+  };
+  process.env.RKT_ALLOW_WRITES = "1";
+  const err = await runCommand(WRITE_CMD as never, {
+    manifest: FULL_MANIFEST,
+    site: "x",
+    caller: caller as never,
+    flags: { json: true, raw: false },
+    now: new Date(),
+    commit: true,
+    args: { title: "Party", count: "3" },
+  } as never).catch((e) => e);
+  expect(err).toBeInstanceOf(CliError);
+  expect((err as CliError).message).not.toContain(TOKEN);
+  expect((err as CliError).message).toContain("[REDACTED]");
+});
+
 const READ_MANIFEST = {
   schemaVersion: 3,
   site: "x",

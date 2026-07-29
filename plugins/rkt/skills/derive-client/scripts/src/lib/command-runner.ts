@@ -40,8 +40,9 @@ export interface RunResult {
   renderCapped?: (n: number) => string;
   /**
    * Shaped rows as DATA (extracted, joined, sorted, limited, secret-masked,
-   * redacted). Present only on the row-shaped branch. Consumers needing
-   * structure rather than text read this instead of parsing `rendered`.
+   * redacted). Present only on the row-shaped branch unless `flags.raw` is
+   * set, in which case rows are secret-masked but not field-redacted. Consumers
+   * needing structure rather than text read this instead of parsing `rendered`.
    */
   rows?: Record<string, unknown>[];
 }
@@ -238,8 +239,14 @@ export async function runCommand(cmd: CommandSpec, opts: RunOpts): Promise<RunRe
 
     const { status, body: resBody } = await caller.call(cmd.call.endpoint, params, body);
     if (status >= 400) {
+      let redactedBody: string;
+      try {
+        redactedBody = JSON.stringify(maskSecretValues(JSON.parse(resBody), caller.secret ?? null));
+      } catch {
+        redactedBody = redactAll(resBody, caller.secret ?? null);
+      }
       throw new CliError(
-        `HTTP ${status} from ${cmd.call.endpoint}\n${resBody.slice(0, 2000)}`,
+        `HTTP ${status} from ${cmd.call.endpoint}\n${redactedBody.slice(0, 2000)}`,
         "this write may or may not have been applied; verify the remote state before re-running",
         1,
       );

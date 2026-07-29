@@ -4,9 +4,16 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { assertResolvable, validateCommandsFile, type CommandSpec } from "./commands-schema";
 import { validateManifest, READ_METHODS, type ManifestEndpoint } from "./manifest-schema";
-import { RESERVED_ARGS, escapeAgentValue, exposedParams, unsatisfiableArgs } from "./mcp-params";
+import {
+  RESERVED_ARGS,
+  assertReservedPagingArgs,
+  escapeAgentValue,
+  exposedParams,
+  unsatisfiableArgs,
+} from "./mcp-params";
 import { runCommand, runWhoami, type RunnerCaller } from "./command-runner";
 import { CliError, MAX_BYTES, MAX_ROWS, capText } from "./overflow";
+import { rktRoot } from "./paths";
 import { createCaller } from "./runtime";
 import { refreshViaOidc as realRefreshViaOidc } from "./refresh";
 import { readSecrets, redactAll, serializeCredentialWrite, writeSecret as realWriteSecret } from "./secrets";
@@ -15,10 +22,126 @@ import { createScheduler, type Scheduler } from "./scheduler";
 const TOOL_NAME = /^[A-Za-z0-9_-]{1,64}$/;
 
 /** Strip host filesystem paths from an error string before it reaches an agent. */
-function stripHostPaths(text: string): string {
-  return text
-    .replace(/[^\s]*\.rkt-clients[^\s]*/g, "[path]")
-    .replace(/\/(?:Users|tmp|var|home|private)[^\s]*/g, "[path]");
+export function stripHostPaths(text: string): string {
+  const roots = [rktRoot()].sort((a, b) => b.length - a.length);
+  let out = text;
+  for (const root of roots) {
+    if (root.length > 0) out = out.split(root).join("[path]");
+  }
+  // Conservative fallback for absolute paths at token boundaries — never the
+  // path component of a URL (https://host/var/x must survive intact, because a
+  // URL's path is always preceded by a host character, never by whitespace).
+  // `var` stays in this alternation: macOS temp dirs live under /var/folders,
+  // and dropping it would let a non-rktRoot temp path through.
+  out = out.replace(/(?:^|\s)(\/(?:Users|tmp|var|home|private)\/[^\s]*)/g, (match) =>
+    match.startsWith(" ") ? " [path]" : "[path]",
+  );
+  return out;
+}
+
+function endpointForCommand(
+  byId: Map<string, ManifestEndpoint>,
+  cmd: CommandSpec,
+): ManifestEndpoint {
+  const ep = byId.get(cmd.call.endpoint);
+  if (!ep) {
+    throw new Error(
+      `commands.json: ${cmd.name} references endpoint '${cmd.call.endpoint}', which is not in client.json`,
+    );
+  }
+  return ep;
+}
+
+function rowsResponseEnvelope(
+  page: Record<string, unknown>[],
+  opts: { truncated: boolean; start: number; allLength: number },
+): string {
+  const notice =
+    opts.truncated || opts.start > 0
+      ? `${opts.allLength} row(s) available; showing ${page.length} from offset ${opts.start}. Use _offset/_limit to page.`
+      : undefined;
+  return JSON.stringify(
+    {
+      rows: page,
+      truncated: opts.truncated,
+      ...(notice ? { notice } : {}),
+    },
+    null,
+    2,
+  );
+}
+
+function truncateRowFields(row: Record<string, unknown>, maxBytes: number): Record<string, unknown> {
+  let candidate: Record<string, unknown> = { ...row };
+  for (let pass = 0; pass < 64; pass++) {
+    const envelope = rowsResponseEnvelope([candidate], {
+      truncated: true,
+      start: 0,
+      allLength: 1,
+    });
+    if (Buffer.byteLength(envelope) <= maxBytes) return candidate;
+    let longestKey: string | null = null;
+    let longestLen = 0;
+    for (const [key, value] of Object.entries(candidate)) {
+      if (typeof value === "string" && value.length > longestLen) {
+        longestLen = value.length;
+        longestKey = key;
+      }
+    }
+    if (!longestKey || longestLen <= 1) {
+      // No string field left to shrink. A non-string field (a large array or
+      // nested object) can still hold the envelope over the cap, so replace the
+      // biggest one with a marker; without this the row escapes the cap entirely.
+      let biggestKey: string | null = null;
+      let biggestLen = 0;
+      for (const [key, value] of Object.entries(candidate)) {
+        if (typeof value === "string") continue;
+        const len = JSON.stringify(value ?? null).length;
+        if (len > biggestLen) {
+          biggestLen = len;
+          biggestKey = key;
+        }
+      }
+      if (!biggestKey || biggestLen <= "\"[truncated]\"".length) break;
+      candidate = { ...candidate, [biggestKey]: "[truncated]" };
+      continue;
+    }
+    const value = candidate[longestKey] as string;
+    candidate = { ...candidate, [longestKey]: value.slice(0, Math.max(1, Math.floor(value.length * 0.6))) };
+  }
+  return candidate;
+}
+
+function fitRowsPage(
+  rows: Record<string, unknown>[],
+  start: number,
+  allLength: number,
+): { page: Record<string, unknown>[]; truncated: boolean } {
+  if (rows.length === 0) {
+    return { page: [], truncated: start < allLength };
+  }
+
+  let lo = 0;
+  let hi = rows.length;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    const candidate = rows.slice(0, mid);
+    const text = rowsResponseEnvelope(candidate, {
+      truncated: start + mid < allLength,
+      start,
+      allLength,
+    });
+    if (Buffer.byteLength(text) <= MAX_BYTES) lo = mid;
+    else hi = mid - 1;
+  }
+
+  if (lo > 0) {
+    const page = rows.slice(0, lo);
+    return { page, truncated: start + page.length < allLength };
+  }
+
+  const page = [truncateRowFields(rows[0] as Record<string, unknown>, MAX_BYTES)];
+  return { page, truncated: true };
 }
 
 /** Turn a thrown CliError into an agent-safe message. Never includes secrets or host paths. */
@@ -57,6 +180,8 @@ export interface BuildOpts {
   writeSecret?: typeof realWriteSecret;
   /** Injected OIDC refresh for tests that exercise the renewal path. */
   refreshViaOidc?: typeof realRefreshViaOidc;
+  /** Observed when the paging reserved-arg guard runs (tests only). */
+  onReservedPagingCheck?: () => void;
 }
 
 export async function buildServer(
@@ -120,27 +245,29 @@ export async function buildServer(
   }
 
   const realRunTool = async (cmd: CommandSpec, args: Record<string, unknown>): Promise<string> => {
-    const caller = await callerForCall();
     const { _limit, _offset, ...rest } = args;
-    const overrideParams: Record<string, string> = {};
-    for (const [k, v] of Object.entries(rest)) {
-      if (v !== undefined) overrideParams[k] = escapeAgentValue(String(v));
-    }
-
+    let caller: RunnerCaller | undefined;
     let res;
     try {
+      caller = await callerForCall();
+      const overrideParams: Record<string, string> = {};
+      for (const [k, v] of Object.entries(rest)) {
+        if (v !== undefined) overrideParams[k] = escapeAgentValue(String(v));
+      }
+
       res = await runCommand(cmd, {
         manifest,
         site: manifest.site,
         caller,
         identity: commands.identity,
-        flags: { json: cmd.output.kind === "json", raw: false },
+        flags: { json: false, raw: false },
         now: new Date(),
         overrideParams,
         spill: false, // no spill file, no host path in any hint
       });
     } catch (err) {
-      throw new Error(authAwareMessage(err, manifest.site));
+      const secrets = caller?.secret ?? null;
+      throw new Error(redactAll(authAwareMessage(err, manifest.site), secrets));
     }
 
     const secrets = caller.secret ?? null;
@@ -156,55 +283,43 @@ export async function buildServer(
     const all = res.rows;
     const start = typeof _offset === "number" ? _offset : 0;
     const size = typeof _limit === "number" ? Math.min(_limit, MAX_ROWS) : MAX_ROWS;
-    let page = all.slice(start, start + size);
-    let text = JSON.stringify({ rows: page }, null, 2);
-    // Row count alone does not bound context: shrink until the payload fits.
-    while (page.length > 1 && Buffer.byteLength(text) > MAX_BYTES) {
-      page = page.slice(0, Math.floor(page.length / 2));
-      text = JSON.stringify({ rows: page }, null, 2);
-    }
-    const truncated = start + page.length < all.length;
-    return redactAll(
-      JSON.stringify(
-        {
-          rows: page,
-          truncated,
-          ...(truncated || start > 0
-            ? {
-                notice: `${all.length} row(s) available; showing ${page.length} from offset ${start}. Use _offset/_limit to page.`,
-              }
-            : {}),
-        },
-        null,
-        2,
-      ),
-      secrets,
-    );
+    const slice = all.slice(start, start + size);
+    const { page, truncated } = fitRowsPage(slice, start, all.length);
+    return redactAll(rowsResponseEnvelope(page, { truncated, start, allLength: all.length }), secrets);
   };
 
   const realRunWhoamiTool = async (): Promise<string> => {
+    let caller: RunnerCaller | undefined;
     try {
-      return await runWhoami(manifest.site, commands.identity, await callerForCall());
+      caller = await callerForCall();
+      return await runWhoami(manifest.site, commands.identity, caller);
     } catch (err) {
-      throw new Error(authAwareMessage(err, manifest.site));
+      const secrets = caller?.secret ?? null;
+      throw new Error(redactAll(authAwareMessage(err, manifest.site), secrets));
     }
   };
 
   const runTool = opts.runTool ?? realRunTool;
   const runWhoamiTool = opts.runWhoamiTool ?? realRunWhoamiTool;
 
+  assertReservedPagingArgs();
+  opts.onReservedPagingCheck?.();
+
   let skippedWrites = 0;
   const registered = new Set<string>(commands.identity ? ["whoami"] : []);
   const toRegister: { cmd: CommandSpec; ep: ManifestEndpoint }[] = [];
 
   for (const cmd of commands.commands) {
-    const ep = byId.get(cmd.call.endpoint) as ManifestEndpoint;
+    const ep = endpointForCommand(byId, cmd);
     // Structural: the endpoint's method decides, never the `write` field.
     if (!READ_METHODS.has(ep.method.toUpperCase())) {
       skippedWrites++;
       continue;
     }
-    if (cmd.name.startsWith("_") || !TOOL_NAME.test(cmd.name)) {
+    if (cmd.name.startsWith("_")) {
+      throw new Error(`commands.json: tool name "${cmd.name}" uses the reserved "_" prefix`);
+    }
+    if (!TOOL_NAME.test(cmd.name)) {
       throw new Error(`commands.json: "${cmd.name}" is not a valid MCP tool name`);
     }
     if (registered.has(cmd.name)) {
@@ -237,11 +352,13 @@ export async function buildServer(
   for (const { cmd, ep } of toRegister) {
     const shape: Record<string, z.ZodTypeAny> = {};
     if (cmd.output.kind !== "json") {
-      if (RESERVED_ARGS[0] !== "_limit" || RESERVED_ARGS[1] !== "_offset") {
-        throw new Error("RESERVED_ARGS drifted from paging arg names");
-      }
-      shape._limit = z.number().int().positive().optional();
-      shape._offset = z.number().int().nonnegative().optional();
+      // Keyed off RESERVED_ARGS, not off literals: assertReservedPagingArgs()
+      // pins RESERVED_ARGS to the names realRunTool destructures, so deriving
+      // the schema from it makes drift between the two structurally impossible
+      // rather than merely detected.
+      const [limitArg, offsetArg] = RESERVED_ARGS;
+      shape[limitArg] = z.number().int().positive().optional();
+      shape[offsetArg] = z.number().int().nonnegative().optional();
     }
     for (const p of exposedParams(cmd, ep)) {
       const base = p.type === "number" ? z.number() : z.string();

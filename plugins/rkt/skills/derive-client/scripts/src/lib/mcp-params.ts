@@ -13,6 +13,17 @@ export const RESERVED_ARGS = ["_limit", "_offset"] as const;
 
 const RESERVED = new Set<string>(RESERVED_ARGS);
 
+/** Runtime guard: paging arg names must stay aligned with tool schema injection. */
+export function assertReservedPagingArgs(): void {
+  const expected: readonly string[] = ["_limit", "_offset"];
+  if (
+    RESERVED_ARGS.length !== expected.length ||
+    RESERVED_ARGS.some((name, i) => name !== expected[i])
+  ) {
+    throw new Error("RESERVED_ARGS drifted from paging arg names");
+  }
+}
+
 export type ParamKind =
   | { kind: "server" }
   | { kind: "arg"; name: string }
