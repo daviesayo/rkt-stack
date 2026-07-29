@@ -1,9 +1,14 @@
-import { expect, test } from "bun:test";
+import { expect, setDefaultTimeout, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { formatDryRunPreview, parseParams } from "../src/call";
 import { redact } from "../src/lib/secrets";
+
+// This file spawns child processes (bun install, bunx tsc, the emitted server).
+// Bun's 5s default kills them under full-suite load and reports the SIGTERM as a
+// substantive failure. Per-test timeouts still override this.
+setDefaultTimeout(120_000);
 
 test("parses repeated --param pairs", () => {
   expect(parseParams(["--param", "id=4821", "--param", "week=2026-W30"])).toEqual({

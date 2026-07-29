@@ -1,9 +1,14 @@
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { generateClient } from "../src/generate";
+
+// This file spawns child processes (bun install, bunx tsc, the emitted server).
+// Bun's 5s default kills them under full-suite load and reports the SIGTERM as a
+// substantive failure. Per-test timeouts still override this.
+setDefaultTimeout(120_000);
 
 const PLUGIN_ROOT = join(fileURLToPath(import.meta.url), "..", "..", "..", "..");
 

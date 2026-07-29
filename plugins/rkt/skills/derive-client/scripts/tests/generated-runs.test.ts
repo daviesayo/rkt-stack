@@ -1,9 +1,14 @@
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { generateClient } from "../src/generate";
+
+// This file spawns child processes (bun install, bunx tsc, the emitted server).
+// Bun's 5s default kills them under full-suite load and reports the SIGTERM as a
+// substantive failure. Per-test timeouts still override this.
+setDefaultTimeout(120_000);
 
 async function getFreePort(): Promise<number> {
   return new Promise((resolve, reject) => {

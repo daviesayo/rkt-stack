@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { cp, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
@@ -8,6 +8,11 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import { commandNames, emitCli, emitMcp, emitType, emitTypes, typeName } from "../src/lib/codegen";
 import type { ClientManifest, ManifestEndpoint } from "../src/lib/manifest";
 import type { CommandsFile } from "../src/lib/commands-schema";
+
+// This file spawns child processes (bun install, bunx tsc, the emitted server).
+// Bun's 5s default kills them under full-suite load and reports the SIGTERM as a
+// substantive failure. Per-test timeouts still override this.
+setDefaultTimeout(120_000);
 
 function ep(over: Partial<ManifestEndpoint>): ManifestEndpoint {
   return {
@@ -676,6 +681,123 @@ async function getFreePort(): Promise<number> {
   });
 }
 
+/**
+ * Start the emitted MCP server over HTTP and return it only once it is really
+ * answering requests.
+ *
+ * Two races made this necessary, and neither is fixable by sleeping longer:
+ *
+ * 1. `getFreePort()` binds port 0, reads the port, closes, and returns it. The
+ *    port is free at that instant and can be taken before the child binds it.
+ *    The child then dies on EADDRINUSE and every later request is refused.
+ * 2. A bare TCP connect is not proof of readiness — it can succeed against
+ *    whoever else grabbed the port, so the probe passes and the HTTP request
+ *    that follows still gets ConnectionRefused.
+ *
+ * So: probe with a real HTTP request, treat a dead child as a failed attempt,
+ * and retry on a genuinely fresh port. The caller gets the port that worked.
+ */
+async function startMcpHttp(
+  siteDir: string,
+  env: Record<string, string | undefined>,
+  attempts = 5,
+): Promise<{ proc: Bun.Subprocess; port: number }> {
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    const port = await getFreePort();
+    const proc = Bun.spawn(["bun", join(siteDir, "mcp.ts"), "--http", "--port", String(port)], {
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    if (await httpReady(proc, port)) return { proc, port };
+    proc.kill();
+    await proc.exited;
+  }
+  throw new Error(`emitted MCP server never became ready in ${attempts} attempts`);
+}
+
+/**
+ * True once the child answers HTTP on `port` AND still answers a beat later.
+ *
+ * One probe is not enough: the observed failure was a server that answered the
+ * readiness check and then refused the very next request ~150ms later. Whoever
+ * loses a port race dies immediately after binding, so a single-shot probe can
+ * land inside that window and report a server already on its way out.
+ */
+async function httpReady(proc: Bun.Subprocess, port: number, timeoutMs = 20_000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (proc.exitCode !== null) return false; // died (very likely EADDRINUSE)
+    if (await probeOnce(port)) {
+      await Bun.sleep(250);
+      return proc.exitCode === null && (await probeOnce(port));
+    }
+    await Bun.sleep(50);
+  }
+  return false;
+}
+
+/** One HTTP request. Any status counts: a response at all proves something is listening. */
+async function probeOnce(port: number): Promise<boolean> {
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/`, {
+      method: "GET",
+      headers: { host: `127.0.0.1:${port}` },
+    });
+    await res.body?.cancel();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Run `fn` against a freshly-started emitted MCP server, restarting it on a new
+ * port if the CONNECTION fails.
+ *
+ * Readiness probing alone could not close this. Measured over 30 full-suite
+ * runs each: a single probe left ~7% of runs failing, and the stability
+ * double-probe above still left ~3%. The server answers, then the connection is
+ * refused a beat later — a port the OS handed out twice. Session state dies
+ * with the server, so the whole body has to rerun, not just the failed request.
+ *
+ * Only connection-level failures are retried. An assertion failure, or any
+ * error the server itself produces, propagates on the first attempt — this must
+ * never become a way for a real regression to pass on the second try.
+ */
+async function withMcpHttp(
+  siteDir: string,
+  env: Record<string, string | undefined>,
+  fn: (port: number, proc: Bun.Subprocess) => Promise<void>,
+  attempts = 4,
+): Promise<void> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    const { proc, port } = await startMcpHttp(siteDir, env);
+    try {
+      await fn(port, proc);
+      return;
+    } catch (err) {
+      if (!isConnectionError(err)) throw err;
+      lastErr = err;
+    } finally {
+      proc.kill();
+      await proc.exited;
+    }
+  }
+  throw lastErr;
+}
+
+function isConnectionError(err: unknown): boolean {
+  const e = err as { code?: string; message?: string };
+  return (
+    e?.code === "ConnectionRefused" ||
+    e?.code === "ECONNREFUSED" ||
+    e?.code === "ECONNRESET" ||
+    /unable to connect|connection (refused|closed|reset)/i.test(e?.message ?? "")
+  );
+}
+
 const MCP_FIXTURES: string[] = [];
 
 async function setupMcpFixture(): Promise<{ siteDir: string; root: string }> {
@@ -795,24 +917,17 @@ test("HTTP mode refuses to start when RKT_MCP_TOKEN is unset", async () => {
 
 test("HTTP mode starts when RKT_MCP_TOKEN is set", async () => {
   const { siteDir } = await setupMcpFixture();
-  const port = await getFreePort();
   const token = "test-mcp-token-set-case";
-  const proc = Bun.spawn(["bun", join(siteDir, "mcp.ts"), "--http", "--port", String(port)], {
-    stdout: "pipe",
-    stderr: "pipe",
-    env: { ...process.env, RKT_MCP_TOKEN: token },
+  await withMcpHttp(siteDir, { ...process.env, RKT_MCP_TOKEN: token }, async (port, proc) => {
+    expect(proc.exitCode).toBeNull();
+    const res = await fetch(`http://127.0.0.1:${port}/`, {
+      headers: {
+        authorization: `Bearer ${token}`,
+        host: `127.0.0.1:${port}`,
+      },
+    });
+    expect(res.status).not.toBe(401);
   });
-  await Bun.sleep(500);
-  expect(proc.exitCode).toBeNull();
-  const res = await fetch(`http://127.0.0.1:${port}/`, {
-    headers: {
-      authorization: `Bearer ${token}`,
-      host: `127.0.0.1:${port}`,
-    },
-  });
-  expect(res.status).not.toBe(401);
-  proc.kill();
-  await proc.exited;
 });
 
 test("emitted HTTP config lists both loopback host strings and matching origins", () => {
@@ -906,74 +1021,54 @@ async function readJsonRpcResponse(
 
 test("emitted HTTP server rejects an unlisted Host (DNS rebinding)", async () => {
   const { siteDir } = await setupMcpFixture();
-  const port = await getFreePort();
   const token = "test-token-not-a-secret";
-  const proc = Bun.spawn(["bun", join(siteDir, "mcp.ts"), "--http", "--port", String(port)], {
-    stdout: "pipe",
-    stderr: "pipe",
-    env: { ...process.env, RKT_MCP_TOKEN: token },
+  await withMcpHttp(siteDir, { ...process.env, RKT_MCP_TOKEN: token }, async (port) => {
+    const res = await fetch(`http://127.0.0.1:${port}/`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        host: "evil.example",
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify(INIT_BODY),
+    });
+    expect(res.status).toBe(403);
   });
-  await Bun.sleep(500);
-  const res = await fetch(`http://127.0.0.1:${port}/`, {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${token}`,
-      host: "evil.example",
-      "content-type": "application/json",
-      accept: "application/json, text/event-stream",
-    },
-    body: JSON.stringify(INIT_BODY),
-  });
-  expect(res.status).toBe(403);
-  proc.kill();
-  await proc.exited;
 }, 180_000);
 
 test("malformed JSON body with invalid token fails on auth, not parse", async () => {
   const { siteDir } = await setupMcpFixture();
-  const port = await getFreePort();
-  const proc = Bun.spawn(["bun", join(siteDir, "mcp.ts"), "--http", "--port", String(port)], {
-    stdout: "pipe",
-    stderr: "pipe",
-    env: { ...process.env, RKT_MCP_TOKEN: "test-token-not-a-secret" },
+  const env = { ...process.env, RKT_MCP_TOKEN: "test-token-not-a-secret" };
+  await withMcpHttp(siteDir, env, async (port) => {
+    const res = await fetch(`http://127.0.0.1:${port}/`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer wrong-token",
+        host: `127.0.0.1:${port}`,
+        "content-type": "application/json",
+      },
+      body: "{ not json",
+    });
+    expect(res.status).toBe(401);
   });
-  await Bun.sleep(500);
-  const res = await fetch(`http://127.0.0.1:${port}/`, {
-    method: "POST",
-    headers: {
-      authorization: "Bearer wrong-token",
-      host: `127.0.0.1:${port}`,
-      "content-type": "application/json",
-    },
-    body: "{ not json",
-  });
-  expect(res.status).toBe(401);
-  proc.kill();
-  await proc.exited;
 }, 180_000);
 
 test("malformed JSON body with valid token returns 400", async () => {
   const { siteDir } = await setupMcpFixture();
-  const port = await getFreePort();
   const token = "test-token-not-a-secret";
-  const proc = Bun.spawn(["bun", join(siteDir, "mcp.ts"), "--http", "--port", String(port)], {
-    stdout: "pipe",
-    stderr: "pipe",
-    env: { ...process.env, RKT_MCP_TOKEN: token },
+  await withMcpHttp(siteDir, { ...process.env, RKT_MCP_TOKEN: token }, async (port) => {
+    const res = await fetch(`http://127.0.0.1:${port}/`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        host: `127.0.0.1:${port}`,
+        "content-type": "application/json",
+      },
+      body: "{ not json",
+    });
+    expect(res.status).toBe(400);
   });
-  await Bun.sleep(500);
-  const res = await fetch(`http://127.0.0.1:${port}/`, {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${token}`,
-      host: `127.0.0.1:${port}`,
-      "content-type": "application/json",
-    },
-    body: "{ not json",
-  });
-  expect(res.status).toBe(400);
-  proc.kill();
-  await proc.exited;
 }, 180_000);
 
 test("stdio mode keeps stdout pure JSON-RPC through a tool call", async () => {
@@ -1025,53 +1120,46 @@ test("stdio MCP import graph does not use console.log except session.ts runLifec
 
 test("closing an HTTP session reaps the server and transport", async () => {
   const { siteDir } = await setupMcpFixture();
-  const port = await getFreePort();
   const token = "reap-session-token";
-  const proc = Bun.spawn(["bun", join(siteDir, "mcp.ts"), "--http", "--port", String(port)], {
-    stdout: "pipe",
-    stderr: "pipe",
-    env: { ...process.env, RKT_MCP_TOKEN: token },
-  });
-  await Bun.sleep(500);
-  const init = await fetch(`http://127.0.0.1:${port}/`, {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${token}`,
-      host: `127.0.0.1:${port}`,
-      "content-type": "application/json",
-      accept: "application/json, text/event-stream",
-    },
-    body: JSON.stringify(INIT_BODY),
-  });
-  expect(init.status).toBe(200);
-  const sessionId = init.headers.get("mcp-session-id");
-  expect(sessionId).toBeTruthy();
-  await init.body?.cancel();
+  await withMcpHttp(siteDir, { ...process.env, RKT_MCP_TOKEN: token }, async (port) => {
+    const init = await fetch(`http://127.0.0.1:${port}/`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        host: `127.0.0.1:${port}`,
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify(INIT_BODY),
+    });
+    expect(init.status).toBe(200);
+    const sessionId = init.headers.get("mcp-session-id");
+    expect(sessionId).toBeTruthy();
+    await init.body?.cancel();
 
-  const deleted = await fetch(`http://127.0.0.1:${port}/`, {
-    method: "DELETE",
-    headers: {
-      authorization: `Bearer ${token}`,
-      host: `127.0.0.1:${port}`,
-      "mcp-session-id": sessionId!,
-      "mcp-protocol-version": "2024-11-05",
-    },
-  });
-  expect(deleted.status).toBe(200);
+    const deleted = await fetch(`http://127.0.0.1:${port}/`, {
+      method: "DELETE",
+      headers: {
+        authorization: `Bearer ${token}`,
+        host: `127.0.0.1:${port}`,
+        "mcp-session-id": sessionId!,
+        "mcp-protocol-version": "2024-11-05",
+      },
+    });
+    expect(deleted.status).toBe(200);
 
-  const after = await fetch(`http://127.0.0.1:${port}/`, {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${token}`,
-      host: `127.0.0.1:${port}`,
-      "content-type": "application/json",
-      accept: "application/json, text/event-stream",
-      "mcp-session-id": sessionId!,
-      "mcp-protocol-version": "2024-11-05",
-    },
-    body: JSON.stringify({ jsonrpc: "2.0", method: "ping", id: 2 }),
+    const after = await fetch(`http://127.0.0.1:${port}/`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        host: `127.0.0.1:${port}`,
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        "mcp-session-id": sessionId!,
+        "mcp-protocol-version": "2024-11-05",
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", method: "ping", id: 2 }),
+    });
+    expect(after.status).toBeGreaterThanOrEqual(400);
   });
-  expect(after.status).toBeGreaterThanOrEqual(400);
-  proc.kill();
-  await proc.exited;
 });
