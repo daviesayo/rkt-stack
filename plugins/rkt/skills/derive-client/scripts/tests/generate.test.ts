@@ -481,7 +481,9 @@ test("deleting mcp.ts and running regenerate.sh does not recreate it", async () 
   });
   expect(await regen.exited).toBe(0);
   await expect(readFile(join(out, "a", "mcp.ts"), "utf8")).rejects.toThrow();
-});
+  // Same reason as the closure probe below: `bun install` plus a regenerate.sh
+  // run does not fit in Bun's 5s default.
+}, 180_000);
 
 test("non-MCP regeneration deletes only the two adapter files from a populated root", async () => {
   const out = await mkdtemp(join(tmpdir(), "rkt-mcp-"));
@@ -511,7 +513,10 @@ test("a generated MCP client typechecks (closure probe with the SDK present)", a
   if ((await install.exited) !== 0) return; // offline: skip, same pattern as generated-runs.test.ts
   const tsc = Bun.spawn(["bunx", "tsc", "--noEmit"], { cwd: out, stdout: "pipe", stderr: "pipe" });
   expect(await tsc.exited).toBe(0);
-});
+  // Explicit timeout: this spawns `bun install` AND `bunx tsc` in a fresh temp
+  // root. Bun's 5s default made it flake to a 143 (SIGTERM) under load, which
+  // reads as a real typecheck failure rather than as the timeout it is.
+}, 180_000);
 
 test("generates into a fresh --out root that no helper pre-created", async () => {
   const base = await mkdtemp(join(tmpdir(), "rkt-fresh-out-"));
