@@ -868,6 +868,151 @@ test("DNS rebinding protection rejects an unlisted Host and accepts a listed one
   await goodTransport.close();
 });
 
+function assertStdoutIsJsonRpcOnly(stdout: string): void {
+  const trimmed = stdout.trimEnd();
+  if (trimmed.length === 0) return;
+  let offset = 0;
+  while (offset < trimmed.length) {
+    const nl = trimmed.indexOf("\n", offset);
+    const line = nl === -1 ? trimmed.slice(offset) : trimmed.slice(offset, nl);
+    offset = nl === -1 ? trimmed.length : nl + 1;
+    if (line.length === 0) continue;
+    const parsed = JSON.parse(line);
+    expect(parsed).toHaveProperty("jsonrpc", "2.0");
+  }
+}
+
+async function readJsonRpcResponse(
+  chunks: Buffer[],
+  id: number,
+  timeoutMs = 10_000,
+): Promise<unknown> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const text = Buffer.concat(chunks).toString("utf8");
+    for (const line of text.split("\n")) {
+      if (!line.trim()) continue;
+      try {
+        const parsed = JSON.parse(line) as { id?: number };
+        if (parsed.id === id) return parsed;
+      } catch {
+        // partial line; wait for more bytes
+      }
+    }
+    await Bun.sleep(50);
+  }
+  throw new Error(`timed out waiting for JSON-RPC response id=${id}`);
+}
+
+test("emitted HTTP server rejects an unlisted Host (DNS rebinding)", async () => {
+  const { siteDir } = await setupMcpFixture();
+  const port = await getFreePort();
+  const token = "test-token-not-a-secret";
+  const proc = Bun.spawn(["bun", join(siteDir, "mcp.ts"), "--http", "--port", String(port)], {
+    stdout: "pipe",
+    stderr: "pipe",
+    env: { ...process.env, RKT_MCP_TOKEN: token },
+  });
+  await Bun.sleep(500);
+  const res = await fetch(`http://127.0.0.1:${port}/`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      host: "evil.example",
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+    },
+    body: JSON.stringify(INIT_BODY),
+  });
+  expect(res.status).toBe(403);
+  proc.kill();
+  await proc.exited;
+}, 180_000);
+
+test("malformed JSON body with invalid token fails on auth, not parse", async () => {
+  const { siteDir } = await setupMcpFixture();
+  const port = await getFreePort();
+  const proc = Bun.spawn(["bun", join(siteDir, "mcp.ts"), "--http", "--port", String(port)], {
+    stdout: "pipe",
+    stderr: "pipe",
+    env: { ...process.env, RKT_MCP_TOKEN: "test-token-not-a-secret" },
+  });
+  await Bun.sleep(500);
+  const res = await fetch(`http://127.0.0.1:${port}/`, {
+    method: "POST",
+    headers: {
+      authorization: "Bearer wrong-token",
+      host: `127.0.0.1:${port}`,
+      "content-type": "application/json",
+    },
+    body: "{ not json",
+  });
+  expect(res.status).toBe(401);
+  proc.kill();
+  await proc.exited;
+}, 180_000);
+
+test("malformed JSON body with valid token returns 400", async () => {
+  const { siteDir } = await setupMcpFixture();
+  const port = await getFreePort();
+  const token = "test-token-not-a-secret";
+  const proc = Bun.spawn(["bun", join(siteDir, "mcp.ts"), "--http", "--port", String(port)], {
+    stdout: "pipe",
+    stderr: "pipe",
+    env: { ...process.env, RKT_MCP_TOKEN: token },
+  });
+  await Bun.sleep(500);
+  const res = await fetch(`http://127.0.0.1:${port}/`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      host: `127.0.0.1:${port}`,
+      "content-type": "application/json",
+    },
+    body: "{ not json",
+  });
+  expect(res.status).toBe(400);
+  proc.kill();
+  await proc.exited;
+}, 180_000);
+
+test("stdio mode keeps stdout pure JSON-RPC through a tool call", async () => {
+  const { siteDir } = await setupMcpFixture();
+  const stdoutChunks: Buffer[] = [];
+  const proc = Bun.spawn(["bun", join(siteDir, "mcp.ts")], {
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  void (async () => {
+    const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      stdoutChunks.push(Buffer.from(value));
+    }
+  })();
+
+  const write = (msg: unknown) => {
+    proc.stdin.write(`${JSON.stringify(msg)}\n`);
+  };
+
+  write(INIT_BODY);
+  await readJsonRpcResponse(stdoutChunks, 1);
+  write({ jsonrpc: "2.0", method: "notifications/initialized" });
+  write({
+    jsonrpc: "2.0",
+    id: 2,
+    method: "tools/call",
+    params: { name: "events", arguments: {} },
+  });
+  await readJsonRpcResponse(stdoutChunks, 2);
+
+  assertStdoutIsJsonRpcOnly(Buffer.concat(stdoutChunks).toString("utf8"));
+  proc.kill();
+  await proc.exited;
+}, 180_000);
+
 test("stdio MCP import graph does not use console.log except session.ts runLifecycle", () => {
   const src = emitMcp(READ_MANIFEST as never);
   expect(src).not.toMatch(/runLifecycle/);

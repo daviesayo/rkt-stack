@@ -422,6 +422,50 @@ test("a rejected renewal does not wedge the per-site flight", async () => {
   expect(refreshCalls).toBe(2);
 });
 
+test("concurrent callers inherit a rejecting renewal flight", async () => {
+  const seen: string[] = [];
+  const sched = auth401Scheduler(seen);
+  let refreshCalls = 0;
+  let releaseRefresh!: () => void;
+  const refreshGate = new Promise<void>((resolve) => {
+    releaseRefresh = resolve;
+  });
+  let leaderEnteredRefresh!: () => void;
+  const leaderInRefresh = new Promise<void>((resolve) => {
+    leaderEnteredRefresh = resolve;
+  });
+  const sharedDeps = {
+    refreshViaOidc: async () => {
+      refreshCalls++;
+      if (refreshCalls === 1) {
+        leaderEnteredRefresh();
+        await refreshGate;
+        throw new Error("simulated refresh failure");
+      }
+      return { accessToken: "new", refreshToken: "r2", expiresIn: null };
+    },
+    writeSecret: async () => {},
+    reauthViaProfile: async () => null,
+  };
+  const initial = { authorization: "Bearer old", [REFRESH_TOKEN_KEY]: "r1" };
+  const callerA = createCaller(baseManifest(), sched, { ...initial }, sharedDeps);
+  const callerB = createCaller(baseManifest(), sched, { ...initial }, sharedDeps);
+  const pA = callerA.call("get.data", {}).catch((e) => e);
+  const pB = callerB.call("get.data", {}).catch((e) => e);
+  await leaderInRefresh;
+  await Promise.resolve();
+  releaseRefresh();
+  const [errA, errB] = await Promise.all([pA, pB]);
+  expect(errA).toBeInstanceOf(Error);
+  expect(errB).toBeInstanceOf(Error);
+  expect((errA as Error).message).toContain("simulated refresh failure");
+  expect((errB as Error).message).toContain("simulated refresh failure");
+  expect(refreshCalls).toBe(1);
+  const res = await callerA.call("get.data", {});
+  expect(res.status).toBe(200);
+  expect(refreshCalls).toBe(2);
+});
+
 test("the one-shot CLI path still performs a single renewal on 401", async () => {
   const seen: string[] = [];
   const sched = fakeScheduler(

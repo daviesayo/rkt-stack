@@ -331,6 +331,115 @@ test("events tool inputSchema exposes q, _limit, and _offset over the protocol",
   for (const name of RESERVED_ARGS) expect(Object.keys(props)).toContain(name);
 });
 
+test("undeclared MCP arguments never reach overrideParams", async () => {
+  let seen: Record<string, string> = {};
+  const caller: RunnerCaller = {
+    call: async (_id, params) => {
+      seen = params;
+      return { status: 200, body: JSON.stringify({ data: { items: [] } }) };
+    },
+    fetchJson: async () => ({}),
+    secret: null,
+  };
+  const dir = await fixtureClient({
+    commands: [
+      {
+        name: "events",
+        summary: "",
+        call: { endpoint: "get.api.events", params: { q: "@arg:q" } },
+        output: { kind: "table", rows: "data.items", columns: ["id"] },
+        redact: [],
+      },
+    ],
+  });
+  const { server } = await buildServer(dir, { caller });
+  const client = new Client({ name: "t", version: "1.0" });
+  const [ct, st] = InMemoryTransport.createLinkedPair();
+  await Promise.all([client.connect(ct), server.server.connect(st)]);
+  await client.callTool({ name: "events", arguments: { q: "ok", undeclaredKey: "sneaky" } });
+  await client.close();
+  expect(seen).toEqual({ q: "ok" });
+  expect(seen).not.toHaveProperty("undeclaredKey");
+});
+
+test("commands: [] produces a zero-tool server without throwing", async () => {
+  const dir = await fixtureClient({ commands: [] });
+  const { skippedWrites } = await buildServer(dir, STUBS);
+  expect(skippedWrites).toBe(0);
+  await expect(buildServer(dir, STUBS)).resolves.toBeDefined();
+});
+
+test("a manifest with zero read endpoints skips every command as write", async () => {
+  const dir = await fixtureClient({
+    withWriteEndpoint: true,
+    commands: [
+      {
+        name: "create",
+        summary: "",
+        write: true,
+        call: { endpoint: "post.api.events", params: {} },
+        output: { kind: "json" },
+        redact: [],
+      },
+    ],
+  });
+  const { skippedWrites } = await buildServer(dir, STUBS);
+  expect(skippedWrites).toBe(1);
+  const { server } = await buildServer(dir, STUBS);
+  const client = new Client({ name: "t", version: "1.0" });
+  const [ct, st] = InMemoryTransport.createLinkedPair();
+  await Promise.all([client.connect(ct), server.server.connect(st)]);
+  expect(client.getInstructions() ?? "").toMatch(/1 write/i);
+  await client.close();
+});
+
+test("a tool name over 64 characters is rejected", async () => {
+  const dir = await fixtureClient({
+    commands: [
+      {
+        name: "a".repeat(65),
+        summary: "",
+        call: { endpoint: "get.api.events", params: {} },
+        output: { kind: "json" },
+        redact: [],
+      },
+    ],
+  });
+  await expect(buildServer(dir, STUBS)).rejects.toThrow(/not a valid MCP tool name/i);
+});
+
+test("a tool name containing a dot is rejected", async () => {
+  const dir = await fixtureClient({
+    commands: [
+      {
+        name: "events.list",
+        summary: "",
+        call: { endpoint: "get.api.events", params: {} },
+        output: { kind: "json" },
+        redact: [],
+      },
+    ],
+  });
+  await expect(buildServer(dir, STUBS)).rejects.toThrow(/not a valid MCP tool name/i);
+});
+
+test("summary: \"\" publishes a tool with an empty description", async () => {
+  const dir = await fixtureClient({
+    commands: [
+      {
+        name: "events",
+        summary: "",
+        call: { endpoint: "get.api.events", params: {} },
+        output: { kind: "json" },
+        redact: [],
+      },
+    ],
+  });
+  const events = (await toolsOf(dir)).find((t) => t.name === "events");
+  expect(events).toBeDefined();
+  expect(events!.description).toBe("");
+});
+
 test("callTool round-trips injected runTool output over the protocol", async () => {
   const sentinel = "mcp-handler-round-trip";
   const dir = await fixtureClient();
@@ -1017,7 +1126,7 @@ test("single-flight collapses concurrent same-site renewals to one credential wr
 
 test("a rejected credential write does not wedge the serializer chain", async () => {
   let writeCount = 0;
-  const outcomes: Array<"ok" | "err"> = [];
+  const outcomes: Array<{ index: number; outcome: "ok" | "err" }> = [];
   const stale: Record<string, string> = {
     authorization: "Bearer old",
     [REFRESH_TOKEN_KEY]: "r1",
@@ -1044,14 +1153,17 @@ test("a rejected credential write does not wedge the serializer chain", async ()
     await client
       .callTool({ name: "events", arguments: {} })
       .then(
-        (res) => outcomes.push(res.isError ? "err" : "ok"),
-        () => outcomes.push("err"),
+        (res) => outcomes.push({ index: i, outcome: res.isError ? "err" : "ok" }),
+        () => outcomes.push({ index: i, outcome: "err" }),
       );
   }
   await client.close();
   expect(writeCount).toBe(3);
-  expect(outcomes.filter((o) => o === "ok").length).toBe(2);
-  expect(outcomes.filter((o) => o === "err").length).toBe(1);
+  expect(outcomes.filter((o) => o.outcome === "ok").length).toBe(2);
+  expect(outcomes.filter((o) => o.outcome === "err").length).toBe(1);
+  expect(outcomes.find((o) => o.outcome === "err")?.index).toBe(1);
+  expect(outcomes.filter((o) => o.index === 0)[0]?.outcome).toBe("ok");
+  expect(outcomes.filter((o) => o.index === 2)[0]?.outcome).toBe("ok");
 });
 
 test("two tool calls on one server share one write serializer", async () => {

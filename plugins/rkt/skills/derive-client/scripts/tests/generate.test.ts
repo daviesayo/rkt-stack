@@ -472,7 +472,12 @@ test("deleting mcp.ts and running regenerate.sh does not recreate it", async () 
   await generateClient(await manifestWithCommands(out, "a"), out, { mcp: true });
   await rm(join(out, "a", "mcp.ts"));
   const install = Bun.spawn(["bun", "install"], { cwd: out, stdout: "pipe", stderr: "pipe" });
-  if ((await install.exited) !== 0) return; // offline: skip, same pattern as generated-runs.test.ts
+  if ((await install.exited) !== 0) {
+    console.error(
+      "SKIP: deleting mcp.ts and running regenerate.sh — test skipped because bun install failed (offline?)",
+    );
+    return;
+  }
   const regen = Bun.spawn(["bash", join(out, "a", "regenerate.sh")], {
     cwd: join(out, "a"),
     env: { ...process.env, RKT_PLUGIN_ROOT: PLUGIN_ROOT },
@@ -510,7 +515,12 @@ test("a generated MCP client typechecks (closure probe with the SDK present)", a
   const out = await mkdtemp(join(tmpdir(), "rkt-mcp-"));
   await generateClient(await manifestWithCommands(out, "a"), out, { mcp: true });
   const install = Bun.spawn(["bun", "install"], { cwd: out, stdout: "pipe", stderr: "pipe" });
-  if ((await install.exited) !== 0) return; // offline: skip, same pattern as generated-runs.test.ts
+  if ((await install.exited) !== 0) {
+    console.error(
+      "SKIP: generated MCP client typechecks — test skipped because bun install failed (offline?)",
+    );
+    return;
+  }
   const tsc = Bun.spawn(["bunx", "tsc", "--noEmit"], { cwd: out, stdout: "pipe", stderr: "pipe" });
   expect(await tsc.exited).toBe(0);
   // Explicit timeout: this spawns `bun install` AND `bunx tsc` in a fresh temp

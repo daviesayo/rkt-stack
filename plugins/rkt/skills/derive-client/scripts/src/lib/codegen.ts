@@ -808,7 +808,12 @@ async function runHttp(port: number): Promise<void> {
         return new Response("Bad Request", { status: 400 });
       }
 
-      const body = await req.json();
+      let body: unknown;
+      try {
+        body = await req.json();
+      } catch {
+        return new Response("Invalid request body", { status: 400 });
+      }
       if (!isInitializeRequest(body)) {
         return new Response("Bad Request", { status: 400 });
       }
