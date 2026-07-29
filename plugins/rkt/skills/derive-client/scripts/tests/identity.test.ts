@@ -3,16 +3,20 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolveIdentity, whoamiLine } from "../src/lib/identity";
+import { installIdentityWriteMock, restoreIdentityWriteMock } from "./identity-write-mock";
 
 let root: string;
 const ORIG_ROOT = process.env.RKT_CLIENTS_ROOT;
 const ORIG_NODE_ENV = process.env.NODE_ENV;
+
 beforeEach(async () => {
+  restoreIdentityWriteMock();
   root = await mkdtemp(join(tmpdir(), "rkt-id-"));
   process.env.RKT_CLIENTS_ROOT = root;
   process.env.NODE_ENV = "test";
 });
 afterEach(async () => {
+  restoreIdentityWriteMock();
   if (ORIG_ROOT === undefined) delete process.env.RKT_CLIENTS_ROOT;
   else process.env.RKT_CLIENTS_ROOT = ORIG_ROOT;
   if (ORIG_NODE_ENV === undefined) delete process.env.NODE_ENV;
@@ -105,4 +109,67 @@ test("resolveIdentity passes spec.params to the fetch and reads nested idField",
   expect(seenParams).toEqual({ username: "usr-me" });
   expect(r.id).toBe("usr-me");
   expect(r.display["user.name"]).toBe("Ada");
+});
+
+test("concurrent resolveIdentity calls never run two cache writes at once", async () => {
+  let inFlight = 0;
+  let maxInFlight = 0;
+  installIdentityWriteMock({
+    delayMs: 50,
+    onWriteEnter: () => {
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+    },
+    onWriteExit: () => {
+      inFlight--;
+    },
+  });
+  const fetchEndpoint = async () => ({ id: 924, first_name: "Ada", email: "ada@x.test" });
+  const p1 = resolveIdentity("s", spec, fetchEndpoint);
+  const p2 = resolveIdentity("s", spec, fetchEndpoint);
+  await Promise.allSettled([p1, p2]);
+  expect(maxInFlight).toBe(1);
+});
+
+test("identity cache write critical sections do not overlap under contention", async () => {
+  const events: string[] = [];
+  let writeIndex = 0;
+  installIdentityWriteMock({
+    delayMs: 50,
+    onWriteEnter: () => {
+      const label = String.fromCharCode(65 + writeIndex++);
+      events.push(`enter ${label}`);
+      return label;
+    },
+    onWriteExit: (label) => {
+      events.push(`exit ${label}`);
+    },
+  });
+  const fetchEndpoint = async () => ({ id: 924, first_name: "Ada", email: "ada@x.test" });
+  const p1 = resolveIdentity("s", spec, fetchEndpoint);
+  const p2 = resolveIdentity("s", spec, fetchEndpoint);
+  await Promise.allSettled([p1, p2]);
+  expect(events).toEqual(["enter A", "exit A", "enter B", "exit B"]);
+});
+
+test("a rejected identity cache write does not wedge the serializer chain", async () => {
+  const tracker = installIdentityWriteMock({ failOnCall: 2 });
+  const fetchEndpoint = async () => ({ id: 924, first_name: "Ada", email: "ada@x.test" });
+  const outcomes: Array<"ok" | "err"> = [];
+  const p1 = resolveIdentity("s", spec, fetchEndpoint).then(
+    () => outcomes.push("ok"),
+    () => outcomes.push("err"),
+  );
+  const p2 = resolveIdentity("s", spec, fetchEndpoint).then(
+    () => outcomes.push("ok"),
+    () => outcomes.push("err"),
+  );
+  const p3 = resolveIdentity("s", spec, fetchEndpoint).then(
+    () => outcomes.push("ok"),
+    () => outcomes.push("err"),
+  );
+  await Promise.all([p1, p2, p3]);
+  expect(tracker.writeCallCount).toBe(3);
+  expect(outcomes.filter((o) => o === "ok").length).toBe(2);
+  expect(outcomes.filter((o) => o === "err").length).toBe(1);
 });

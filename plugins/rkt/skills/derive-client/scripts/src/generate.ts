@@ -3,19 +3,49 @@
  *
  * Usage: bun src/generate.ts --manifest <path/to/client.json> --out <rkt-clients-root>
  */
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { chmod, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { emitCli, emitTypes } from "./lib/codegen";
+import { emitCli, emitMcp, emitTypes } from "./lib/codegen";
 import { assertResolvable, validateCommandsFile, type CommandsFile } from "./lib/commands-schema";
 import { detectDrift } from "./lib/drift";
 import { validateManifest } from "./lib/manifest";
-
-const READ_METHODS = new Set(["GET", "HEAD"]);
+import { READ_METHODS } from "./lib/manifest-schema";
 
 export interface GeneratedFiles {
   siteDir: string;
   written: string[];
+}
+
+export interface GenerateOptions {
+  mcp?: boolean;
+}
+
+function packageJson(mcpInUse: boolean): string {
+  const dependencies: Record<string, string> = {
+    playwright: "1.56.0",
+  };
+  if (mcpInUse) {
+    dependencies["@modelcontextprotocol/sdk"] = "1.29.0";
+    dependencies.zod = "3.25.76";
+  }
+  return (
+    JSON.stringify(
+      {
+        name: "rkt-clients",
+        private: true,
+        type: "module",
+        dependencies,
+        devDependencies: {
+          "@types/bun": "latest",
+          typescript: "5.9.2",
+        },
+      },
+      null,
+      2,
+    ) + "\n"
+  );
 }
 
 /**
@@ -73,19 +103,7 @@ node_modules/
 
 // devDependencies are required: tsconfig sets types: ["bun"], so a repo
 // without @types/bun installed fails `tsc --noEmit` with TS2688.
-const PACKAGE_JSON = `{
-  "name": "rkt-clients",
-  "private": true,
-  "type": "module",
-  "dependencies": {
-    "playwright": "1.56.0"
-  },
-  "devDependencies": {
-    "@types/bun": "latest",
-    "typescript": "5.9.2"
-  }
-}
-`;
+// MCP dependencies are added when any client under the root uses MCP.
 
 const TSCONFIG = `{
   "compilerOptions": {
@@ -142,6 +160,7 @@ else
   SCRIPTS="$(ls -d "$HOME"/.claude/plugins/cache/*/rkt/*.*.*/skills/derive-client/scripts 2>/dev/null | sort -V | tail -1)"
 fi
 [[ -n "\${SCRIPTS:-}" && -d "$SCRIPTS" ]] || { echo "cannot find the derive-client plugin; set RKT_PLUGIN_ROOT to the installed rkt plugin root" >&2; exit 1; }
+( cd "$OUT" && bun install )
 exec bun "$SCRIPTS/src/generate.ts" --manifest "$DIR/client.json" --out "$OUT"
 `;
 
@@ -161,29 +180,68 @@ function reportDrift(site: string, drift: ReturnType<typeof detectDrift>): void 
   for (const id of drift.newSurface) console.error(`  new      ${id} (no command references it yet)`);
 }
 
+async function mcpInUseAtRoot(
+  outRoot: string,
+  site: string,
+  emitMcpForSite: boolean,
+): Promise<boolean> {
+  if (emitMcpForSite) return true;
+  let entries;
+  try {
+    entries = await readdir(outRoot, { withFileTypes: true });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw err;
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.name === site || entry.name === "lib") continue;
+    if (existsSync(join(outRoot, entry.name, "mcp.ts"))) return true;
+  }
+  return false;
+}
+
 export async function generateClient(
   manifestPath: string,
   outRoot: string,
+  opts: GenerateOptions = {},
 ): Promise<GeneratedFiles> {
   const manifest = validateManifest(JSON.parse(await readFile(manifestPath, "utf8")));
   const written: string[] = [];
 
+  await mkdir(outRoot, { recursive: true });
+
+  const siteDir = join(outRoot, manifest.site);
+
+  if (opts.mcp && !existsSync(join(siteDir, "commands.json"))) {
+    throw new Error(`--mcp requires commands.json for "${manifest.site}"`);
+  }
+
+  const emitMcpForSite = opts.mcp === true || existsSync(join(siteDir, "mcp.ts"));
+  const mcpInUse = await mcpInUseAtRoot(outRoot, manifest.site, emitMcpForSite);
+  const runtimeFiles = mcpInUse
+    ? [...RUNTIME_FILES, "mcp-server.ts", "mcp-params.ts"]
+    : RUNTIME_FILES;
+
   // Repo scaffold. Written every run so the files stay correct; contents are
   // fixed, so this is idempotent.
   await write(join(outRoot, ".gitignore"), GITIGNORE, written);
-  await write(join(outRoot, "package.json"), PACKAGE_JSON, written);
+  await write(join(outRoot, "package.json"), packageJson(mcpInUse), written);
   await write(join(outRoot, "tsconfig.json"), TSCONFIG, written);
   await write(join(outRoot, "README.md"), README, written);
 
   // Shared runtime, copied from this skill's tested lib.
   const libSrc = join(dirname(fileURLToPath(import.meta.url)), "lib");
-  for (const file of RUNTIME_FILES) {
+  for (const file of runtimeFiles) {
     const contents = await readFile(join(libSrc, file), "utf8");
     await write(join(outRoot, "lib", file), `${COPIED_HEADER}\n${contents}`, written);
   }
 
+  if (!mcpInUse) {
+    await rm(join(outRoot, "lib", "mcp-server.ts"), { force: true });
+    await rm(join(outRoot, "lib", "mcp-params.ts"), { force: true });
+  }
+
   // Site directory.
-  const siteDir = join(outRoot, manifest.site);
   await write(join(siteDir, "client.json"), `${JSON.stringify(manifest, null, 2)}\n`, written);
   await write(join(siteDir, "types.ts"), emitTypes(manifest), written);
 
@@ -229,6 +287,11 @@ export async function generateClient(
 
   await write(join(siteDir, "cli.ts"), emitCli(manifest, commands), written);
 
+  if (emitMcpForSite) {
+    await write(join(siteDir, "mcp.ts"), emitMcp(manifest), written);
+    await chmod(join(siteDir, "mcp.ts"), 0o755);
+  }
+
   await write(join(siteDir, "install.sh"), INSTALL_SH, written);
   await chmod(join(siteDir, "install.sh"), 0o755);
   await write(join(siteDir, "regenerate.sh"), REGENERATE_SH, written);
@@ -251,7 +314,8 @@ async function main() {
     process.exit(1);
   }
 
-  const { siteDir, written } = await generateClient(manifestPath, out);
+  const mcp = process.argv.includes("--mcp");
+  const { siteDir, written } = await generateClient(manifestPath, out, { mcp });
   console.error(`Generated ${written.length} file(s).`);
   console.error(`Client: ${siteDir}`);
   console.error(`Run it: bun ${join(siteDir, "cli.ts")}`);

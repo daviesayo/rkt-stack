@@ -1,5 +1,11 @@
-import { expect, test } from "bun:test";
-import { commandNames, emitCli, emitType, emitTypes, typeName } from "../src/lib/codegen";
+import { afterEach, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { cp, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { createServer } from "node:net";
+import { tmpdir } from "node:os";
+import { basename, dirname, join, resolve } from "node:path";
+import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+import { commandNames, emitCli, emitMcp, emitType, emitTypes, typeName } from "../src/lib/codegen";
 import type { ClientManifest, ManifestEndpoint } from "../src/lib/manifest";
 import type { CommandsFile } from "../src/lib/commands-schema";
 
@@ -625,4 +631,447 @@ test("emitTypes and the fallback CLI name a collision-prone GET endpoint identic
   expect(cli).toContain('"command": "post-items-2"');
   // Not the un-collided name a read-only-list naming pass would have given it.
   expect(cli).not.toContain('"command": "post-items"');
+});
+
+const READ_MANIFEST: ClientManifest = {
+  schemaVersion: 3,
+  site: "x",
+  baseUrl: "https://x.test",
+  recordedAt: "2026-07-24T00:00:00.000Z",
+  harSha256: "d",
+  userAgent: "UA",
+  clientHints: {},
+  auth: null,
+  authBundle: null,
+  refresh: null,
+  endpoints: [
+    {
+      id: "get.api.events",
+      method: "GET",
+      pathTemplate: "/api/events",
+      params: [],
+      responseShape: { type: "unknown" },
+      source: "xhr",
+      fragile: false,
+      selectors: null,
+      writeSemantics: null,
+    },
+  ],
+};
+
+async function getFreePort(): Promise<number> {
+  return new Promise((resolvePort, reject) => {
+    const probe = createServer();
+    probe.listen(0, "127.0.0.1", () => {
+      const addr = probe.address();
+      if (typeof addr !== "object" || addr === null) {
+        probe.close();
+        reject(new Error("failed to allocate free port"));
+        return;
+      }
+      const port = addr.port;
+      probe.close((err) => (err ? reject(err) : resolvePort(port)));
+    });
+    probe.on("error", reject);
+  });
+}
+
+const MCP_FIXTURES: string[] = [];
+
+async function setupMcpFixture(): Promise<{ siteDir: string; root: string }> {
+  const root = await mkdtemp(join(tmpdir(), "rkt-mcp-emit-"));
+  const siteDir = join(root, "x");
+  await mkdir(siteDir, { recursive: true });
+  await mkdir(join(root, "lib"), { recursive: true });
+
+  const libSrc = join(import.meta.dir, "../src/lib");
+  for (const name of ["mcp-server.ts", "mcp-params.ts", "commands-schema.ts", "manifest-schema.ts", "command-runner.ts", "overflow.ts", "runtime.ts", "refresh.ts", "secrets.ts", "scheduler.ts", "transport.ts", "render.ts", "tokens.ts", "identity.ts", "join.ts", "paths.ts", "reauth.ts", "session.ts"]) {
+    await cp(join(libSrc, name), join(root, "lib", name));
+  }
+
+  await writeFile(join(siteDir, "client.json"), JSON.stringify(READ_MANIFEST));
+  await writeFile(
+    join(siteDir, "commands.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      site: "x",
+      commands: [
+        {
+          name: "events",
+          summary: "list events",
+          call: { endpoint: "get.api.events", params: {} },
+          output: { kind: "json" },
+          redact: [],
+        },
+      ],
+    }),
+  );
+  await writeFile(join(siteDir, "mcp.ts"), emitMcp(READ_MANIFEST));
+  const scriptsRoot = join(import.meta.dir, "..");
+  await symlink(join(scriptsRoot, "node_modules"), join(root, "node_modules"));
+  MCP_FIXTURES.push(root);
+  return { siteDir, root };
+}
+
+afterEach(async () => {
+  while (MCP_FIXTURES.length) {
+    await rm(MCP_FIXTURES.pop()!, { recursive: true, force: true });
+  }
+});
+
+const INIT_BODY = {
+  jsonrpc: "2.0",
+  id: 1,
+  method: "initialize",
+  params: {
+    protocolVersion: "2024-11-05",
+    capabilities: {},
+    clientInfo: { name: "test", version: "1.0" },
+  },
+};
+
+function resolveLibGraph(entryPaths: string[], libRoot: string, seen = new Set<string>()): string[] {
+  const out: string[] = [];
+  for (const entry of entryPaths) {
+    const abs = resolve(entry);
+    if (seen.has(abs)) continue;
+    seen.add(abs);
+    out.push(abs);
+    const src = readFileSync(abs, "utf8");
+    for (const m of src.matchAll(/from "\.\.?\/lib\/([^"]+)"/g)) {
+      out.push(...resolveLibGraph([join(libRoot, `${m[1]!.replace(/\.js$/, "")}.ts`)], libRoot, seen));
+    }
+    for (const m of src.matchAll(/from "\.\/([^"]+)"/g)) {
+      const rel = m[1]!.replace(/\.js$/, "");
+      if (!rel.startsWith(".")) {
+        out.push(...resolveLibGraph([join(dirname(abs), `${rel}.ts`)], libRoot, seen));
+      }
+    }
+  }
+  return out;
+}
+
+test("emitMcp emits stdio by default and a token-gated loopback http mode", () => {
+  const src = emitMcp(READ_MANIFEST as never);
+  expect(src).toContain("StdioServerTransport");
+  expect(src).toContain("RKT_MCP_TOKEN");
+  expect(src).toContain("127.0.0.1");
+  expect(src).toContain("enableDnsRebindingProtection");
+  expect(src).toContain("allowedHosts");
+  expect(src).toContain("allowedOrigins");
+  expect(src).toContain("timingSafeEqual");
+});
+
+test("the emitted entrypoint never writes to stdout (it is the JSON-RPC channel)", () => {
+  expect(emitMcp(READ_MANIFEST as never)).not.toMatch(/console\.log/);
+});
+
+test("the emitted entrypoint never echoes the token", () => {
+  const src = emitMcp(READ_MANIFEST as never);
+  for (const line of src.split("\n")) {
+    if (/console\./.test(line)) expect(line).not.toMatch(/RKT_MCP_TOKEN|\btoken\b/);
+  }
+});
+
+test("HTTP mode refuses to start when RKT_MCP_TOKEN is unset", async () => {
+  const { siteDir } = await setupMcpFixture();
+  const port = await getFreePort();
+  const secret = "super-secret-token-value-12345";
+  const env: Record<string, string | undefined> = { ...process.env, HOST_SIDE_DECOY: secret };
+  delete env.RKT_MCP_TOKEN;
+  const proc = Bun.spawn(["bun", join(siteDir, "mcp.ts"), "--http", "--port", String(port)], {
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const exitCode = await proc.exited;
+  const stderr = await new Response(proc.stderr).text();
+  expect(exitCode).not.toBe(0);
+  expect(stderr).toMatch(/authentication environment variable/i);
+  expect(stderr).not.toContain(secret);
+  expect(stderr).not.toMatch(/super-secret/);
+  expect(stderr).not.toMatch(/\d+\s*characters/);
+});
+
+test("HTTP mode starts when RKT_MCP_TOKEN is set", async () => {
+  const { siteDir } = await setupMcpFixture();
+  const port = await getFreePort();
+  const token = "test-mcp-token-set-case";
+  const proc = Bun.spawn(["bun", join(siteDir, "mcp.ts"), "--http", "--port", String(port)], {
+    stdout: "pipe",
+    stderr: "pipe",
+    env: { ...process.env, RKT_MCP_TOKEN: token },
+  });
+  await Bun.sleep(500);
+  expect(proc.exitCode).toBeNull();
+  const res = await fetch(`http://127.0.0.1:${port}/`, {
+    headers: {
+      authorization: `Bearer ${token}`,
+      host: `127.0.0.1:${port}`,
+    },
+  });
+  expect(res.status).not.toBe(401);
+  proc.kill();
+  await proc.exited;
+});
+
+test("emitted HTTP config lists both loopback host strings and matching origins", () => {
+  const src = emitMcp(READ_MANIFEST as never);
+  expect(src).toMatch(/127\.0\.0\.1:\$\{port\}|127\.0\.0\.1:\`\$\{port\}\`|127\.0\.0\.1:\$\{/);
+  expect(src).toMatch(/localhost:\$\{port\}|localhost:\`\$\{port\}\`/);
+  expect(src).toMatch(/allowedOrigins/);
+  expect(src).toContain("enableDnsRebindingProtection: true");
+});
+
+test("DNS rebinding protection rejects an unlisted Host and accepts a listed one", async () => {
+  const port = 9876;
+  const allowedHosts = [`127.0.0.1:${port}`, `localhost:${port}`];
+  const allowedOrigins = allowedHosts.map((h) => `http://${h}`);
+  const badTransport = new WebStandardStreamableHTTPServerTransport({
+    sessionIdGenerator: () => crypto.randomUUID(),
+    enableDnsRebindingProtection: true,
+    allowedHosts,
+    allowedOrigins,
+  });
+  const bad = await badTransport.handleRequest(
+    new Request(`http://127.0.0.1:${port}/mcp`, {
+      method: "POST",
+      headers: {
+        host: "evil.example:9999",
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify(INIT_BODY),
+    }),
+  );
+  expect(bad.status).toBe(403);
+  await badTransport.close();
+
+  const goodTransport = new WebStandardStreamableHTTPServerTransport({
+    sessionIdGenerator: () => crypto.randomUUID(),
+    enableDnsRebindingProtection: true,
+    allowedHosts,
+    allowedOrigins,
+  });
+  const good = await goodTransport.handleRequest(
+    new Request(`http://127.0.0.1:${port}/mcp`, {
+      method: "POST",
+      headers: {
+        host: `127.0.0.1:${port}`,
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify(INIT_BODY),
+    }),
+  );
+  expect(good.status).not.toBe(403);
+  await goodTransport.close();
+});
+
+function assertStdoutIsJsonRpcOnly(stdout: string): void {
+  const trimmed = stdout.trimEnd();
+  if (trimmed.length === 0) return;
+  let offset = 0;
+  while (offset < trimmed.length) {
+    const nl = trimmed.indexOf("\n", offset);
+    const line = nl === -1 ? trimmed.slice(offset) : trimmed.slice(offset, nl);
+    offset = nl === -1 ? trimmed.length : nl + 1;
+    if (line.length === 0) continue;
+    const parsed = JSON.parse(line);
+    expect(parsed).toHaveProperty("jsonrpc", "2.0");
+  }
+}
+
+async function readJsonRpcResponse(
+  chunks: Buffer[],
+  id: number,
+  timeoutMs = 10_000,
+): Promise<unknown> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const text = Buffer.concat(chunks).toString("utf8");
+    for (const line of text.split("\n")) {
+      if (!line.trim()) continue;
+      try {
+        const parsed = JSON.parse(line) as { id?: number };
+        if (parsed.id === id) return parsed;
+      } catch {
+        // partial line; wait for more bytes
+      }
+    }
+    await Bun.sleep(50);
+  }
+  throw new Error(`timed out waiting for JSON-RPC response id=${id}`);
+}
+
+test("emitted HTTP server rejects an unlisted Host (DNS rebinding)", async () => {
+  const { siteDir } = await setupMcpFixture();
+  const port = await getFreePort();
+  const token = "test-token-not-a-secret";
+  const proc = Bun.spawn(["bun", join(siteDir, "mcp.ts"), "--http", "--port", String(port)], {
+    stdout: "pipe",
+    stderr: "pipe",
+    env: { ...process.env, RKT_MCP_TOKEN: token },
+  });
+  await Bun.sleep(500);
+  const res = await fetch(`http://127.0.0.1:${port}/`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      host: "evil.example",
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+    },
+    body: JSON.stringify(INIT_BODY),
+  });
+  expect(res.status).toBe(403);
+  proc.kill();
+  await proc.exited;
+}, 180_000);
+
+test("malformed JSON body with invalid token fails on auth, not parse", async () => {
+  const { siteDir } = await setupMcpFixture();
+  const port = await getFreePort();
+  const proc = Bun.spawn(["bun", join(siteDir, "mcp.ts"), "--http", "--port", String(port)], {
+    stdout: "pipe",
+    stderr: "pipe",
+    env: { ...process.env, RKT_MCP_TOKEN: "test-token-not-a-secret" },
+  });
+  await Bun.sleep(500);
+  const res = await fetch(`http://127.0.0.1:${port}/`, {
+    method: "POST",
+    headers: {
+      authorization: "Bearer wrong-token",
+      host: `127.0.0.1:${port}`,
+      "content-type": "application/json",
+    },
+    body: "{ not json",
+  });
+  expect(res.status).toBe(401);
+  proc.kill();
+  await proc.exited;
+}, 180_000);
+
+test("malformed JSON body with valid token returns 400", async () => {
+  const { siteDir } = await setupMcpFixture();
+  const port = await getFreePort();
+  const token = "test-token-not-a-secret";
+  const proc = Bun.spawn(["bun", join(siteDir, "mcp.ts"), "--http", "--port", String(port)], {
+    stdout: "pipe",
+    stderr: "pipe",
+    env: { ...process.env, RKT_MCP_TOKEN: token },
+  });
+  await Bun.sleep(500);
+  const res = await fetch(`http://127.0.0.1:${port}/`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      host: `127.0.0.1:${port}`,
+      "content-type": "application/json",
+    },
+    body: "{ not json",
+  });
+  expect(res.status).toBe(400);
+  proc.kill();
+  await proc.exited;
+}, 180_000);
+
+test("stdio mode keeps stdout pure JSON-RPC through a tool call", async () => {
+  const { siteDir } = await setupMcpFixture();
+  const stdoutChunks: Buffer[] = [];
+  const proc = Bun.spawn(["bun", join(siteDir, "mcp.ts")], {
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  void (async () => {
+    const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      stdoutChunks.push(Buffer.from(value));
+    }
+  })();
+
+  const write = (msg: unknown) => {
+    proc.stdin.write(`${JSON.stringify(msg)}\n`);
+  };
+
+  write(INIT_BODY);
+  await readJsonRpcResponse(stdoutChunks, 1);
+  write({ jsonrpc: "2.0", method: "notifications/initialized" });
+  write({
+    jsonrpc: "2.0",
+    id: 2,
+    method: "tools/call",
+    params: { name: "events", arguments: {} },
+  });
+  await readJsonRpcResponse(stdoutChunks, 2);
+
+  assertStdoutIsJsonRpcOnly(Buffer.concat(stdoutChunks).toString("utf8"));
+  proc.kill();
+  await proc.exited;
+}, 180_000);
+
+test("stdio MCP import graph does not use console.log except session.ts runLifecycle", () => {
+  const src = emitMcp(READ_MANIFEST as never);
+  expect(src).not.toMatch(/runLifecycle/);
+  const libRoot = join(import.meta.dir, "../src/lib");
+  const mcpServer = join(libRoot, "mcp-server.ts");
+  const graph = resolveLibGraph([mcpServer], libRoot);
+  const offenders = graph.filter((file) => /console\.log/.test(readFileSync(file, "utf8")));
+  expect(offenders.map((f) => basename(f))).toEqual(["session.ts"]);
+});
+
+test("closing an HTTP session reaps the server and transport", async () => {
+  const { siteDir } = await setupMcpFixture();
+  const port = await getFreePort();
+  const token = "reap-session-token";
+  const proc = Bun.spawn(["bun", join(siteDir, "mcp.ts"), "--http", "--port", String(port)], {
+    stdout: "pipe",
+    stderr: "pipe",
+    env: { ...process.env, RKT_MCP_TOKEN: token },
+  });
+  await Bun.sleep(500);
+  const init = await fetch(`http://127.0.0.1:${port}/`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      host: `127.0.0.1:${port}`,
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+    },
+    body: JSON.stringify(INIT_BODY),
+  });
+  expect(init.status).toBe(200);
+  const sessionId = init.headers.get("mcp-session-id");
+  expect(sessionId).toBeTruthy();
+  await init.body?.cancel();
+
+  const deleted = await fetch(`http://127.0.0.1:${port}/`, {
+    method: "DELETE",
+    headers: {
+      authorization: `Bearer ${token}`,
+      host: `127.0.0.1:${port}`,
+      "mcp-session-id": sessionId!,
+      "mcp-protocol-version": "2024-11-05",
+    },
+  });
+  expect(deleted.status).toBe(200);
+
+  const after = await fetch(`http://127.0.0.1:${port}/`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      host: `127.0.0.1:${port}`,
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+      "mcp-session-id": sessionId!,
+      "mcp-protocol-version": "2024-11-05",
+    },
+    body: JSON.stringify({ jsonrpc: "2.0", method: "ping", id: 2 }),
+  });
+  expect(after.status).toBeGreaterThanOrEqual(400);
+  proc.kill();
+  await proc.exited;
 });

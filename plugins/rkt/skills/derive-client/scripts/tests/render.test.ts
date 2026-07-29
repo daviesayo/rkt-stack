@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { getPath, renderJson, renderTable, sortRows } from "../src/lib/render";
+import { getPath, redactCloneAt, renderJson, renderTable, sortRows } from "../src/lib/render";
 
 const rows = [
   { date: "2026-07-21", client: { name: "Acme" }, address: "1 High St" },
@@ -63,4 +63,52 @@ test("sortRows reads a dotted path and does not mutate the input", () => {
   const out = sortRows(input, "c.name");
   expect(out.map((r) => (r.c as { name: string }).name)).toEqual(["a", "z"]);
   expect((input[0].c as { name: string }).name).toBe("z"); // input untouched
+});
+
+test("redactCloneAt redacts inside an envelope and preserves shape", () => {
+  const data = { data: { items: [{ name: "a", email: "x@y.z" }] }, meta: { total: 1 } };
+  const out = redactCloneAt(data, "data.items", ["email"]) as typeof data;
+  expect(out.data.items[0].email).toBe("[REDACTED]");
+  expect(out.data.items[0].name).toBe("a");
+  expect(out.meta.total).toBe(1);
+});
+
+test("redactCloneAt ALSO keeps root-level redaction working (additive, no regression)", () => {
+  const data = { data: { items: [{ email: "x@y.z" }] }, meta: { token: "sekret" } };
+  const out = redactCloneAt(data, "data.items", ["meta.token", "email"]) as typeof data;
+  expect(out.meta.token).toBe("[REDACTED]");   // resolves at root: must still redact
+  expect(out.data.items[0].email).toBe("[REDACTED]"); // resolves in rows: now redacts
+});
+
+test("redactCloneAt with no rowsPath behaves exactly like redactClone", () => {
+  const out = redactCloneAt({ email: "x@y.z" }, undefined, ["email"]) as { email: string };
+  expect(out.email).toBe("[REDACTED]");
+});
+
+test("redactCloneAt leaves data alone when the rows path does not resolve", () => {
+  expect(redactCloneAt({ other: 1 }, "data.items", ["email"])).toEqual({ other: 1 });
+});
+
+test("redactCloneAt returns null unchanged with a dotted rowsPath", () => {
+  expect(redactCloneAt(null, "data.items", ["email"])).toBe(null);
+});
+
+test("redactCloneAt returns null unchanged with a single-segment rowsPath", () => {
+  expect(redactCloneAt(null, "items", ["email"])).toBe(null);
+});
+
+test("redactCloneAt returns a number unchanged with a dotted rowsPath", () => {
+  expect(redactCloneAt(42, "data.items", ["email"])).toBe(42);
+});
+
+test("redactCloneAt returns a number unchanged with a single-segment rowsPath", () => {
+  expect(redactCloneAt(42, "items", ["email"])).toBe(42);
+});
+
+test("redactCloneAt returns a string unchanged with a dotted rowsPath", () => {
+  expect(redactCloneAt("ok", "data.items", ["email"])).toBe("ok");
+});
+
+test("redactCloneAt returns a string unchanged with a single-segment rowsPath", () => {
+  expect(redactCloneAt("ok", "items", ["email"])).toBe("ok");
 });

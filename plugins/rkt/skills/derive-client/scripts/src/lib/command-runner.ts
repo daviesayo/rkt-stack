@@ -1,5 +1,5 @@
 import { shapeTypeAt, type CommandSpec, type IdentitySpec } from "./commands-schema";
-import type { ClientManifest, JsonShape } from "./manifest-schema";
+import { READ_METHODS, type ClientManifest, type JsonShape } from "./manifest-schema";
 import { applyJoins, type Lookup } from "./join";
 import { resolveIdentity, whoamiLine } from "./identity";
 import { capText, CliError, MAX_BYTES, MAX_ROWS, writeSpill } from "./overflow";
@@ -38,6 +38,13 @@ export interface RunResult {
    * as text.
    */
   renderCapped?: (n: number) => string;
+  /**
+   * Shaped rows as DATA (extracted, joined, sorted, limited, secret-masked,
+   * redacted). Present only on the row-shaped branch unless `flags.raw` is
+   * set, in which case rows are secret-masked but not field-redacted. Consumers
+   * needing structure rather than text read this instead of parsing `rendered`.
+   */
+  rows?: Record<string, unknown>[];
 }
 
 export interface RunOpts {
@@ -53,6 +60,12 @@ export interface RunOpts {
   commit?: boolean;
   /** Parsed --<name> flag values, for @arg: holes. */
   args?: Record<string, string>;
+  /**
+   * Write the full error body to a spill file and name its path in the hint.
+   * Correct for a CLI; wrong for an MCP tool, whose caller cannot read the host
+   * disk and must not receive host paths. Default true.
+   */
+  spill?: boolean;
 }
 
 /** One memoized identity resolution per run, layered over identity's on-disk cache. */
@@ -182,7 +195,7 @@ export async function runCommand(cmd: CommandSpec, opts: RunOpts): Promise<RunRe
 
   const ep = manifest.endpoints.find((e) => e.id === cmd.call.endpoint);
   if (!ep) throw new Error(`${cmd.name}: endpoint ${cmd.call.endpoint} is missing from client.json`);
-  const isWrite = !["GET", "HEAD"].includes(ep.method.toUpperCase());
+  const isWrite = !READ_METHODS.has(ep.method.toUpperCase());
 
   if (isWrite) {
     // Both preview and commit require the env gate. The generated CLI also
@@ -226,8 +239,14 @@ export async function runCommand(cmd: CommandSpec, opts: RunOpts): Promise<RunRe
 
     const { status, body: resBody } = await caller.call(cmd.call.endpoint, params, body);
     if (status >= 400) {
+      let redactedBody: string;
+      try {
+        redactedBody = JSON.stringify(maskSecretValues(JSON.parse(resBody), caller.secret ?? null));
+      } catch {
+        redactedBody = redactAll(resBody, caller.secret ?? null);
+      }
       throw new CliError(
-        `HTTP ${status} from ${cmd.call.endpoint}\n${resBody.slice(0, 2000)}`,
+        `HTTP ${status} from ${cmd.call.endpoint}\n${redactedBody.slice(0, 2000)}`,
         "this write may or may not have been applied; verify the remote state before re-running",
         1,
       );
@@ -251,7 +270,9 @@ export async function runCommand(cmd: CommandSpec, opts: RunOpts): Promise<RunRe
     } catch {
       redactedBody = redactAll(body, caller.secret ?? null);
     }
-    const spill = await writeSpill(site, cmd.name, redactedBody, now).catch(() => undefined);
+    const spill = opts.spill === false
+      ? undefined
+      : await writeSpill(site, cmd.name, redactedBody, now).catch(() => undefined);
     const head = redactedBody.slice(0, 2000);
     let hint: string;
     let exitCode = 1;
@@ -285,13 +306,13 @@ export async function runCommand(cmd: CommandSpec, opts: RunOpts): Promise<RunRe
       data = (data as unknown[]).slice(0, flags.limit);
     }
     data = maskSecretValues(data, secrets);
-    const rendered = mask(renderJson(data, { redact, raw: flags.raw }));
+    const rendered = mask(renderJson(data, { redact, raw: flags.raw, rowsPath: cmd.output.rows }));
     const rowCount = Array.isArray(data) ? (data as unknown[]).length : undefined;
     // Line-slicing pretty-printed JSON would emit an unparseable fragment;
     // re-render a sliced array instead so capped stdout stays valid JSON.
     const renderCapped =
       rowCount !== undefined
-        ? (n: number) => mask(renderJson((data as unknown[]).slice(0, n), { redact, raw: flags.raw }))
+        ? (n: number) => mask(renderJson((data as unknown[]).slice(0, n), { redact, raw: flags.raw, rowsPath: cmd.output.rows }))
         : undefined;
     return { kind: "sent", rendered, rowCount, fullPayload: rendered, renderCapped };
   }
@@ -314,7 +335,8 @@ export async function runCommand(cmd: CommandSpec, opts: RunOpts): Promise<RunRe
   const fullPayload = mask(renderJson(maskedRows, { redact, raw: flags.raw }));
   const renderCapped = (n: number) =>
     mask(renderTable(rows.slice(0, n), cmd.output.columns ?? [], { redact, raw: flags.raw }));
-  return { kind: "sent", rendered, rowCount: rows.length, fullPayload, renderCapped };
+  const redactedRows = (flags.raw ? maskedRows : redactClone(maskedRows, redact)) as Record<string, unknown>[];
+  return { kind: "sent", rendered, rowCount: rows.length, fullPayload, renderCapped, rows: redactedRows };
 }
 
 /** Apply overflow caps to a finished run; spill the full payload when capped. */

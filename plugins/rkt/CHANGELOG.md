@@ -1,7 +1,16 @@
 # Changelog
 
-## [Unreleased]
+## [0.11.0] - 2026-07-29
 
+- derive-client: a write that fails now masks the response body before it
+  reaches the error message, matching the read path; an MCP HTTP request with a
+  malformed body answers `400` instead of a generic `500`; and an oversized
+  single row is capped rather than returned in full.
+- derive-client: `--mcp` generates an MCP server for a derived client. Curated
+  read commands become tools (plus `whoami`), reusing joins, sorting and
+  redaction. stdio by default; `--http` binds loopback and requires
+  `RKT_MCP_TOKEN`. Fixes a bug where a declared `redact` was silently dropped
+  in `--json` mode on an enveloped response.
 - derive-client: full mode (`--mode full`) derives write endpoints and emits
   curated write commands. Writes are gated four ways: derived in full mode,
   `RKT_ALLOW_WRITES=1`, an authored `commands.json` task, and `--commit`.

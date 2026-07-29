@@ -1,5 +1,8 @@
 export const SCHEMA_VERSION = 3;
 
+/** HTTP methods treated as read-only throughout derive-client. */
+export const READ_METHODS = new Set(["GET", "HEAD"]);
+
 /** Schema versions this codebase can read. v2 clients are read-only. */
 const SUPPORTED_SCHEMA_VERSIONS = new Set([2, 3]);
 

@@ -1,4 +1,4 @@
-import type { JsonShape, ManifestEndpoint } from "./manifest-schema";
+import { READ_METHODS, type JsonShape, type ManifestEndpoint } from "./manifest-schema";
 
 export const COMMANDS_SCHEMA_VERSION = 1;
 
@@ -147,8 +147,6 @@ export function validateCommandsFile(value: unknown): CommandsFile {
 
 type ResolvableEndpoint = Pick<ManifestEndpoint, "id" | "params" | "method" | "writeSemantics">;
 
-const READ_METHODS = new Set(["GET", "HEAD"]);
-
 /** The JsonShape type at a dotted body path, if the manifest models one. */
 export function shapeTypeAt(shape: JsonShape | null | undefined, path: string): string | undefined {
   let node: JsonShape | undefined = shape ?? undefined;
@@ -205,6 +203,12 @@ export function assertResolvable(
 
   if (commands.identity) {
     const idEp = need("identity", commands.identity.endpoint);
+    if (!READ_METHODS.has(idEp.method.toUpperCase())) {
+      throw new Error(
+        `commands.json: identity endpoint '${commands.identity.endpoint}' is ${idEp.method}; ` +
+          `whoami must target a read endpoint (GET or HEAD)`,
+      );
+    }
     const supplied = new Set(Object.keys(commands.identity.params ?? {}));
     const missing = idEp.params.filter((p) => p.required && !supplied.has(p.name));
     if (missing.length) {

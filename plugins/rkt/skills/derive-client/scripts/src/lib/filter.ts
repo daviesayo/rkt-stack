@@ -1,4 +1,5 @@
 import type { HarEntry } from "./har";
+import { READ_METHODS } from "./manifest-schema";
 
 export interface DropRecord {
   url: string;
@@ -39,8 +40,6 @@ const DATA_MIME = /json|text\/html|xml/i;
  */
 const STATIC_JSON_PATH =
   /\.(json|map)$|\/(shell|assets?|static|build|dist|locales?|i18n|webapp)\//i;
-
-const READ_METHODS = new Set(["GET", "HEAD"]);
 
 export interface FilterOptions {
   /** Full mode only. Read mode never derives endpoints that mutate state. */

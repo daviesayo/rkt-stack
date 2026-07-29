@@ -163,6 +163,16 @@ test("assertResolvable accepts a param-free identity endpoint (back-compat)", ()
   expect(() => assertResolvable(cf, eps as never)).not.toThrow();
 });
 
+test("assertResolvable rejects an identity endpoint that is not a read method", () => {
+  const cf = validateCommandsFile({
+    schemaVersion: 1, site: "s",
+    identity: { endpoint: "post.user.profile", idField: "user.api_id", display: ["user.name"] },
+    commands: [],
+  });
+  const eps = [{ id: "post.user.profile", method: "POST", writeSemantics: null, params: [] }];
+  expect(() => assertResolvable(cf, eps as never)).toThrow(/identity.*read/i);
+});
+
 test("identity carries a validated params map through validation", () => {
   const cf = validateCommandsFile({
     schemaVersion: 1, site: "s",

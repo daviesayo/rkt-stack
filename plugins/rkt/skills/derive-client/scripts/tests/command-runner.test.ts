@@ -1,16 +1,17 @@
 import { afterAll, afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { RunnerCaller } from "../src/lib/command-runner";
 import { finishRun, makeResolveMe, runCommand, runWhoami } from "../src/lib/command-runner";
 import { CliError } from "../src/lib/overflow";
+import { outDir } from "../src/lib/paths";
 
 let root: string;
 const ORIG_ROOT = process.env.RKT_CLIENTS_ROOT;
 const ORIG_NODE_ENV = process.env.NODE_ENV;
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), "rkt-id-"));
+  root = await realpath(await mkdtemp(join(tmpdir(), "rkt-id-")));
   process.env.RKT_CLIENTS_ROOT = root;
   process.env.NODE_ENV = "test";
 });
@@ -282,16 +283,20 @@ test("HTTP 401 throws CliError with exit code 4 and login hint", async () => {
     call: { endpoint: "get.shifts", params: {} },
     output: { kind: "json" as const },
   };
+  let err: unknown;
+  let threw = false;
   try {
     await runCommand(cmd, baseOpts(c));
-    throw new Error("expected CliError");
-  } catch (err) {
-    expect(err).toBeInstanceOf(CliError);
-    const e = err as CliError;
-    expect(e.exitCode).toBe(4);
-    expect(e.hint).toContain("login");
-    expect(e.hint).toContain("auth status");
+  } catch (e) {
+    threw = true;
+    err = e;
   }
+  expect(threw).toBe(true);
+  expect(err).toBeInstanceOf(CliError);
+  const e = err as CliError;
+  expect(e.exitCode).toBe(4);
+  expect(e.hint).toContain("login");
+  expect(e.hint).toContain("auth status");
 });
 
 test("HTTP 403 throws CliError with exit code 1 and permission hint", async () => {
@@ -304,15 +309,19 @@ test("HTTP 403 throws CliError with exit code 1 and permission hint", async () =
     call: { endpoint: "get.shifts", params: {} },
     output: { kind: "json" as const },
   };
+  let err: unknown;
+  let threw = false;
   try {
     await runCommand(cmd, baseOpts(c));
-    throw new Error("expected CliError");
-  } catch (err) {
-    expect(err).toBeInstanceOf(CliError);
-    const e = err as CliError;
-    expect(e.exitCode).toBe(1);
-    expect(e.hint).toMatch(/permission/i);
+  } catch (e) {
+    threw = true;
+    err = e;
   }
+  expect(threw).toBe(true);
+  expect(err).toBeInstanceOf(CliError);
+  const e = err as CliError;
+  expect(e.exitCode).toBe(1);
+  expect(e.hint).toMatch(/permission/i);
 });
 
 test("HTTP 500 JSON error masks secrets with quote and backslash before spill", async () => {
@@ -328,24 +337,28 @@ test("HTTP 500 JSON error masks secrets with quote and backslash before spill", 
     call: { endpoint: "get.shifts", params: {} },
     output: { kind: "json" as const },
   };
+  let err: unknown;
+  let threw = false;
   try {
     await runCommand(cmd, baseOpts(c));
-    throw new Error("expected CliError");
-  } catch (err) {
-    expect(err).toBeInstanceOf(CliError);
-    const e = err as CliError;
-    expect(e.exitCode).toBe(1);
-    expect(e.hint).toMatch(/full body:/);
-    const spillMatch = e.hint.match(/full body: (.+\.json)/);
-    expect(spillMatch).not.toBeNull();
-    const spillPath = spillMatch![1];
-    const spillText = await Bun.file(spillPath).text();
-    expect(e.message).not.toContain(TOKEN);
-    expect(e.message).not.toContain('va\\"lue');
-    expect(spillText).not.toContain(TOKEN);
-    expect(spillText).not.toContain('va\\"lue');
-    expect(spillText).toContain("[REDACTED]");
+  } catch (e) {
+    threw = true;
+    err = e;
   }
+  expect(threw).toBe(true);
+  expect(err).toBeInstanceOf(CliError);
+  const e = err as CliError;
+  expect(e.exitCode).toBe(1);
+  expect(e.hint).toMatch(/full body:/);
+  const spillMatch = e.hint.match(/full body: (.+\.json)/);
+  expect(spillMatch).not.toBeNull();
+  const spillPath = spillMatch![1];
+  const spillText = await Bun.file(spillPath).text();
+  expect(e.message).not.toContain(TOKEN);
+  expect(e.message).not.toContain('va\\"lue');
+  expect(spillText).not.toContain(TOKEN);
+  expect(spillText).not.toContain('va\\"lue');
+  expect(spillText).toContain("[REDACTED]");
 });
 
 test("HTTP error spills redacted body and mentions spill path in hint", async () => {
@@ -358,21 +371,25 @@ test("HTTP error spills redacted body and mentions spill path in hint", async ()
     call: { endpoint: "get.shifts", params: {} },
     output: { kind: "json" as const },
   };
+  let err: unknown;
+  let threw = false;
   try {
     await runCommand(cmd, baseOpts(c));
-    throw new Error("expected CliError");
-  } catch (err) {
-    expect(err).toBeInstanceOf(CliError);
-    const e = err as CliError;
-    expect(e.exitCode).toBe(1);
-    expect(e.hint).toMatch(/full body:/);
-    const spillMatch = e.hint.match(/full body: (.+\.json)/);
-    expect(spillMatch).not.toBeNull();
-    const spillPath = spillMatch![1];
-    expect(await Bun.file(spillPath).text()).toBe("error details here");
-    expect(e.message).toContain("HTTP 500");
-    expect(e.message).toContain("error details here");
+  } catch (e) {
+    threw = true;
+    err = e;
   }
+  expect(threw).toBe(true);
+  expect(err).toBeInstanceOf(CliError);
+  const e = err as CliError;
+  expect(e.exitCode).toBe(1);
+  expect(e.hint).toMatch(/full body:/);
+  const spillMatch = e.hint.match(/full body: (.+\.json)/);
+  expect(spillMatch).not.toBeNull();
+  const spillPath = spillMatch![1];
+  expect(await Bun.file(spillPath).text()).toBe("error details here");
+  expect(e.message).toContain("HTTP 500");
+  expect(e.message).toContain("error details here");
 });
 
 test("finishRun passes small results through untouched, no spill", async () => {
@@ -603,4 +620,143 @@ test("commit without the env flag raises the enable-writes error", async () => {
       args: { title: "t", count: "1" },
     } as never),
   ).rejects.toThrow(/RKT_ALLOW_WRITES/);
+});
+
+test("write error bodies mask embedded secrets", async () => {
+  const TOKEN = "super-secret-token-value";
+  const caller = {
+    call: async () => ({
+      status: 400,
+      body: JSON.stringify({ error: TOKEN, detail: "bad request" }),
+    }),
+    fetchJson: async () => ({}),
+    secret: { authorization: `Bearer ${TOKEN}` },
+  };
+  process.env.RKT_ALLOW_WRITES = "1";
+  const err = await runCommand(WRITE_CMD as never, {
+    manifest: FULL_MANIFEST,
+    site: "x",
+    caller: caller as never,
+    flags: { json: true, raw: false },
+    now: new Date(),
+    commit: true,
+    args: { title: "Party", count: "3" },
+  } as never).catch((e) => e);
+  expect(err).toBeInstanceOf(CliError);
+  expect((err as CliError).message).not.toContain(TOKEN);
+  expect((err as CliError).message).toContain("[REDACTED]");
+});
+
+const READ_MANIFEST = {
+  schemaVersion: 3,
+  site: "x",
+  baseUrl: "https://x.test",
+  recordedAt: "2026-07-24T00:00:00.000Z",
+  harSha256: "d",
+  userAgent: "UA",
+  clientHints: {},
+  auth: { kind: "cookie", location: "cookie:s", mintedBy: null, expiry: null },
+  authBundle: null,
+  refresh: null,
+  endpoints: [
+    {
+      id: "get.api.events",
+      method: "GET",
+      pathTemplate: "/api/events",
+      params: [{ name: "q", in: "query", type: "string" }],
+      responseShape: { type: "unknown" as const },
+      source: "xhr" as const,
+      fragile: false,
+      selectors: null,
+      writeSemantics: null,
+    },
+  ],
+};
+
+const ROWS_CMD = {
+  name: "events",
+  summary: "",
+  call: { endpoint: "get.api.events", params: {} },
+  output: { kind: "table" as const, rows: "data.items", columns: ["id"], sort: "id" },
+  redact: ["email"],
+};
+
+function readCaller(body: unknown) {
+  return { call: async () => ({ status: 200, body: JSON.stringify(body) }), fetchJson: async () => ({}), secret: null };
+}
+
+async function spillFileCount(site: string): Promise<number> {
+  try {
+    const files = await readdir(outDir(site));
+    return files.filter((f) => f.endsWith(".json")).length;
+  } catch {
+    return 0;
+  }
+}
+
+test("a row-shaped run surfaces shaped, masked, redacted rows as data", async () => {
+  const caller = readCaller({ data: { items: [{ id: 2, email: "x@y.z" }, { id: 1, email: "a@b.c" }] } });
+  const res = await runCommand(ROWS_CMD as never, {
+    manifest: READ_MANIFEST, site: "x", caller: caller as never,
+    flags: { json: false, raw: false }, now: new Date(),
+  } as never);
+  expect(res.rows).toEqual([{ id: 1, email: "[REDACTED]" }, { id: 2, email: "[REDACTED]" }]);
+});
+
+test("--json honors a declared redact on an enveloped response", async () => {
+  const caller = readCaller({ data: { items: [{ email: "x@y.z" }] } });
+  const res = await runCommand(ROWS_CMD as never, {
+    manifest: READ_MANIFEST, site: "x", caller: caller as never,
+    flags: { json: true, raw: false }, now: new Date(),
+  } as never);
+  expect(res.rendered).toContain("[REDACTED]");
+  expect(res.rendered).not.toContain("x@y.z");
+  expect(JSON.parse(res.rendered)).toHaveProperty("data.items"); // envelope shape unchanged
+});
+
+test("spill:false writes no file and leaks no host path on a 403", async () => {
+  const caller = {
+    call: async () => ({ status: 403, body: JSON.stringify({ error: "nope" }) }),
+    fetchJson: async () => ({}), secret: null,
+  };
+  const before = await spillFileCount("x");
+  let err: unknown;
+  let threw = false;
+  try {
+    await runCommand(ROWS_CMD as never, {
+      manifest: READ_MANIFEST, site: "x", caller: caller as never,
+      flags: { json: true, raw: false }, now: new Date(), spill: false,
+    } as never);
+  } catch (e) {
+    threw = true;
+    err = e;
+  }
+  expect(threw).toBe(true);
+  expect(err).toBeInstanceOf(CliError);
+  const combined = `${(err as CliError).message} ${(err as CliError).hint ?? ""}`;
+  expect(combined).not.toContain(root);
+  expect(combined).not.toMatch(/full body:/);
+  expect(combined).not.toMatch(/\.rkt-clients|\/tmp|\/Users/);
+  expect(await spillFileCount("x")).toBe(before);   // no file written
+});
+
+test("spill defaults to on (regression: CLI behaviour unchanged)", async () => {
+  const caller = {
+    call: async () => ({ status: 403, body: JSON.stringify({ error: "nope" }) }),
+    fetchJson: async () => ({}), secret: null,
+  };
+  let err: unknown;
+  let threw = false;
+  try {
+    await runCommand(ROWS_CMD as never, {
+      manifest: READ_MANIFEST, site: "x", caller: caller as never,
+      flags: { json: true, raw: false }, now: new Date(),
+    } as never);
+  } catch (e) {
+    threw = true;
+    err = e;
+  }
+  expect(threw).toBe(true);
+  expect(err).toBeInstanceOf(CliError);
+  expect((err as CliError).hint ?? "").toMatch(/full body:/);
 });

@@ -1,8 +1,11 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { generateClient } from "../src/generate";
+
+const PLUGIN_ROOT = join(fileURLToPath(import.meta.url), "..", "..", "..", "..");
 
 const EXPECTED_RUNTIME = [
   "paths.ts",
@@ -353,4 +356,186 @@ test("full mode with a commands.json present stays silent about hidden writes", 
     console.error = originalError;
   }
   expect(lines.some((l) => /write endpoint/i.test(l) && /commands\.json/i.test(l))).toBe(false);
+});
+
+async function manifestWithCommands(out: string, site: string): Promise<string> {
+  const siteDir = join(out, site);
+  await mkdir(siteDir, { recursive: true });
+  const manifest = { ...MANIFEST, site };
+  const manifestPath = join(siteDir, "client.json");
+  await writeFile(manifestPath, JSON.stringify(manifest));
+  const commands = {
+    schemaVersion: 1,
+    site,
+    commands: [
+      {
+        name: "roster",
+        summary: "the roster",
+        call: { endpoint: "get.api.roster.id", params: { id: "1" } },
+        output: { kind: "json" },
+        redact: [],
+      },
+    ],
+  };
+  await writeFile(join(siteDir, "commands.json"), JSON.stringify(commands) + "\n");
+  return manifestPath;
+}
+
+async function manifestNoCommands(out: string, site: string): Promise<string> {
+  const siteDir = join(out, site);
+  await mkdir(siteDir, { recursive: true });
+  const manifest = { ...MANIFEST, site };
+  const manifestPath = join(siteDir, "client.json");
+  await writeFile(manifestPath, JSON.stringify(manifest));
+  return manifestPath;
+}
+
+async function enumerateFiles(root: string): Promise<Map<string, Buffer>> {
+  const result = new Map<string, Buffer>();
+  async function walk(dir: string, prefix: string): Promise<void> {
+    let entries;
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      const rel = prefix ? `${prefix}/${e.name}` : e.name;
+      const full = join(dir, e.name);
+      if (e.isDirectory()) {
+        await walk(full, rel);
+      } else {
+        result.set(rel, await readFile(full));
+      }
+    }
+  }
+  await walk(root, "");
+  return result;
+}
+
+test("--mcp emits mcp.ts, the adapter, and the SDK dependency", async () => {
+  const out = join(await mkdtemp(join(tmpdir(), "rkt-mcp-")), "root"); // NOT pre-created
+  await generateClient(await manifestWithCommands(out, "a"), out, { mcp: true });
+  expect(await readFile(join(out, "a", "mcp.ts"), "utf8")).toContain("buildServer");
+  expect(await readFile(join(out, "package.json"), "utf8")).toContain("@modelcontextprotocol/sdk");
+  expect(await readFile(join(out, "lib", "mcp-server.ts"), "utf8")).toMatch(/copied/i);
+});
+
+test("regenerating a NON-mcp sibling keeps the SDK (scan predicate)", async () => {
+  const out = await mkdtemp(join(tmpdir(), "rkt-mcp-"));
+  await generateClient(await manifestWithCommands(out, "a"), out, { mcp: true });
+  await generateClient(await manifestWithCommands(out, "b"), out);
+  expect(await readFile(join(out, "package.json"), "utf8")).toContain("@modelcontextprotocol/sdk");
+  expect(await readFile(join(out, "lib", "mcp-server.ts"), "utf8")).toBeTruthy();
+});
+
+test("regenerating the MCP client WITHOUT the flag keeps MCP (mcp.ts on disk)", async () => {
+  const out = await mkdtemp(join(tmpdir(), "rkt-mcp-"));
+  await generateClient(await manifestWithCommands(out, "a"), out, { mcp: true });
+  await generateClient(await manifestWithCommands(out, "a"), out); // no flag
+  expect(await readFile(join(out, "a", "mcp.ts"), "utf8")).toContain("buildServer");
+});
+
+test("a root with no MCP client has neither the dep nor the adapter", async () => {
+  const out = await mkdtemp(join(tmpdir(), "rkt-mcp-"));
+  await generateClient(await manifestWithCommands(out, "a"), out);
+  expect(await readFile(join(out, "package.json"), "utf8")).not.toContain("@modelcontextprotocol/sdk");
+  await expect(readFile(join(out, "lib", "mcp-server.ts"), "utf8")).rejects.toThrow();
+});
+
+test("deleting mcp.ts then regenerating removes the adapter and the dep, and nothing else", async () => {
+  const out = await mkdtemp(join(tmpdir(), "rkt-mcp-"));
+  await generateClient(await manifestWithCommands(out, "a"), out, { mcp: true });
+  await rm(join(out, "a", "mcp.ts"));
+  await generateClient(await manifestWithCommands(out, "a"), out);
+  await expect(readFile(join(out, "lib", "mcp-server.ts"), "utf8")).rejects.toThrow();
+  expect(await readFile(join(out, "package.json"), "utf8")).not.toContain("@modelcontextprotocol/sdk");
+  expect(await readFile(join(out, "lib", "runtime.ts"), "utf8")).toBeTruthy();
+  expect(await readFile(join(out, "a", "cli.ts"), "utf8")).toBeTruthy();
+});
+
+test("--mcp without a commands.json fails at generation time", async () => {
+  const out = await mkdtemp(join(tmpdir(), "rkt-mcp-"));
+  await expect(generateClient(await manifestNoCommands(out, "a"), out, { mcp: true })).rejects.toThrow(
+    /commands\.json/,
+  );
+});
+
+test("regenerate.sh does NOT carry --mcp (presence of mcp.ts perpetuates it)", async () => {
+  const out = await mkdtemp(join(tmpdir(), "rkt-mcp-"));
+  await generateClient(await manifestWithCommands(out, "a"), out, { mcp: true });
+  expect(await readFile(join(out, "a", "regenerate.sh"), "utf8")).not.toContain("--mcp");
+});
+
+test("deleting mcp.ts and running regenerate.sh does not recreate it", async () => {
+  const out = await mkdtemp(join(tmpdir(), "rkt-mcp-"));
+  await generateClient(await manifestWithCommands(out, "a"), out, { mcp: true });
+  await rm(join(out, "a", "mcp.ts"));
+  const install = Bun.spawn(["bun", "install"], { cwd: out, stdout: "pipe", stderr: "pipe" });
+  if ((await install.exited) !== 0) {
+    console.error(
+      "SKIP: deleting mcp.ts and running regenerate.sh — test skipped because bun install failed (offline?)",
+    );
+    return;
+  }
+  const regen = Bun.spawn(["bash", join(out, "a", "regenerate.sh")], {
+    cwd: join(out, "a"),
+    env: { ...process.env, RKT_PLUGIN_ROOT: PLUGIN_ROOT },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(await regen.exited).toBe(0);
+  await expect(readFile(join(out, "a", "mcp.ts"), "utf8")).rejects.toThrow();
+  // Same reason as the closure probe below: `bun install` plus a regenerate.sh
+  // run does not fit in Bun's 5s default.
+}, 180_000);
+
+test("non-MCP regeneration deletes only the two adapter files from a populated root", async () => {
+  const out = await mkdtemp(join(tmpdir(), "rkt-mcp-"));
+  await generateClient(await manifestWithCommands(out, "a"), out, { mcp: true });
+  await generateClient(await manifestWithCommands(out, "other"), out);
+  await writeFile(join(out, "user-owned.txt"), "keep me\n");
+  const before = await enumerateFiles(out);
+  await rm(join(out, "a", "mcp.ts"));
+  await generateClient(await manifestWithCommands(out, "a"), out);
+  const after = await enumerateFiles(out);
+  const beforeKeys = new Set(before.keys());
+  const afterKeys = new Set(after.keys());
+  const removed = [...beforeKeys].filter((k) => !afterKeys.has(k)).sort();
+  expect(removed).toEqual(["a/mcp.ts", "lib/mcp-params.ts", "lib/mcp-server.ts"]);
+  const added = [...afterKeys].filter((k) => !beforeKeys.has(k));
+  expect(added).toEqual([]);
+  for (const path of afterKeys) {
+    if (path === "package.json") continue;
+    expect(after.get(path)).toEqual(before.get(path));
+  }
+});
+
+test("a generated MCP client typechecks (closure probe with the SDK present)", async () => {
+  const out = await mkdtemp(join(tmpdir(), "rkt-mcp-"));
+  await generateClient(await manifestWithCommands(out, "a"), out, { mcp: true });
+  const install = Bun.spawn(["bun", "install"], { cwd: out, stdout: "pipe", stderr: "pipe" });
+  if ((await install.exited) !== 0) {
+    console.error(
+      "SKIP: generated MCP client typechecks — test skipped because bun install failed (offline?)",
+    );
+    return;
+  }
+  const tsc = Bun.spawn(["bunx", "tsc", "--noEmit"], { cwd: out, stdout: "pipe", stderr: "pipe" });
+  expect(await tsc.exited).toBe(0);
+  // Explicit timeout: this spawns `bun install` AND `bunx tsc` in a fresh temp
+  // root. Bun's 5s default made it flake to a 143 (SIGTERM) under load, which
+  // reads as a real typecheck failure rather than as the timeout it is.
+}, 180_000);
+
+test("generates into a fresh --out root that no helper pre-created", async () => {
+  const base = await mkdtemp(join(tmpdir(), "rkt-fresh-out-"));
+  const site = "freshsite";
+  const manifestPath = join(base, "rec", "client.json");
+  await mkdir(dirname(manifestPath), { recursive: true });
+  await writeFile(manifestPath, JSON.stringify({ ...MANIFEST, site }));
+  const out = join(base, "brand-new-out");
+  const { siteDir } = await generateClient(manifestPath, out);
+  expect(siteDir).toBe(join(out, site));
+  expect(await readFile(join(siteDir, "cli.ts"), "utf8")).toContain("api-roster");
 });

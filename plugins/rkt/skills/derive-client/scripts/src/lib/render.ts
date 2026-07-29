@@ -30,8 +30,37 @@ export function redactClone<T>(data: T, paths: string[]): T {
   return clone;
 }
 
-export function renderJson(data: unknown, opts: { redact: string[]; raw: boolean }): string {
-  const out = opts.raw ? data : redactClone(data, opts.redact);
+/**
+ * Redact at the envelope root AND at the path where rows live.
+ *
+ * redactClone alone only matches at the clone root (or per array element), so a
+ * declared path like "attendee.email" silently matches nothing against
+ * {"data":{"items":[...]}}. Applying it at the rows path INSTEAD would fix that
+ * but break a redact entry that legitimately resolves at the root, turning one
+ * leak into another. So this is additive: root first, then rows.
+ */
+export function redactCloneAt<T>(data: T, rowsPath: string | undefined, paths: string[]): T {
+  const clone = redactClone(data, paths) as T;
+  if (!clone || typeof clone !== "object") return clone;
+  if (!rowsPath) return clone;
+  const keys = rowsPath.split(".");
+  let cur = clone as unknown as Record<string, unknown>;
+  for (let i = 0; i < keys.length - 1; i++) {
+    const next = cur[keys[i]];
+    if (!next || typeof next !== "object") return clone;
+    cur = next as Record<string, unknown>;
+  }
+  const last = keys[keys.length - 1];
+  if (!(last in cur)) return clone;
+  cur[last] = redactClone(cur[last], paths);
+  return clone;
+}
+
+export function renderJson(
+  data: unknown,
+  opts: { redact: string[]; raw: boolean; rowsPath?: string },
+): string {
+  const out = opts.raw ? data : redactCloneAt(data, opts.rowsPath, opts.redact);
   return JSON.stringify(out, null, 2);
 }
 

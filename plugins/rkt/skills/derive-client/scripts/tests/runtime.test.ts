@@ -311,6 +311,213 @@ test("a read IS still re-issued after a 401 renewal", async () => {
   expect(sends).toBe(2);
 });
 
+function auth401Scheduler(seen: string[], okAuth = "Bearer new"): Scheduler {
+  return {
+    run: async (req) => {
+      const auth = req.headers["authorization"] ?? "";
+      seen.push(auth);
+      if (auth === "Bearer old") {
+        return { status: 401, body: "no", headers: {} };
+      }
+      if (auth === okAuth) {
+        return { status: 200, body: "ok", headers: {} };
+      }
+      return { status: 500, body: "unexpected auth", headers: {} };
+    },
+  };
+}
+
+test("concurrent 401s on separate callers single-flight renew: one refresh, one write, both succeed", async () => {
+  const seen: string[] = [];
+  const sched = auth401Scheduler(seen);
+  let refreshCalls = 0;
+  let writeCalls = 0;
+  let bundle: Record<string, string> = {
+    authorization: "Bearer old",
+    [REFRESH_TOKEN_KEY]: "r1",
+  };
+  const sharedDeps = {
+    refreshViaOidc: async () => {
+      refreshCalls++;
+      await new Promise((r) => setTimeout(r, 50));
+      return { accessToken: "new", refreshToken: "r2", expiresIn: null };
+    },
+    writeSecret: async (_site: string, values: string | Record<string, string>) => {
+      writeCalls++;
+      bundle = typeof values === "string" ? { default: values } : { ...values };
+    },
+    readSecrets: async () => ({ ...bundle }),
+  };
+  const initial = { authorization: "Bearer old", [REFRESH_TOKEN_KEY]: "r1" };
+  const callerA = createCaller(baseManifest(), sched, { ...initial }, sharedDeps);
+  const callerB = createCaller(baseManifest(), sched, { ...initial }, sharedDeps);
+  const results = await Promise.all([
+    callerA.call("get.data", {}),
+    callerB.call("get.data", {}),
+  ]);
+  expect(results.every((r) => r.status === 200)).toBe(true);
+  expect(refreshCalls).toBe(1);
+  expect(writeCalls).toBe(1);
+  expect(seen.filter((a) => a === "Bearer new").length).toBe(2);
+});
+
+test("a follower re-reads the persisted bundle after awaiting renewal, not its stale snapshot", async () => {
+  const seen: string[] = [];
+  const sched = auth401Scheduler(seen, "Bearer persisted");
+  let disk: Record<string, string> = {
+    authorization: "Bearer old",
+    [REFRESH_TOKEN_KEY]: "r1",
+  };
+  const sharedDeps = {
+    refreshViaOidc: async () => {
+      await new Promise((r) => setTimeout(r, 30));
+      return { accessToken: "new", refreshToken: "r2", expiresIn: null };
+    },
+    writeSecret: async (_site: string, values: string | Record<string, string>) => {
+      disk = {
+        ...(typeof values === "string" ? { default: values } : values),
+        authorization: "Bearer persisted",
+      };
+    },
+    readSecrets: async () => ({ ...disk }),
+  };
+  const callerA = createCaller(
+    baseManifest(),
+    sched,
+    { authorization: "Bearer old", [REFRESH_TOKEN_KEY]: "r1" },
+    sharedDeps,
+  );
+  const callerB = createCaller(
+    baseManifest(),
+    sched,
+    { authorization: "Bearer old", [REFRESH_TOKEN_KEY]: "r1" },
+    sharedDeps,
+  );
+  await Promise.all([callerA.call("get.data", {}), callerB.call("get.data", {})]);
+  expect(seen.filter((a) => a === "Bearer persisted").length).toBe(2);
+  expect(seen).not.toContain("Bearer new");
+});
+
+test("a rejected renewal does not wedge the per-site flight", async () => {
+  const seen: string[] = [];
+  const sched = auth401Scheduler(seen);
+  let refreshCalls = 0;
+  const sharedDeps = {
+    refreshViaOidc: async () => {
+      refreshCalls++;
+      if (refreshCalls === 1) throw new Error("simulated refresh failure");
+      return { accessToken: "new", refreshToken: "r2", expiresIn: null };
+    },
+    writeSecret: async () => {},
+    reauthViaProfile: async () => null,
+  };
+  const initial = { authorization: "Bearer old", [REFRESH_TOKEN_KEY]: "r1" };
+  const caller = (n: number) =>
+    createCaller(baseManifest(), sched, { ...initial }, sharedDeps);
+  const err = await caller(1).call("get.data", {}).catch((e) => e);
+  expect(err).toBeInstanceOf(Error);
+  expect((err as Error).message).toContain("simulated refresh failure");
+  const res = await caller(2).call("get.data", {});
+  expect(res.status).toBe(200);
+  expect(refreshCalls).toBe(2);
+});
+
+test("concurrent callers inherit a rejecting renewal flight", async () => {
+  const seen: string[] = [];
+  const sched = auth401Scheduler(seen);
+  let refreshCalls = 0;
+  let releaseRefresh!: () => void;
+  const refreshGate = new Promise<void>((resolve) => {
+    releaseRefresh = resolve;
+  });
+  let leaderEnteredRefresh!: () => void;
+  const leaderInRefresh = new Promise<void>((resolve) => {
+    leaderEnteredRefresh = resolve;
+  });
+  const sharedDeps = {
+    refreshViaOidc: async () => {
+      refreshCalls++;
+      if (refreshCalls === 1) {
+        leaderEnteredRefresh();
+        await refreshGate;
+        throw new Error("simulated refresh failure");
+      }
+      return { accessToken: "new", refreshToken: "r2", expiresIn: null };
+    },
+    writeSecret: async () => {},
+    reauthViaProfile: async () => null,
+  };
+  const initial = { authorization: "Bearer old", [REFRESH_TOKEN_KEY]: "r1" };
+  const callerA = createCaller(baseManifest(), sched, { ...initial }, sharedDeps);
+  const callerB = createCaller(baseManifest(), sched, { ...initial }, sharedDeps);
+  const pA = callerA.call("get.data", {}).catch((e) => e);
+  const pB = callerB.call("get.data", {}).catch((e) => e);
+  await leaderInRefresh;
+  await Promise.resolve();
+  releaseRefresh();
+  const [errA, errB] = await Promise.all([pA, pB]);
+  expect(errA).toBeInstanceOf(Error);
+  expect(errB).toBeInstanceOf(Error);
+  expect((errA as Error).message).toContain("simulated refresh failure");
+  expect((errB as Error).message).toContain("simulated refresh failure");
+  expect(refreshCalls).toBe(1);
+  const res = await callerA.call("get.data", {});
+  expect(res.status).toBe(200);
+  expect(refreshCalls).toBe(2);
+});
+
+test("the one-shot CLI path still performs a single renewal on 401", async () => {
+  const seen: string[] = [];
+  const sched = fakeScheduler(
+    [
+      { status: 401, body: "no", headers: {} },
+      { status: 200, body: "ok", headers: {} },
+    ],
+    seen,
+  );
+  let refreshCalls = 0;
+  const caller = createCaller(
+    baseManifest(),
+    sched,
+    { authorization: "Bearer old", [REFRESH_TOKEN_KEY]: "r1" },
+    {
+      refreshViaOidc: async () => {
+        refreshCalls++;
+        return { accessToken: "new", refreshToken: "r2", expiresIn: null };
+      },
+      writeSecret: async () => {},
+    },
+  );
+  const res = await caller.call("get.data", {});
+  expect(res.status).toBe(200);
+  expect(refreshCalls).toBe(1);
+  expect(seen).toEqual(["Bearer old", "Bearer new"]);
+});
+
+test("renew reports failure when post-renewal readSecrets returns null", async () => {
+  const seen: string[] = [];
+  const sched = auth401Scheduler(seen, "Bearer new");
+  const sharedDeps = {
+    refreshViaOidc: async () => {
+      await new Promise((r) => setTimeout(r, 30));
+      return { accessToken: "new", refreshToken: "r2", expiresIn: null };
+    },
+    writeSecret: async () => {},
+    readSecrets: async () => null,
+  };
+  const initial = { authorization: "Bearer old", [REFRESH_TOKEN_KEY]: "r1" };
+  const callerA = createCaller(baseManifest(), sched, { ...initial }, sharedDeps);
+  const callerB = createCaller(baseManifest(), sched, { ...initial }, sharedDeps);
+  const [resA, resB] = await Promise.all([
+    callerA.call("get.data", {}),
+    callerB.call("get.data", {}),
+  ]);
+  expect(resA.status).toBe(200);
+  expect(resB.status).toBe(401);
+  expect(callerB.secret?.authorization).toBe("Bearer old");
+  expect(seen.length).toBe(3);
+});
+
 test("fetchJson forwards params into the request URL", async () => {
   const seen: string[] = [];
   const sched: Scheduler = {
