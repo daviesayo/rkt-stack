@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.12.0] - 2026-08-05
+
+- New `asd-ste100` skill: rewrites dense or ambiguous English into ASD-STE100
+  Simplified Technical English — one meaning per word, active voice, simple
+  tenses, one instruction per sentence — and returns a before/after table
+  naming the rule each sentence violated. Aimed at text a machine has to parse
+  without a human to ask: tool descriptions, error messages, system prompts,
+  inter-agent instructions. Vendored from `danyuchn/asd-ste100-skill` (MIT);
+  only the frontmatter was changed to match rkt skill conventions.
+
 ## [0.11.0] - 2026-07-29
 
 - derive-client: a write that fails now masks the response body before it
